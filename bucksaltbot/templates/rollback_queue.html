@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block content %}
+    <h2>Rollback job queue</h2>
+    <p>This queue receives jobs from the Commons userscript and tracks processing in the bucksaltbot API/database.</p>
+    <table class="wikitable">
+        <tbody>
+            <tr>
+                <th>Job ID</th>
+                <th>Requester</th>
+                <th>Status</th>
+                <th>Dry run</th>
+                <th>Created at</th>
+            </tr>
+            {% for job in jobs %}
+            <tr>
+                <td><a href="/api/v1/rollback/jobs/{{ job[0] }}">{{ job[0] }}</a></td>
+                <td>{{ job[1] }}</td>
+                <td>{{ job[2] }}</td>
+                <td>{% if job[3] %}yes{% else %}no{% endif %}</td>
+                <td>{{ job[4] }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endblock %}

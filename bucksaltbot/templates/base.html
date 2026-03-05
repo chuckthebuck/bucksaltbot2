@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rollback queue</title>
+  {%- if not is_production %}
+    <script type="module" src="{{ asset('@vite/client') }}"></script>
+  {%- endif %}
+  <link rel="stylesheet" href="{{ asset('styles.less') }}" />
+</head>
+<body>
+  <header class="header">
+    <span class="logo">
+      <b>Rollback</b>
+      &
+      <b>Queue</b>
+    </span>
+    {% if username %}
+    <span>{{ username }}</span>
+    <a href="/logout" class="logout">Logout</a>
+    {% endif %}
+  </header>
+  <div class="container">
+    <div class="cdx-message cdx-message--block cdx-message--notice top-message" aria-live="polite">
+      <span class="cdx-message__icon"></span>
+      <div class="cdx-message__content">
+        Submitting a job will trigger your configured rollback bot account on Wikimedia Commons. You are responsible for reviewing results.
+      </div>
+    </div>
+    <div class="cdx-tabs">
+      <form class="cdx-tabs__header" method="get" action="/goto">
+        <div class="cdx-tabs__list" tabindex="-1" role="tablist">
+          <button
+            id="form-tabs-rollback-label"
+            class="cdx-tabs__list__item"
+            role="tab"
+            aria-selected="{% if type == 'rollback-queue' %}true{% else %}false{% endif %}"
+            aria-controls="form-tabs-rollback"
+            value="rollback-queue"
+            name="tab"
+          >
+            Rollback Queue
+          </button>
+          <button
+            id="form-tabs-docs-label"
+            class="cdx-tabs__list__item"
+            role="tab"
+            aria-selected="false"
+            aria-controls="form-tabs-docs"
+            value="documentation"
+            name="tab"
+          >
+            Documentation
+          </button>
+        </div>
+      </form>
+      {% block content %}
+      {% endblock %}
+    </div>
+  </div>
+  <footer class="footer">
+    <p>Hosted on <a href="https://toolforge.org">Wikimedia Toolforge</a>.</p>
+  </footer>
+</body>
+</html>
