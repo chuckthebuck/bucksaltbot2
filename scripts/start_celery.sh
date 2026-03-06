@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
-id
-
-# Prepare Pywikibot config
 cat user-config.tmpl > user-config.py
-ls -lah user-config.py
 
+echo "Starting Celery worker..."
 
-
-celery -A celery_init:celery_app worker \
+celery -A app:celery worker \
   --loglevel=INFO \
-  --concurrency=4 \
+  --concurrency=2 \
   -n buckbot-worker@%h
