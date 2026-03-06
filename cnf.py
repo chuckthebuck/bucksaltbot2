@@ -1,36 +1,22 @@
 import configparser as cfp
 import os
 
-CNF_PATH = os.path.expanduser("~/replica.my.cnf")
+CNF_PATH = "/etc/mysql/conf.d/replica.my.cnf"
 
+cnf = cfp.ConfigParser()
+cnf.read(CNF_PATH)
 
-def load_cnf():
-    cnf = cfp.ConfigParser()
-    if os.path.exists(CNF_PATH):
-        cnf.read(CNF_PATH)
-    return cnf
-
-
-cnf = load_cnf()
-
-if "client" in cnf:
-    # Toolforge replica config
-    user = cnf["client"]["user"]
-    password = cnf["client"]["password"]
-    remote = "tools-db"
-
+if cnf.has_section("client"):
+    user = cnf["client"].get("user")
+    password = cnf["client"].get("password")
+    host = "tools.db.svc.wikimedia.cloud"
 else:
-    # fallback for local/dev
-    user = os.environ.get("TOOL_TOOLSDB_USER")
-    password = os.environ.get("TOOL_TOOLSDB_PASSWORD")
-    remote = "localhost"
-
-if os.environ.get("DOCKER"):
-    remote = "mariadb"
-
+    user = os.getenv("TOOL_TOOLSDB_USER")
+    password = os.getenv("TOOL_TOOLSDB_PASSWORD")
+    host = "localhost"
 
 config = {
-    "host": remote,
+    "host": host,
     "user": user,
     "password": password,
 }
