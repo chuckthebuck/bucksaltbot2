@@ -9,7 +9,7 @@ ls -lah user-config.py
 
 echo "Waiting for Redis..."
 
-until nc -z redis 6379; do
+until nc -z localhost 6379; do
   sleep 2
 done
 
