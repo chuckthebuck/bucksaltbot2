@@ -1,27 +1,13 @@
 import os
 import redis
 
-redis_url = 'redis://localhost:6379/9'
+if os.getenv("TOOLFORGE"):
+    redis_url = "redis://redis.svc.tools.eqiad1.wikimedia.cloud:6379/0"
+elif os.getenv("DOCKER"):
+    redis_url = "redis://redis:6379/0"
+else:
+    redis_url = "redis://localhost:6379/9"
 
-if 'DOCKER' in os.environ:
-    redis_url = 'redis://redis:6379/0'
+rediscl = redis.from_url(redis_url)
 
-if 'NOTDEV' in os.environ:
-    redis_url = 'redis://redis.svc.tools.eqiad1.wikimedia.cloud:6379/0'
-
-rediscl = redis.Redis(host='localhost', port=6379, db=9)
-
-
-if 'NOTDEV' in os.environ:
-    rediscl = redis.Redis(
-        host='redis.svc.tools.eqiad1.wikimedia.cloud',
-        port=6379,
-        db=0)
-    
-if 'DOCKER' in os.environ:
-    rediscl = redis.Redis(
-        host='redis',
-        port=6379,
-        db=0)
-
-REDIS_KEY_PREFIX = 'mw-toolforge-match-and-split-'
+REDIS_KEY_PREFIX = "mw-toolforge-buckbot"
