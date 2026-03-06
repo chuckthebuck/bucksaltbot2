@@ -1,0 +1,104 @@
+@import '@wikimedia/codex/dist/codex.style.css';
+@import ( reference ) '@wikimedia/codex-design-tokens/theme-wikimedia-ui.less';
+@import ( reference ) '@wikimedia/codex/mixins/link.less';
+
+.header {
+    width: calc( 100% - 2 * @spacing-125 );
+    padding: @spacing-125;
+    background-color: @background-color-interactive;
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    a {
+        margin-left: @spacing-125;
+    }
+}
+
+a {
+    .cdx-mixin-link-base();
+    text-decoration: none;
+    &:hover {
+        text-decoration: underline;
+    }
+}
+
+.logout {
+    color: @color-disabled;
+}
+
+.logo {
+    justify-self: flex-start;
+    margin-right: auto;
+}
+
+.container {
+    margin: 10vw;
+    margin-top:3vw;
+    min-width: 50vw;
+    background-color: @color-inverted;
+}
+
+.footer {
+    justify-content: flex-end;
+    margin-top: auto;
+    width: calc( 100% - 2 * @spacing-125 );
+    padding: @spacing-125;
+    background-color: @background-color-interactive;
+}
+
+.log-pre {
+    background-color: @background-color-interactive-subtle;
+    border: @border-base;
+    word-wrap: break-word;
+    text-wrap: wrap;
+}
+
+.top-message {
+    margin-bottom: @spacing-125;
+}
+
+.submit-button {
+    margin-top: @spacing-125;
+    margin-bottom: @spacing-125;
+}
+
+.wikitable {
+	background-color: @background-color-neutral-subtle;
+	color: @color-base;
+	margin: 1em 0;
+	border: @border-width-base @border-style-base @border-color-base;
+	border-collapse: collapse;
+	> tr > th,
+	> tr > td,
+	> * > tr > th,
+	> * > tr > td {
+		border: @border-width-base @border-style-base @border-color-base;
+		padding: 0.2em 0.4em;
+	}
+	> tr > th,
+	> * > tr > th {
+		background-color: @background-color-neutral;
+		color: @color-base;
+		text-align: center;
+	}
+	> caption {
+		font-weight: bold;
+	}
+	@media all and ( max-width: @max-width-breakpoint-mobile ) {
+		body.skin--responsive & {
+			float: none;
+			margin-left: 0;
+			margin-right: 0;
+		}
+	}
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: @color-inverted;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    font-family: @font-family-system-sans;
+}

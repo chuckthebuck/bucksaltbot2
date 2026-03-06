@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt install -y lsb-release;
+
+# Install nodejs, npm
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+RUN apt install -y --no-install-recommends nodejs npm;
+
+COPY package.json package.json
+RUN npm install
+
+COPY requirements.txt requirements.txt
+RUN pip install -r requirements.txt
+
+COPY ./scripts /app/scripts
+
+CMD ["/app/scripts/run_dev_env.sh"]

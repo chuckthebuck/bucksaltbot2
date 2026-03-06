@@ -1,0 +1,22 @@
+{
+  "name": "matchandsplit",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5.2.2",
+    "vite": "^5.2.0"
+  },
+  "dependencies": {
+    "@wikimedia/codex": "^1.6.0",
+    "@wikimedia/codex-design-tokens": "^1.6.0",
+    "@wikimedia/codex-icons": "^1.6.0",
+    "less": "^4.2.0",
+    "less-loader": "^12.2.0"
+  }
+}

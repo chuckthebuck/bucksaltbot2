@@ -1,0 +1,31 @@
+# https://wikitech.wikimedia.org/wiki/Help:Toolforge/Jobs_framework
+
+---
+
+- name: "buckbot-web"
+  command: "web"
+  image: tool-buckbot/tool-buckbot:latest
+  continuous: true
+  mount: all
+  emails: all
+  mem: 512Mi
+  cpu: "0.5"
+
+- name: "buckbot-celery"
+  command: "mascelery"
+  image: tool-buckbot/tool-buckbot:latest
+  continuous: true
+  mount: all
+  health-check-script: "launcher ping"
+  emails: all
+  mem: 1Gi
+  cpu: "1"
+
+- name: "buckbot-ping"
+  command: "ping"
+  image: tool-buckbot/tool-buckbot:latest
+  continuous: true
+  mount: all
+  emails: all
+  mem: 256Mi
+  cpu: "0.25"

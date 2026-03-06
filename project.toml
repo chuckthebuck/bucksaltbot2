@@ -1,0 +1,9 @@
+[project]
+id = "org.toolforge.matchandsplit"
+name = "matchandsplit"
+
+[[build.buildpacks]]
+id = "heroku/python"
+
+[[build.buildpacks]]
+id = "heroku/procfile"

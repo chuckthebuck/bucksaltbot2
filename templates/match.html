@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% block content %}
+    <h2>Run the {{ type }} operation on a specific page</h2>
+    <script src="{{ asset('script.ts') }}"></script>
+    <form id="mainForm">
+        <div class="hidden-type" style="display: none;" data-form-type="{{type}}"></div>
+        <div class="form-group cdx-field">
+            <div class="cdx-label">
+                <label for="language">
+                    <span class="cdx-label__label__text">Language code:</span>
+                </label>
+                <span class="cdx-label__description">
+                    (i.e. en, bn, fr etc)
+                </span>
+            </div>
+            <div clas="cdx-field__control">
+                <div class="cdx-text-input">
+                    <input type="text" id="lang" name="lang" required class="cdx-text-input__input">
+                </div>
+            </div>
+        </div>
+        <div class="form-group cdx-field">
+            <div class="form-group cdx-field">
+                <div class="cdx-label">
+                    <label for="language">
+                        <span class="cdx-label__label__text">Title of page:</span>
+                    </label>
+                </div>
+                <div clas="cdx-field__control">
+                    <div class="cdx-text-input">
+                        <input type="text" id="title" name="title" required required class="cdx-text-input__input">
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div>
+            <button type="submit" class="cdx-button cdx-button--action-progressive submit-button">Run a {{ type }} job</button>
+        </div>
+    </form>
+    <div id="response">
+        <div
+            class="cdx-message cdx-message--block cdx-message--success success-message"
+            aria-live="polite"
+            style="display: none;"
+            >
+            <span class="cdx-message__icon"></span>
+            <div class="cdx-message__content">Job has been successfully registered as job number <span id="jid"></span>, you can follow the status of your job <a href="#" id="logfile_link">here</a>.</div>
+        </div>
+        <div class="cdx-message cdx-message--block cdx-message--error failure-message" role="alert" style="display: none;">
+            <span class="cdx-message__icon"></span>
+            <div class="cdx-message__content">Something went wrong when registering a job. This is not supposed to happen and you should contact the maintainer of the tool and let them know that you recieved this error.</div>
+        </div>
+    </div>
+{% endblock %}

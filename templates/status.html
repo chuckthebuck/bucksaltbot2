@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block content %}
+    <h2>Status of all your jobs</h2>
+   <table class="wikitable">
+    <tbody>
+        <tr>
+            <th>Job ID</th>
+            <th>Task name</th>
+            <th>Language</th>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Log</th>
+        </tr>
+        {% for job in jobs %}
+            <tr>
+                <td>{{ job[0] }}</td>
+                <td>{{ job[1] }}</td>
+                <td>{{ job[2] }}</td>
+                <td>{{ job[3] }}</td>
+                <td>{{ job[6] }}</td>
+                <td><a href="/logs?file={{ job[5] }}">Log</a></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+{% endblock %}
