@@ -1,7 +1,7 @@
 import configparser as cfp
 import os
 
-CNF_PATH = "/etc/mysql/conf.d/replica.my.cnf"
+CNF_PATH = os.path.expanduser("~/replica.my.cnf")
 
 cnf = cfp.ConfigParser()
 cnf.read(CNF_PATH)
