@@ -1,22 +1,16 @@
-import configparser as cfp
+import configparser
 import os
 
-CNF_PATH = os.path.expanduser("~/replica.my.cnf")
+CNF_PATH = os.path.join(os.environ["HOME"], "replica.my.cnf")
 
-cnf = cfp.ConfigParser()
+cnf = configparser.ConfigParser()
 cnf.read(CNF_PATH)
 
-if cnf.has_section("client"):
-    user = cnf["client"].get("user")
-    password = cnf["client"].get("password")
-    host = "tools.db.svc.wikimedia.cloud"
-else:
-    user = os.getenv("TOOL_TOOLSDB_USER")
-    password = os.getenv("TOOL_TOOLSDB_PASSWORD")
-    host = "localhost"
+user = cnf["client"]["user"]
+password = cnf["client"]["password"]
 
 config = {
-    "host": host,
+    "host": "tools-db",
     "user": user,
     "password": password,
 }
