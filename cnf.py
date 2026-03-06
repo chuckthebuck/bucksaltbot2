@@ -1,16 +1,30 @@
-import configparser
+import configparser as cfp
 import os
 
-CNF_PATH = os.path.join(os.environ["HOME"], "replica.my.cnf")
+CNF_PATH = os.path.expanduser("~/replica.my.cnf")
 
-cnf = configparser.ConfigParser()
-cnf.read(CNF_PATH)
+def load_cnf():
+    cnf = cfp.ConfigParser()
+    if os.path.exists(CNF_PATH):
+        cnf.read(CNF_PATH)
+    return cnf
 
-user = cnf["client"]["user"]
-password = cnf["client"]["password"]
+cnf = load_cnf()
+
+if cnf.has_section("client"):
+    user = cnf.get("client", "user")
+    password = cnf.get("client", "password")
+    remote = "tools-db"
+else:
+    user = os.environ.get("TOOL_TOOLSDB_USER")
+    password = os.environ.get("TOOL_TOOLSDB_PASSWORD")
+    remote = "localhost"
+
+if os.environ.get("DOCKER"):
+    remote = "mariadb"
 
 config = {
-    "host": "tools-db",
+    "host": remote,
     "user": user,
     "password": password,
 }
