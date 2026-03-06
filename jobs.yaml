@@ -1,6 +1,4 @@
-# https://wikitech.wikimedia.org/wiki/Help:Toolforge/Jobs_framework
 
----
 # https://wikitech.wikimedia.org/wiki/Help:Toolforge/Jobs_framework
 
 ---
@@ -14,8 +12,7 @@
   emails: all
   mem: 512Mi
   cpu: "0.5"
-  env:
-    NOTDEV: "1"
+  
 
 - name: "buckbot-celery"
   command: "bash scripts/start_celery.sh"
@@ -26,8 +23,7 @@
   emails: all
   mem: 1Gi
   cpu: "1"
-  env:
-    NOTDEV: "1"
+
 
 - name: "buckbot-ping"
   command: "bash scripts/ping_celery.sh"
@@ -37,5 +33,4 @@
   emails: all
   mem: 256Mi
   cpu: "0.25"
-  env:
-    NOTDEV: "1"
+
