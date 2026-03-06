@@ -10,6 +10,8 @@
   emails: all
   mem: 512Mi
   cpu: "0.5"
+  env:
+   NOTDEV: "1"
 
 - name: "buckbot-celery"
   command: "mascelery"
@@ -20,6 +22,8 @@
   emails: all
   mem: 1Gi
   cpu: "1"
+  env:
+   NOTDEV: "1"
 
 - name: "buckbot-ping"
   command: "ping"
@@ -29,3 +33,5 @@
   emails: all
   mem: 256Mi
   cpu: "0.25"
+  env:
+   NOTDEV: "1"
