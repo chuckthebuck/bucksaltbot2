@@ -1,3 +1,3 @@
-web: ./scripts/start_gunicorn.sh
-mascelery: ./scripts/start_celery.sh
-ping: ./scripts/ping_celery.sh
+web: bash ./scripts/start_gunicorn.sh
+mascelery: bash ./scripts/start_celery.sh
+ping: bash ./scripts/ping_celery.sh

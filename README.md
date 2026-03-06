@@ -39,6 +39,30 @@ cd ..
 
 This triggers `toolforge build start .` from `bucksaltbot/`, then restarts webservice/jobs.
 
+#### Troubleshooting Toolforge builds
+
+If you see warnings like the following during `toolforge build start`, they are usually harmless platform-level credential setup messages and **not** the root cause of a failed build:
+
+```text
+warning: unsuccessful cred copy: ".docker" ... permission denied
+```
+
+The more important error is usually later in logs, e.g.:
+
+```text
+ERROR: No buildpack groups passed detection.
+```
+
+When this happens, verify that you started the build from the directory that contains your app source and buildpack marker files (`requirements.txt`, `package.json`, `package-lock.json`, `Procfile`).
+
+For this project, run from the repository root:
+
+```bash
+toolforge build start .
+```
+
+If building from GitHub URL, ensure the URL points at the repository root that contains those files (not a parent/child folder that omits them).
+
 ### With Docker
 
 The following points summarise the docker configuration of the project:
@@ -61,4 +85,3 @@ To run the tool, follow these steps:
 
 - Feel free to test the tool out and create a [ticket on phabricator](https://phabricator.wikimedia.org/project/board/7238/) if you find a bug or want to request a feature.
 - If you make fixes to the project's codebase/documentation, feel free to raise a Merge Request on the [GitLab repository](https://gitlab.wikimedia.org/toolforge-repos/matchandsplit/) for the project.
-
