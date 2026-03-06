@@ -15,7 +15,7 @@ done
 
 echo "Redis is ready"
 
-celery -A celery_init worker \
+celery -A celery_init:celery_app worker \
   --loglevel=INFO \
   --concurrency=4 \
   -n buckbot-worker@%h
