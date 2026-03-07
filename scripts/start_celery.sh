@@ -11,7 +11,7 @@ chmod 600 user-config.py
 
 echo "Starting Celery worker..."
 
-celery -A app:celery worker \
+celery -A celery_worker:app worker \
   --loglevel=INFO \
   --concurrency=2 \
   -n buckbot-worker@%h
