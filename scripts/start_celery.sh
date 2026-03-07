@@ -3,8 +3,6 @@ set -e
 
 cat user-config.tmpl > user-config.py
 
-echo "Starting Celery worker..."
-
 celery -A app:celery worker \
   --loglevel=INFO \
   --concurrency=2 \
