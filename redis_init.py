@@ -1,13 +1,10 @@
 import os
 import redis
 
-if os.getenv("TOOLFORGE"):
-    redis_url = "redis://redis.svc.tools.eqiad1.wikimedia.cloud:6379/0"
-elif os.getenv("DOCKER"):
-    redis_url = "redis://redis:6379/0"
-else:
-    redis_url = "redis://localhost:6379/9"
+REDIS_HOST = "redis.svc.tools.eqiad1.wikimedia.cloud"
+REDIS_PORT = 6379
+REDIS_DB = 9
 
-rediscl = redis.from_url(redis_url)
+redis_url = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
 
 REDIS_KEY_PREFIX = "mw-toolforge-buckbot"
