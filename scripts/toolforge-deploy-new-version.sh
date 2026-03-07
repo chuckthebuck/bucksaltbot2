@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -ex
-cd matchandsplit
+cd 
 git pull
-dologmsg "./matchandsplit/scripts/toolforge-deploy-new-version.sh"
-toolforge build start https://gitlab.wikimedia.org/toolforge-repos/matchandsplit.git
+dologmsg "./bucksaltbot2/scripts/toolforge-deploy-new-version.sh"
+toolforge build start https://github.com/chuckthebuck/bucksaltbot2
 toolforge webservice restart
-toolforge jobs delete mascelery
+toolforge jobs delete buckbot-celery
 toolforge jobs load jobs.yaml
