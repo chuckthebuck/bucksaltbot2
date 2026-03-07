@@ -2,7 +2,6 @@
 set -ex
 cd 
 git pull
-dologmsg "./bucksaltbot2/scripts/toolforge-deploy-new-version.sh"
 toolforge build start https://github.com/chuckthebuck/bucksaltbot2
 toolforge jobs delete buckbot-celery
 toolforge jobs delete buckbot-ping
