@@ -9,7 +9,6 @@
   continuous: true
   port: 8000
   mount: all
-  emails: all
   mem: 512Mi
   cpu: "0.5"
   
@@ -20,7 +19,6 @@
   continuous: true
   mount: all
   health-check-script: "bash scripts/ping_celery.sh"
-  emails: all
   mem: 1Gi
   cpu: "1"
 
@@ -30,7 +28,6 @@
   image: tool-buckbot/tool-buckbot:latest
   continuous: true
   mount: all
-  emails: all
   mem: 256Mi
   cpu: "0.25"
 
