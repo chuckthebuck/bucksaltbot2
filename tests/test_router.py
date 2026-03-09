@@ -319,11 +319,36 @@ def test_login_redirects_to_index_when_consumer_creds_missing(client):
     assert resp.headers["Location"].endswith("/")
 
 
+def test_login_uses_buckbot_callback_url_by_default(client):
+    with patch.dict("router.os.environ", {"TOOL_NAME": "", "USER_OAUTH_CALLBACK_URL": "", "USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False), \
+         patch("router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))) as mock_initiate:
+        resp = client.get("/login")
+
+    assert resp.status_code == 302
+    assert mock_initiate.call_args.kwargs["callback"] == "https://buckbot.toolforge.org/oauth-callback"
+
+
+def test_oauth_callback_failure_redirects_index_not_referrer(client):
+    with client.session_transaction() as sess:
+        sess["request_token"] = {"key": "rk", "secret": "rs"}
+        sess["referrer"] = "/rollback-queue"
+
+    with patch.dict("router.os.environ", {"USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False), \
+         patch("router.mwoauth.complete", side_effect=RuntimeError("bad oauth")):
+        resp = client.get("/oauth-callback")
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/")
+
+
+
 def test_oauth_callback_alias_routes_exist(client):
     resp1 = client.get("/oauth-callback")
     resp2 = client.get("/mwoauth-callback")
+    resp3 = client.get("/buckbot-oauth-callback")
     assert resp1.status_code == 302
     assert resp2.status_code == 302
+    assert resp3.status_code == 302
 
 
 # ── GET /logout ────────────────────────────────────────────────────────────────

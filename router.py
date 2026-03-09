@@ -63,25 +63,13 @@ def _deserialize_request_token(payload):
             return mwoauth.RequestToken(key, secret)
         raise
 
-def _rollback_api_actor():
-    username = session.get('username')
-    if username:
-        return username
+def _oauth_callback_url():
+    configured = os.environ.get('USER_OAUTH_CALLBACK_URL')
+    if configured:
+        return configured
 
-    status_token = request.headers.get('X-Status-Token')
-    expected_token = os.environ.get('STATUS_API_TOKEN')
-    if status_token and expected_token and secrets.compare_digest(status_token, expected_token):
-        return os.environ.get('STATUS_API_USER', 'status-site')
-
-    return None
-
-
-def _user_consumer_token():
-    key = os.environ.get('USER_OAUTH_CONSUMER_KEY')
-    secret = os.environ.get('USER_OAUTH_CONSUMER_SECRET')
-    if not key or not secret:
-        return None
-    return mwoauth.ConsumerToken(key, secret)
+    tool_name = os.environ.get('TOOL_NAME') or 'buckbot'
+    return f'https://{tool_name}.toolforge.org/oauth-callback'
 
 
 def _rollback_api_actor():
@@ -299,6 +287,7 @@ def login():
         redirect_loc, request_token = mwoauth.initiate(
             'https://meta.wikimedia.org/w/index.php',
             consumer_token,
+            callback=_oauth_callback_url(),
         )
     except Exception:
         app.logger.exception('mwoauth.initiate failed')
@@ -315,6 +304,7 @@ def login():
 @app.route('/mas-oauth-callback')
 @app.route('/oauth-callback')
 @app.route('/mwoauth-callback')
+@app.route('/buckbot-oauth-callback')
 def oauth_callback():
     _ensure_secret_key()
     if 'request_token' not in session:
@@ -324,6 +314,8 @@ def oauth_callback():
     if consumer_token is None:
         app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
         return redirect(url_for('index'))
+
+    authenticated = False
 
     try:
         access_token = mwoauth.complete(
@@ -342,10 +334,13 @@ def oauth_callback():
     else:
         session['access_token'] = dict(zip(access_token._fields, access_token))
         session['username'] = identity['username']
+        authenticated = True
 
     referrer = session.get('referrer')
     session['referrer'] = None
-    return redirect(referrer or '/')
+    if authenticated:
+        return redirect(referrer or '/')
+    return redirect(url_for('index'))
 
 
 @app.route('/logout')
