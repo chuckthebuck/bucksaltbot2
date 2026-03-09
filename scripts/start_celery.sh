@@ -14,4 +14,5 @@ echo "Starting Celery worker..."
 celery -A celery_worker:app worker \
   --loglevel=INFO \
   --concurrency=2 \
+  -Q $REDIS_KEY_PREFIX-celery-queue \
   -n buckbot-worker@%h
