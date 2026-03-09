@@ -1,33 +1,23 @@
-
-# https://wikitech.wikimedia.org/wiki/Help:Toolforge/Jobs_framework
-
----
-
-- name: "buckbot-web"
-  command: "bash scripts/start_gunicorn.sh"
-  image: tool-buckbot/tool-buckbot:latest
+- command: bash scripts/start_celery.sh
   continuous: true
-  port: 8000
-  mount: all
-  mem: 512Mi
-  cpu: "0.5"
-  
-
-- name: "buckbot-celery"
-  command: "bash scripts/start_celery.sh"
+  cpu: '1.0'
+  health-check-script: bash scripts/ping_celery.sh
   image: tool-buckbot/tool-buckbot:latest
-  continuous: true
+  mem: 1.0Gi
   mount: all
-  health-check-script: "bash scripts/ping_celery.sh"
-  mem: 1Gi
-  cpu: "1"
-
-
-- name: "buckbot-ping"
-  command: "bash scripts/ping_celery.sh"
+  name: buckbot-celery
+- command: bash scripts/ping_celery.sh
+  continuous: true
+  cpu: '0.25'
   image: tool-buckbot/tool-buckbot:latest
-  continuous: true
+  mem: 0.25Gi
   mount: all
-  mem: 256Mi
-  cpu: "0.25"
+  name: buckbot-ping
+- command: bash scripts/start_gunicorn.sh
+  continuous: true
+  cpu: '0.5'
+  image: tool-buckbot/tool-buckbot:latest
+  mount: all
+  name: buckbot-web
+  port: '8000'
 
