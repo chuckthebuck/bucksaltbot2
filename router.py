@@ -76,6 +76,27 @@ def _rollback_api_actor():
     return None
 
 
+def _user_consumer_token():
+    key = os.environ.get('USER_OAUTH_CONSUMER_KEY')
+    secret = os.environ.get('USER_OAUTH_CONSUMER_SECRET')
+    if not key or not secret:
+        return None
+    return mwoauth.ConsumerToken(key, secret)
+
+
+def _rollback_api_actor():
+    username = session.get('username')
+    if username:
+        return username
+
+    status_token = request.headers.get('X-Status-Token')
+    expected_token = os.environ.get('STATUS_API_TOKEN')
+    if status_token and expected_token and secrets.compare_digest(status_token, expected_token):
+        return os.environ.get('STATUS_API_USER', 'status-site')
+
+    return None
+
+
 @app.route('/goto')
 def goto():
     target = request.args.get('tab')
