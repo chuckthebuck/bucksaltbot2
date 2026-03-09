@@ -41,12 +41,17 @@ def _update_item(item_id: int, status: str, error: str | None = None):
 
 
 def _bot_site() -> pywikibot.Site:
-    username = os.environ.get("BOT_USERNAME")
-    password = os.environ.get("BOT_PASSWORD")
-    if not username or not password:
-        raise RuntimeError("BOT_USERNAME and BOT_PASSWORD must be configured")
+    consumer_token = os.environ.get("CONSUMER_TOKEN")
+    consumer_secret = os.environ.get("CONSUMER_SECRET")
+    access_token = os.environ.get("ACCESS_TOKEN")
+    access_secret = os.environ.get("ACCESS_SECRET")
+    if not all([consumer_token, consumer_secret, access_token, access_secret]):
+        raise RuntimeError(
+            "CONSUMER_TOKEN, CONSUMER_SECRET, ACCESS_TOKEN and ACCESS_SECRET must be configured"
+        )
+
     site = pywikibot.Site("commons", "commons")
-    site.login(user=username, password=password)
+    site.login()
     return site
 
 
@@ -56,8 +61,12 @@ def process_rollback_job(job_id: int):
     if not job:
         return
 
+    _, requested_by, current_status, dry_run = job
+
+    if current_status == "canceled":
+        return
+
     _update_job_status(job_id, "running")
-    _, requested_by, _, dry_run = job
 
     site = None
     if not dry_run:
@@ -65,6 +74,10 @@ def process_rollback_job(job_id: int):
 
     failed = 0
     for item_id, file_title, target_user, summary in items:
+        refreshed_job, _ = _fetch_job(job_id)
+        if refreshed_job and refreshed_job[2] == "canceled":
+            _update_item(item_id, "canceled", "Canceled by requester")
+            continue
         try:
             if dry_run:
                 _update_item(item_id, "completed", None)

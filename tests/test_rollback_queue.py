@@ -100,7 +100,7 @@ def test_process_rollback_job_dry_run_completes_without_bot_login():
          patch("rollback_queue._update_item") as mock_update_item, \
          patch("rollback_queue._bot_site") as mock_bot_site:
 
-        rollback_queue.process_rollback_job.apply(args=[1])
+        rollback_queue.process_rollback_job.run(1)
 
     mock_bot_site.assert_not_called()
     assert mock_update_item.call_count == len(items)
@@ -124,7 +124,7 @@ def test_process_rollback_job_dry_run_sets_running_then_completed():
          patch("rollback_queue._update_item"), \
          patch("rollback_queue._bot_site"):
 
-        rollback_queue.process_rollback_job.apply(args=[1])
+        rollback_queue.process_rollback_job.run(1)
 
     statuses = [c.args[1] for c in mock_update_job.call_args_list]
     assert statuses[0] == "running"
@@ -151,7 +151,7 @@ def test_process_rollback_job_live_run_obtains_mw_rollback_token():
          patch("rollback_queue._update_item"), \
          patch("rollback_queue._bot_site", return_value=mock_site):
 
-        rollback_queue.process_rollback_job.apply(args=[1])
+        rollback_queue.process_rollback_job.run(1)
 
     mock_site.simple_request.assert_called_once_with(
         action="rollback",
@@ -181,7 +181,7 @@ def test_process_rollback_job_live_run_uses_default_summary_when_none():
          patch("rollback_queue._update_item"), \
          patch("rollback_queue._bot_site", return_value=mock_site):
 
-        rollback_queue.process_rollback_job.apply(args=[1])
+        rollback_queue.process_rollback_job.run(1)
 
     called_summary = mock_site.simple_request.call_args.kwargs["summary"]
     assert "alice" in called_summary
@@ -202,7 +202,7 @@ def test_process_rollback_job_live_run_marks_item_completed_on_success():
          patch("rollback_queue._update_item") as mock_update_item, \
          patch("rollback_queue._bot_site", return_value=mock_site):
 
-        rollback_queue.process_rollback_job.apply(args=[1])
+        rollback_queue.process_rollback_job.run(1)
 
     mock_update_item.assert_called_once_with(10, "completed", None)
 
@@ -223,7 +223,7 @@ def test_process_rollback_job_live_run_marks_item_failed_on_api_error():
          patch("rollback_queue._update_item") as mock_update_item, \
          patch("rollback_queue._bot_site", return_value=mock_site):
 
-        rollback_queue.process_rollback_job.apply(args=[1])
+        rollback_queue.process_rollback_job.run(1)
 
     mock_update_item.assert_called_once_with(10, "failed", "API error")
     # Final job status should be "failed" since one item failed
@@ -238,17 +238,65 @@ def test_process_rollback_job_skips_processing_when_job_not_found():
     with patch("rollback_queue._fetch_job", return_value=(None, [])), \
          patch("rollback_queue._update_job_status") as mock_update_job:
 
-        rollback_queue.process_rollback_job.apply(args=[404])
+        rollback_queue.process_rollback_job.run(404)
 
     mock_update_job.assert_not_called()
 
 
+def test_process_rollback_job_returns_immediately_when_already_canceled():
+    import rollback_queue
+
+    job = (1, "alice", "canceled", 1)
+    with patch("rollback_queue._fetch_job", return_value=(job, [])), \
+         patch("rollback_queue._update_job_status") as mock_update_job:
+        rollback_queue.process_rollback_job.run(1)
+
+    mock_update_job.assert_not_called()
+
+
+def test_process_rollback_job_marks_item_canceled_if_job_canceled_mid_run():
+    import rollback_queue
+
+    queued_job = (1, "alice", "queued", 1)
+    canceled_job = (1, "alice", "canceled", 1)
+    items = [(10, "File:A.jpg", "Vandal", None)]
+
+    with patch("rollback_queue._fetch_job", side_effect=[(queued_job, items), (canceled_job, items)]), \
+         patch("rollback_queue._update_job_status"), \
+         patch("rollback_queue._update_item") as mock_update_item, \
+         patch("rollback_queue._bot_site"):
+        rollback_queue.process_rollback_job.run(1)
+
+    mock_update_item.assert_called_once_with(10, "canceled", "Canceled by requester")
+
+
 # ── _bot_site raises without credentials ─────────────────────────────────────
 
-def test_bot_site_raises_without_env_vars(monkeypatch):
-    """_bot_site must raise RuntimeError when BOT_USERNAME/BOT_PASSWORD are missing."""
+def test_bot_site_raises_without_oauth_env_vars(monkeypatch):
+    """_bot_site must raise RuntimeError when OAuth credentials are missing."""
     import rollback_queue
-    monkeypatch.delenv("BOT_USERNAME", raising=False)
-    monkeypatch.delenv("BOT_PASSWORD", raising=False)
-    with pytest.raises(RuntimeError, match="BOT_USERNAME"):
+    monkeypatch.delenv("CONSUMER_TOKEN", raising=False)
+    monkeypatch.delenv("CONSUMER_SECRET", raising=False)
+    monkeypatch.delenv("ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("ACCESS_SECRET", raising=False)
+    with pytest.raises(RuntimeError, match="CONSUMER_TOKEN"):
         rollback_queue._bot_site()
+
+
+def test_bot_site_logs_in_using_pywikibot_oauth(monkeypatch):
+    import rollback_queue
+
+    monkeypatch.setenv("CONSUMER_TOKEN", "ct")
+    monkeypatch.setenv("CONSUMER_SECRET", "cs")
+    monkeypatch.setenv("ACCESS_TOKEN", "at")
+    monkeypatch.setenv("ACCESS_SECRET", "as")
+
+    with patch("rollback_queue.pywikibot.Site") as mock_site_cls:
+        mock_site = MagicMock()
+        mock_site_cls.return_value = mock_site
+
+        returned = rollback_queue._bot_site()
+
+    mock_site_cls.assert_called_once_with("commons", "commons")
+    mock_site.login.assert_called_once_with()
+    assert returned is mock_site
