@@ -13,7 +13,67 @@ if not os.environ.get('NOTDEV'):
     from dotenv import load_dotenv
     load_dotenv()
 
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
+
+
+def _ensure_secret_key():
+    configured = app.config.get('SECRET_KEY') or os.environ.get('SECRET_KEY')
+    if not configured:
+        configured = os.environ.get('FALLBACK_SECRET_KEY', 'dev-insecure-secret-change-me')
+    app.config['SECRET_KEY'] = configured
+    return configured
+
+
+_ensure_secret_key()
+
+
+def _user_consumer_token():
+    key = os.environ.get('USER_OAUTH_CONSUMER_KEY')
+    secret = os.environ.get('USER_OAUTH_CONSUMER_SECRET')
+    if not key or not secret:
+        return None
+    return mwoauth.ConsumerToken(key, secret)
+
+
+
+
+def _serialize_request_token(request_token):
+    if isinstance(request_token, dict):
+        return request_token
+
+    token_fields = getattr(request_token, '_fields', None)
+    if token_fields:
+        return dict(zip(token_fields, request_token))
+
+    if isinstance(request_token, (tuple, list)) and len(request_token) == 2:
+        return {'key': request_token[0], 'secret': request_token[1]}
+
+    raise ValueError('Unsupported request token format')
+
+
+def _deserialize_request_token(payload):
+    if not isinstance(payload, dict):
+        raise ValueError('request_token payload must be a dict')
+
+    try:
+        return mwoauth.RequestToken(**payload)
+    except TypeError:
+        key = payload.get('key')
+        secret = payload.get('secret')
+        if key and secret:
+            return mwoauth.RequestToken(key, secret)
+        raise
+
+def _rollback_api_actor():
+    username = session.get('username')
+    if username:
+        return username
+
+    status_token = request.headers.get('X-Status-Token')
+    expected_token = os.environ.get('STATUS_API_TOKEN')
+    if status_token and expected_token and secrets.compare_digest(status_token, expected_token):
+        return os.environ.get('STATUS_API_USER', 'status-site')
+
+    return None
 
 
 def _user_consumer_token():
@@ -227,6 +287,7 @@ def index():
 
 @app.route('/login')
 def login():
+    _ensure_secret_key()
     if request.args.get('referrer'):
         session['referrer'] = request.args.get('referrer')
 
@@ -243,7 +304,11 @@ def login():
         app.logger.exception('mwoauth.initiate failed')
         return redirect(url_for('index'))
 
-    session['request_token'] = dict(zip(request_token._fields, request_token))
+    try:
+        session['request_token'] = _serialize_request_token(request_token)
+    except Exception:
+        app.logger.exception('Unable to serialize OAuth request token')
+        return redirect(url_for('index'))
     return redirect(redirect_loc)
 
 
@@ -251,6 +316,7 @@ def login():
 @app.route('/oauth-callback')
 @app.route('/mwoauth-callback')
 def oauth_callback():
+    _ensure_secret_key()
     if 'request_token' not in session:
         return redirect(url_for('index'))
 
@@ -263,7 +329,7 @@ def oauth_callback():
         access_token = mwoauth.complete(
             'https://meta.wikimedia.org/w/index.php',
             consumer_token,
-            mwoauth.RequestToken(**session['request_token']),
+            _deserialize_request_token(session['request_token']),
             request.query_string,
         )
         identity = mwoauth.identify(

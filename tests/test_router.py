@@ -300,6 +300,18 @@ def test_index_returns_200(client):
     assert resp.status_code == 200
 
 
+def test_login_does_not_500_when_secret_key_missing(client):
+    import router
+    original = router.app.config.get("SECRET_KEY")
+    router.app.config["SECRET_KEY"] = None
+    with patch.dict("router.os.environ", {"SECRET_KEY": "", "FALLBACK_SECRET_KEY": "fallback-secret", "USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False), \
+         patch("router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))):
+        resp = client.get("/login")
+    router.app.config["SECRET_KEY"] = original
+    assert resp.status_code == 302
+
+
+
 def test_login_redirects_to_index_when_consumer_creds_missing(client):
     with patch.dict("router.os.environ", {"USER_OAUTH_CONSUMER_KEY": "", "USER_OAUTH_CONSUMER_SECRET": ""}, clear=False):
         resp = client.get("/login")
