@@ -14,11 +14,11 @@ cnf = load_cnf()
 if cnf.has_section("client"):
     user = cnf.get("client", "user")
     password = cnf.get("client", "password")
-    remote = "tools-db"
+    remote = "tools-db.svc.eqiad1.wikimedia.cloud"
 else:
     user = os.environ.get("TOOL_TOOLSDB_USER")
     password = os.environ.get("TOOL_TOOLSDB_PASSWORD")
-    remote = "localhost"
+    remote = "tools-db.svc.eqiad1.wikimedia.cloud"
 
 if os.environ.get("DOCKER"):
     remote = "mariadb"
