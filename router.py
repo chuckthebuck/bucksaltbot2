@@ -284,6 +284,7 @@ def login():
         session['referrer'] = request.args.get('referrer')
 
     consumer_token = _user_consumer_token()
+    app.logger.error("KEY: %s", os.environ.get("USER_OAUTH_CONSUMER_KEY"))
 
     if consumer_token is None:
         app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
