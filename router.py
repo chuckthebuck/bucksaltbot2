@@ -99,20 +99,23 @@ def goto():
 
 @app.route('/rollback-queue')
 def rollback_queue_ui():
-    if session.get('username') is None:
-        return redirect(url_for('login', referrer='/rollback-queue'))
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                '''SELECT id, requested_by, status, dry_run, created_at
-                   FROM rollback_jobs
-                   WHERE requested_by=%s
-                   ORDER BY id DESC
-                   LIMIT 100''',
-                (session['username'],),
-            )
-            jobs = cursor.fetchall()
-    return render_template('rollback_queue.html', jobs=jobs, username=session['username'], type='rollback-queue')
+    username = session.get('username')
+    jobs = []
+
+    if username:
+        with get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    '''SELECT id, requested_by, status, dry_run, created_at
+                       FROM rollback_jobs
+                       WHERE requested_by=%s
+                       ORDER BY id DESC
+                       LIMIT 100''',
+                    (username,),
+                )
+                jobs = cursor.fetchall()
+
+    return render_template('rollback_queue.html', jobs=jobs, username=username, type='rollback-queue')
 
 
 @app.route('/api/v1/rollback/jobs', methods=['POST'])

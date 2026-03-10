@@ -1,7 +1,46 @@
 {% extends 'base.html' %}
 {% block content %}
     <h2>Rollback job queue</h2>
-    <p>This queue receives jobs from the Commons userscript and tracks processing in the bucksaltbot API/database.</p>
+    <p>Use this page to authenticate and submit rollback jobs directly from the website.</p>
+
+    <section class="rollback-tool-section">
+        <h3>Create rollback job</h3>
+        <p>You can authenticate either by Wikimedia login (if shown in header) or with a status token.</p>
+        <form id="create-job-form" class="rollback-tool-form">
+            <label for="requested-by">Requested by</label>
+            <input id="requested-by" name="requested_by" type="text" value="{{ username or '' }}" placeholder="Username or status actor" required>
+
+            <label for="status-token">Status token (optional when logged in)</label>
+            <input id="status-token" name="status_token" type="password" placeholder="X-Status-Token value">
+
+            <label for="job-items">Items (one per line: <code>File:Title.jpg|TargetUser|Optional summary</code>)</label>
+            <textarea id="job-items" name="items" rows="8" placeholder="File:Test.jpg|ExampleVandal|Rollback from web tool" required></textarea>
+
+            <label class="inline-checkbox">
+                <input id="dry-run" name="dry_run" type="checkbox">
+                Dry run (do not perform real rollback)
+            </label>
+
+            <button type="submit" class="cdx-button cdx-button--action-progressive">Create job</button>
+        </form>
+        <pre id="create-job-result" class="log-pre" style="display:none"></pre>
+    </section>
+
+    <section class="rollback-tool-section">
+        <h3>Cancel rollback job</h3>
+        <form id="cancel-job-form" class="rollback-tool-form">
+            <label for="cancel-job-id">Job ID</label>
+            <input id="cancel-job-id" name="job_id" type="number" min="1" required>
+
+            <label for="cancel-status-token">Status token (optional when logged in)</label>
+            <input id="cancel-status-token" name="status_token" type="password" placeholder="X-Status-Token value">
+
+            <button type="submit" class="cdx-button cdx-button--destructive">Cancel job</button>
+        </form>
+        <pre id="cancel-job-result" class="log-pre" style="display:none"></pre>
+    </section>
+
+    <h3>Recent jobs</h3>
     <table class="wikitable">
         <tbody>
             <tr>
@@ -22,4 +61,91 @@
             {% endfor %}
         </tbody>
     </table>
+
+    <script>
+    function parseItems(lines) {
+        return lines
+            .split(/\n+/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((line) => {
+                const [title, user, ...summaryParts] = line.split('|').map((part) => part.trim());
+                return {
+                    title,
+                    user,
+                    summary: summaryParts.join('|') || null,
+                };
+            })
+            .filter((item) => item.title && item.user);
+    }
+
+    function showResult(elementId, payload) {
+        const el = document.getElementById(elementId);
+        el.style.display = '';
+        el.textContent = JSON.stringify(payload, null, 2);
+    }
+
+    document.getElementById('create-job-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const requestedBy = document.getElementById('requested-by').value.trim();
+        const token = document.getElementById('status-token').value.trim();
+        const itemsText = document.getElementById('job-items').value;
+        const dryRun = document.getElementById('dry-run').checked;
+
+        const items = parseItems(itemsText);
+        if (!items.length) {
+            showResult('create-job-result', { error: 'No valid items. Use: File:Title|User|Summary' });
+            return;
+        }
+
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) {
+            headers['X-Status-Token'] = token;
+        }
+
+        const response = await fetch('/api/v1/rollback/jobs', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                requested_by: requestedBy,
+                items,
+                dry_run: dryRun,
+            }),
+        });
+
+        let body;
+        try {
+            body = await response.json();
+        } catch {
+            body = { detail: 'Non-JSON response', status: response.status };
+        }
+
+        showResult('create-job-result', { status: response.status, body });
+    });
+
+    document.getElementById('cancel-job-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const jobId = document.getElementById('cancel-job-id').value;
+        const token = document.getElementById('cancel-status-token').value.trim();
+
+        const headers = {};
+        if (token) {
+            headers['X-Status-Token'] = token;
+        }
+
+        const response = await fetch(`/api/v1/rollback/jobs/${jobId}`, {
+            method: 'DELETE',
+            headers,
+        });
+
+        let body;
+        try {
+            body = await response.json();
+        } catch {
+            body = { detail: 'Non-JSON response', status: response.status };
+        }
+
+        showResult('cancel-job-result', { status: response.status, body });
+    });
+    </script>
 {% endblock %}

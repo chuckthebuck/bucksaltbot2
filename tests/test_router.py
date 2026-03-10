@@ -278,10 +278,17 @@ def test_list_jobs_response_shape(client):
 
 # ── GET /rollback-queue (UI) ──────────────────────────────────────────────────
 
-def test_rollback_queue_ui_redirects_unauthenticated_user(client):
+def test_rollback_queue_ui_returns_200_for_unauthenticated_user(client):
     resp = client.get("/rollback-queue")
-    assert resp.status_code == 302
-    assert "/login" in resp.headers["Location"]
+    assert resp.status_code == 200
+
+
+def test_rollback_queue_ui_contains_web_tool_forms(client):
+    resp = client.get("/rollback-queue")
+    html = resp.get_data(as_text=True)
+    assert "Create rollback job" in html
+    assert "Cancel rollback job" in html
+    assert "Dry run" in html
 
 
 def test_rollback_queue_ui_returns_200_for_authenticated_user(client):
@@ -319,8 +326,8 @@ def test_login_redirects_to_index_when_consumer_creds_missing(client):
     assert resp.headers["Location"].endswith("/")
 
 
-def test_login_uses_buckbot_callback_url_by_default(client):
-    with patch.dict("router.os.environ", {"TOOL_NAME": "", "USER_OAUTH_CALLBACK_URL": "", "USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False), \
+def test_login_uses_current_site_callback_url_by_default(client):
+    with patch.dict("router.os.environ", {"USER_OAUTH_CALLBACK_URL": "", "USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False), \
          patch("router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))) as mock_initiate:
         resp = client.get("/login")
 
