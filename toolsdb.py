@@ -38,6 +38,6 @@ def get_conn():
         user=config['user'],
         password=config['password'],
         host=config['host'],
-        database=f'{config["username"]}__match_and_split',
+        database=f'{config["user"]}__match_and_split',
     )
     return dbconn
