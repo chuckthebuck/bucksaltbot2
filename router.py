@@ -291,7 +291,7 @@ def login():
 
     try:
         redirect_loc, request_token = mwoauth.initiate(
-            "https://meta.wikimedia.org/w/index.php",
+            "https://meta.wikimedia.org",
             consumer_token,
             callback=_oauth_callback_url(),
         )
