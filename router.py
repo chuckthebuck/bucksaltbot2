@@ -68,9 +68,8 @@ def _oauth_callback_url():
     if configured:
         return configured
 
-    # Default to this running site's canonical callback path so OAuth returns
-    # to the same origin the user used for login.
-    return request.url_root.rstrip('/') + '/oauth-callback'
+    tool_name = os.environ.get('TOOL_NAME') or 'buckbot'
+    return f'https://{tool_name}.toolforge.org/mas-oauth-callback'
 
 
 def _rollback_api_actor():

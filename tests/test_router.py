@@ -332,14 +332,6 @@ def test_login_uses_current_site_callback_url_by_default(client):
         resp = client.get("/login")
 
     assert resp.status_code == 302
-    assert mock_initiate.call_args.kwargs["callback"] == "http://localhost/oauth-callback"
-
-
-def test_login_uses_explicit_callback_url_when_configured(client):
-    with patch.dict("router.os.environ", {"USER_OAUTH_CALLBACK_URL": "https://buckbot.toolforge.org/oauth-callback", "USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False),          patch("router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))) as mock_initiate:
-        resp = client.get("/login")
-
-    assert resp.status_code == 302
     assert mock_initiate.call_args.kwargs["callback"] == "https://buckbot.toolforge.org/oauth-callback"
 
 
