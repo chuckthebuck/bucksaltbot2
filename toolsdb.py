@@ -4,7 +4,7 @@ from cnf import config
 
 
 def init_db():
-    initdbconn = sql.connections.Connection(user=config['username'], password=config['password'], host=config['host'])
+    initdbconn = sql.connections.Connection(user=config['user'], password=config['password'], host=config['host'])
     with initdbconn.cursor() as cursor:
         cursor.execute(f'CREATE DATABASE IF NOT EXISTS {config["user"]}__match_and_split;')
         cursor.execute(f'USE {config["user"]}__match_and_split;')
