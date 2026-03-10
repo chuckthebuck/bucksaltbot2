@@ -27,7 +27,8 @@ def init_db():
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (`id`),
             INDEX (`job_id`)
-        )''')
+        )''')  
+    initdbconn.commit()
     initdbconn.close()
 
 
