@@ -289,8 +289,10 @@ def login():
 
     try:
         redirect_loc, request_token = mwoauth.initiate(
-            "https://meta.wikimedia.org/w/index.php",
-            consumer_token
+    "https://meta.wikimedia.org/w/index.php",
+    consumer_token,
+    callback=_oauth_callback_url(),
+)
         )
     except Exception:
         app.logger.exception('mwoauth.initiate failed')
