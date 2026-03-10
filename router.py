@@ -286,11 +286,13 @@ def login():
     if consumer_token is None:
         app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
         return redirect(url_for('index'))
+
     try:
         redirect_loc, request_token = mwoauth.initiate(
-        "https://meta.wikimedia.org/w/index.php",
-        consumer_token,
-        callback=_oauth_callback_url(),
+            "https://meta.wikimedia.org/w/index.php",
+            consumer_token,
+            callback=_oauth_callback_url(),
+        )
     except Exception:
         app.logger.exception('mwoauth.initiate failed')
         return redirect(url_for('index'))
@@ -300,8 +302,8 @@ def login():
     except Exception:
         app.logger.exception('Unable to serialize OAuth request token')
         return redirect(url_for('index'))
-    return redirect(redirect_loc)
 
+    return redirect(redirect_loc)
 
 @app.route('/mas-oauth-callback')
 @app.route('/oauth-callback')
