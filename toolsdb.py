@@ -35,7 +35,7 @@ def init_db():
 def get_conn():
     init_db()
     dbconn = sql.connections.Connection(
-        user=config['username'],
+        user=config['user'],
         password=config['password'],
         host=config['host'],
         database=f'{config["username"]}__match_and_split',
