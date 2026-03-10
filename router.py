@@ -1,4 +1,5 @@
 import os
+import secrets
 
 import mwoauth
 import mwoauth.flask
@@ -12,7 +13,77 @@ if not os.environ.get('NOTDEV'):
     from dotenv import load_dotenv
     load_dotenv()
 
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
+
+
+def _ensure_secret_key():
+    configured = app.config.get('SECRET_KEY') or os.environ.get('SECRET_KEY')
+    if not configured:
+        configured = os.environ.get('FALLBACK_SECRET_KEY', 'dev-insecure-secret-change-me')
+    app.config['SECRET_KEY'] = configured
+    return configured
+
+
+_ensure_secret_key()
+
+
+def _user_consumer_token():
+    key = os.environ.get('USER_OAUTH_CONSUMER_KEY')
+    secret = os.environ.get('USER_OAUTH_CONSUMER_SECRET')
+    if not key or not secret:
+        return None
+    return mwoauth.ConsumerToken(key, secret)
+
+
+
+
+def _serialize_request_token(request_token):
+    if isinstance(request_token, dict):
+        return request_token
+
+    token_fields = getattr(request_token, '_fields', None)
+    if token_fields:
+        return dict(zip(token_fields, request_token))
+
+    if isinstance(request_token, (tuple, list)) and len(request_token) == 2:
+        return {'key': request_token[0], 'secret': request_token[1]}
+
+    raise ValueError('Unsupported request token format')
+
+
+def _deserialize_request_token(payload):
+    if not isinstance(payload, dict):
+        raise ValueError('request_token payload must be a dict')
+
+    try:
+        return mwoauth.RequestToken(**payload)
+    except TypeError:
+        key = payload.get('key')
+        secret = payload.get('secret')
+        if key and secret:
+            return mwoauth.RequestToken(key, secret)
+        raise
+
+def _oauth_callback_url():
+    configured = os.environ.get('USER_OAUTH_CALLBACK_URL')
+    if configured:
+        return configured
+
+    # Default to this running site's canonical callback path so OAuth returns
+    # to the same origin the user used for login.
+    return request.url_root.rstrip('/') + '/oauth-callback'
+
+
+def _rollback_api_actor():
+    username = session.get('username')
+    if username:
+        return username
+
+    status_token = request.headers.get('X-Status-Token')
+    expected_token = os.environ.get('STATUS_API_TOKEN')
+    if status_token and expected_token and secrets.compare_digest(status_token, expected_token):
+        return os.environ.get('STATUS_API_USER', 'status-site')
+
+    return None
 
 
 @app.route('/goto')
@@ -29,33 +100,37 @@ def goto():
 
 @app.route('/rollback-queue')
 def rollback_queue_ui():
-    if session.get('username') is None:
-        return redirect(url_for('login', referrer='/rollback-queue'))
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                '''SELECT id, requested_by, status, dry_run, created_at
-                   FROM rollback_jobs
-                   WHERE requested_by=%s
-                   ORDER BY id DESC
-                   LIMIT 100''',
-                (session['username'],),
-            )
-            jobs = cursor.fetchall()
-    return render_template('rollback_queue.html', jobs=jobs, username=session['username'], type='rollback-queue')
+    username = session.get('username')
+    jobs = []
+
+    if username:
+        with get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    '''SELECT id, requested_by, status, dry_run, created_at
+                       FROM rollback_jobs
+                       WHERE requested_by=%s
+                       ORDER BY id DESC
+                       LIMIT 100''',
+                    (username,),
+                )
+                jobs = cursor.fetchall()
+
+    return render_template('rollback_queue.html', jobs=jobs, username=username, type='rollback-queue')
 
 
 @app.route('/api/v1/rollback/jobs', methods=['POST'])
 def create_rollback_job():
-    if session.get('username') is None:
+    actor = _rollback_api_actor()
+    if actor is None:
         return jsonify({'detail': 'Not authenticated'}), 401
 
     payload = request.get_json(silent=True) or {}
-    requested_by = payload.get('requested_by') or ''
+    requested_by = payload.get('requested_by') or actor
     items = payload.get('items') or payload.get('files') or []
     dry_run = bool(payload.get('dry_run', False))
 
-    if requested_by != session['username']:
+    if requested_by != actor:
         return jsonify({'detail': 'requested_by must match authenticated user'}), 403
     if not isinstance(items, list) or len(items) == 0:
         return jsonify({'detail': 'items must be a non-empty list'}), 400
@@ -85,6 +160,42 @@ def create_rollback_job():
 
     process_rollback_job.delay(job_id)
     return jsonify({'job_id': job_id, 'status': 'queued'})
+
+
+@app.route('/api/v1/rollback/jobs/<int:job_id>', methods=['DELETE'])
+def cancel_rollback_job(job_id):
+    actor = _rollback_api_actor()
+    if actor is None:
+        return jsonify({'detail': 'Not authenticated'}), 401
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                'SELECT id, requested_by, status FROM rollback_jobs WHERE id=%s',
+                (job_id,),
+            )
+            job = cursor.fetchone()
+            if not job:
+                return jsonify({'detail': 'Job not found'}), 404
+            if job[1] != actor:
+                return jsonify({'detail': 'Forbidden'}), 403
+
+            if job[2] in {'completed', 'failed', 'canceled'}:
+                return jsonify({'job_id': job_id, 'status': job[2]})
+
+            cursor.execute(
+                'UPDATE rollback_jobs SET status=%s WHERE id=%s',
+                ('canceled', job_id),
+            )
+            cursor.execute(
+                '''UPDATE rollback_job_items
+                   SET status=%s, error=%s
+                   WHERE job_id=%s AND status IN (%s, %s)''',
+                ('canceled', 'Canceled by requester', job_id, 'queued', 'running'),
+            )
+        conn.commit()
+
+    return jsonify({'job_id': job_id, 'status': 'canceled'})
 
 
 @app.route('/api/v1/rollback/jobs/<int:job_id>')
@@ -168,41 +279,53 @@ def index():
 
 @app.route('/login')
 def login():
+    _ensure_secret_key()
     if request.args.get('referrer'):
         session['referrer'] = request.args.get('referrer')
 
-    consumer_token = mwoauth.ConsumerToken(
-        os.environ.get('USER_OAUTH_CONSUMER_KEY'),
-        os.environ.get('USER_OAUTH_CONSUMER_SECRET'),
-    )
+    consumer_token = _user_consumer_token()
+    if consumer_token is None:
+        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
+        return redirect(url_for('index'))
     try:
         redirect_loc, request_token = mwoauth.initiate(
             'https://meta.wikimedia.org/w/index.php',
             consumer_token,
+            callback=_oauth_callback_url(),
         )
     except Exception:
         app.logger.exception('mwoauth.initiate failed')
         return redirect(url_for('index'))
 
-    session['request_token'] = dict(zip(request_token._fields, request_token))
+    try:
+        session['request_token'] = _serialize_request_token(request_token)
+    except Exception:
+        app.logger.exception('Unable to serialize OAuth request token')
+        return redirect(url_for('index'))
     return redirect(redirect_loc)
 
 
 @app.route('/mas-oauth-callback')
+@app.route('/oauth-callback')
+@app.route('/mwoauth-callback')
+@app.route('/buckbot-oauth-callback')
 def oauth_callback():
+    _ensure_secret_key()
     if 'request_token' not in session:
         return redirect(url_for('index'))
 
-    consumer_token = mwoauth.ConsumerToken(
-        os.environ.get('USER_OAUTH_CONSUMER_KEY'),
-        os.environ.get('USER_OAUTH_CONSUMER_SECRET'),
-    )
+    consumer_token = _user_consumer_token()
+    if consumer_token is None:
+        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
+        return redirect(url_for('index'))
+
+    authenticated = False
 
     try:
         access_token = mwoauth.complete(
             'https://meta.wikimedia.org/w/index.php',
             consumer_token,
-            mwoauth.RequestToken(**session['request_token']),
+            _deserialize_request_token(session['request_token']),
             request.query_string,
         )
         identity = mwoauth.identify(
@@ -215,10 +338,13 @@ def oauth_callback():
     else:
         session['access_token'] = dict(zip(access_token._fields, access_token))
         session['username'] = identity['username']
+        authenticated = True
 
     referrer = session.get('referrer')
     session['referrer'] = None
-    return redirect(referrer or '/')
+    if authenticated:
+        return redirect(referrer or '/')
+    return redirect(url_for('index'))
 
 
 @app.route('/logout')

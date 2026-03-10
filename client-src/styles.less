@@ -102,3 +102,27 @@ body {
     flex-direction: column;
     font-family: @font-family-system-sans;
 }
+
+.rollback-tool-section {
+    margin-bottom: @spacing-200;
+}
+
+.rollback-tool-form {
+    display: flex;
+    flex-direction: column;
+    gap: @spacing-75;
+    margin-bottom: @spacing-125;
+
+    input,
+    textarea {
+        max-width: 800px;
+        padding: @spacing-50;
+        border: @border-base;
+    }
+}
+
+.inline-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: @spacing-50;
+}

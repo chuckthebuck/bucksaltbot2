@@ -128,6 +128,65 @@ def test_create_job_dry_run_flag_persisted(client):
     assert 1 in insert_args.args[1]  # dry_run value is 1
 
 
+def test_create_job_allows_status_token_auth(client):
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.lastrowid = 13
+    with patch("router.get_conn", return_value=mock_conn), \
+         patch("router.process_rollback_job") as mock_task, \
+         patch.dict("router.os.environ", {"STATUS_API_TOKEN": "token123", "STATUS_API_USER": "statusbot"}, clear=False):
+        mock_task.delay = MagicMock()
+        resp = client.post(
+            "/api/v1/rollback/jobs",
+            headers={"X-Status-Token": "token123"},
+            json={
+                "items": [{"title": "File:Test.jpg", "user": "Vandal"}],
+            },
+        )
+    assert resp.status_code == 200
+
+
+def test_cancel_job_returns_401_when_not_authenticated(client):
+    resp = client.delete("/api/v1/rollback/jobs/1")
+    assert resp.status_code == 401
+
+
+def test_cancel_job_returns_404_when_not_found(client):
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = None
+    with patch("router.get_conn", return_value=mock_conn):
+        resp = client.delete("/api/v1/rollback/jobs/999")
+    assert resp.status_code == 404
+
+
+def test_cancel_job_returns_403_when_owned_by_different_user(client):
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "bob", "queued")
+    with patch("router.get_conn", return_value=mock_conn):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+    assert resp.status_code == 403
+
+
+def test_cancel_job_marks_job_and_items_canceled(client):
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "alice", "queued")
+    with patch("router.get_conn", return_value=mock_conn):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "canceled"
+
+
+def test_cancel_job_allows_status_token_auth(client):
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "statusbot", "queued")
+    with patch("router.get_conn", return_value=mock_conn), \
+         patch.dict("router.os.environ", {"STATUS_API_TOKEN": "token123", "STATUS_API_USER": "statusbot"}, clear=False):
+        resp = client.delete("/api/v1/rollback/jobs/1", headers={"X-Status-Token": "token123"})
+    assert resp.status_code == 200
+
+
 # ── GET /api/v1/rollback/jobs/<id> ────────────────────────────────────────────
 
 def test_get_job_returns_401_when_not_authenticated(client):
@@ -219,10 +278,17 @@ def test_list_jobs_response_shape(client):
 
 # ── GET /rollback-queue (UI) ──────────────────────────────────────────────────
 
-def test_rollback_queue_ui_redirects_unauthenticated_user(client):
+def test_rollback_queue_ui_returns_200_for_unauthenticated_user(client):
     resp = client.get("/rollback-queue")
-    assert resp.status_code == 302
-    assert "/login" in resp.headers["Location"]
+    assert resp.status_code == 200
+
+
+def test_rollback_queue_ui_contains_web_tool_forms(client):
+    resp = client.get("/rollback-queue")
+    html = resp.get_data(as_text=True)
+    assert "Create rollback job" in html
+    assert "Cancel rollback job" in html
+    assert "Dry run" in html
 
 
 def test_rollback_queue_ui_returns_200_for_authenticated_user(client):
@@ -239,6 +305,65 @@ def test_rollback_queue_ui_returns_200_for_authenticated_user(client):
 def test_index_returns_200(client):
     resp = client.get("/")
     assert resp.status_code == 200
+
+
+def test_login_does_not_500_when_secret_key_missing(client):
+    import router
+    original = router.app.config.get("SECRET_KEY")
+    router.app.config["SECRET_KEY"] = None
+    with patch.dict("router.os.environ", {"SECRET_KEY": "", "FALLBACK_SECRET_KEY": "fallback-secret", "USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False), \
+         patch("router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))):
+        resp = client.get("/login")
+    router.app.config["SECRET_KEY"] = original
+    assert resp.status_code == 302
+
+
+
+def test_login_redirects_to_index_when_consumer_creds_missing(client):
+    with patch.dict("router.os.environ", {"USER_OAUTH_CONSUMER_KEY": "", "USER_OAUTH_CONSUMER_SECRET": ""}, clear=False):
+        resp = client.get("/login")
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/")
+
+
+def test_login_uses_current_site_callback_url_by_default(client):
+    with patch.dict("router.os.environ", {"USER_OAUTH_CALLBACK_URL": "", "USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False), \
+         patch("router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))) as mock_initiate:
+        resp = client.get("/login")
+
+    assert resp.status_code == 302
+    assert mock_initiate.call_args.kwargs["callback"] == "http://localhost/oauth-callback"
+
+
+def test_login_uses_explicit_callback_url_when_configured(client):
+    with patch.dict("router.os.environ", {"USER_OAUTH_CALLBACK_URL": "https://buckbot.toolforge.org/oauth-callback", "USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False),          patch("router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))) as mock_initiate:
+        resp = client.get("/login")
+
+    assert resp.status_code == 302
+    assert mock_initiate.call_args.kwargs["callback"] == "https://buckbot.toolforge.org/oauth-callback"
+
+
+def test_oauth_callback_failure_redirects_index_not_referrer(client):
+    with client.session_transaction() as sess:
+        sess["request_token"] = {"key": "rk", "secret": "rs"}
+        sess["referrer"] = "/rollback-queue"
+
+    with patch.dict("router.os.environ", {"USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False), \
+         patch("router.mwoauth.complete", side_effect=RuntimeError("bad oauth")):
+        resp = client.get("/oauth-callback")
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/")
+
+
+
+def test_oauth_callback_alias_routes_exist(client):
+    resp1 = client.get("/oauth-callback")
+    resp2 = client.get("/mwoauth-callback")
+    resp3 = client.get("/buckbot-oauth-callback")
+    assert resp1.status_code == 302
+    assert resp2.status_code == 302
+    assert resp3.status_code == 302
 
 
 # ── GET /logout ────────────────────────────────────────────────────────────────
