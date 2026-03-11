@@ -8,6 +8,8 @@ from flask import jsonify, redirect, render_template, request, session, url_for
 from app import flask_app as app
 from rollback_queue import process_rollback_job
 from toolsdb import get_conn
+from redis_state import r
+import time
 
 if not os.environ.get('NOTDEV'):
     from dotenv import load_dotenv
@@ -95,6 +97,21 @@ def goto():
     if target == 'documentation':
         return redirect('https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot')
     return redirect(url_for('rollback_queue_ui'))
+
+@app.route("/api/v1/rollback/worker")
+def worker_status():
+
+    hb=r.get("rollback:worker:heartbeat")
+
+    if not hb:
+        return jsonify({"status":"offline"})
+
+    age=time.time()-float(hb)
+
+    return jsonify({
+        "status":"online",
+        "last_seen":age
+    })
 
 @app.route("/api/v1/rollback/jobs/progress")
 def batch_job_progress():
