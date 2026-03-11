@@ -105,6 +105,12 @@ def process_rollback_job(job_id: int):
 
         _update_job_status(job_id, "failed" if failed else "completed")
 
-    except Exception as exc:  # catches login errors, OAuth failures, etc
-        _update_job_status(job_id, "failed")
-        raise
+    except Exception as exc:
+    job, items = _fetch_job(job_id)
+
+    if items:
+        for item_id, *_ in items:
+            _update_item(item_id, "failed", str(exc))
+
+    _update_job_status(job_id, "failed")
+    raise
