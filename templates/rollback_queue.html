@@ -112,25 +112,30 @@
 <script>
 
 
-async function fetchJob(jobId){
+function activeJobs(){
 
-const r = await fetch(`/api/v1/rollback/jobs/${jobId}`)
-const data = await r.json()
-
-updateRow(jobId,data)
+return Object.entries(jobs)
+.filter(([id,job])=>job.status==="running"||job.status==="queued")
+.map(([id])=>id)
 
 }
 
+async function pollJobs(){
 
-function updateRow(jobId,data){
+const ids=activeJobs()
 
-const total=data.total
-const completed=data.completed
-const failed=data.failed
+if(!ids.length) return
 
-const done=completed+failed
+const r=await fetch(`/api/v1/rollback/jobs/progress?ids=${ids.join(",")}`)
+const data=await r.json()
 
-const pct = total ? Math.round(done/total*100) : 0
+for(const job of data.jobs){
+updateRow(job.id,job)
+}
+
+}
+
+setInterval(pollJobs,2000)
 
 
 /* progress bar */
