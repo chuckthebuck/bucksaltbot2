@@ -2,7 +2,8 @@ from flask import Flask
 from celery_init import celery_init_app
 from redis_init import redis_url, REDIS_KEY_PREFIX
 from blueprint import assets_blueprint
-import tasks
+import rollback_queue
+
 def create_app() -> Flask:
     app = Flask(__name__,
         static_url_path="/",
