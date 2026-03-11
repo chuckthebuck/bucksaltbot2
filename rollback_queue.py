@@ -52,6 +52,7 @@ def _bot_site() -> pywikibot.Site:
 
     site = pywikibot.Site("commons", "commons")
     site.login()
+    print("Logged in as:", site.user())
     return site
 
 
