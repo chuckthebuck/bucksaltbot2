@@ -136,19 +136,20 @@ def process_rollback_job(job_id: int):
                 ).submit()
 
                 _update_item(item_id, "completed", None)
+140            except Exception as exc:  # noqa: BLE001
+141                failed += 1
+142                _update_item(item_id, "failed", str(exc))
 
-            except Exception as exc:  # noqa: BLE001
-                failed += 1
-                _update_item(item_id, "failed", str(exc))
+144        _update_job_status(job_id, "failed" if failed else "completed")
 
-        _update_job_status(job_id, "failed" if failed else "completed")
+146    except Exception as exc:
+147        job, items = _fetch_job(job_id)
 
-    except Exception as exc:
-    job, items = _fetch_job(job_id)
+148        if items:
+149            for item_id, *_ in items:
+150                _update_item(item_id, "failed", str(exc))
 
-    if items:
-        for item_id, *_ in items:
-            _update_item(item_id, "failed", str(exc))
-
+151        _update_job_status(job_id, "failed")
+152        raise
     _update_job_status(job_id, "failed")
     raise
