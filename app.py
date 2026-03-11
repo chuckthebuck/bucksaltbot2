@@ -31,4 +31,6 @@ def create_app() -> Flask:
 
 flask_app = create_app()
 
-celery = flask_app.extensions['celery']
+celery = flask_app.extensions["celery"]
+
+import rollback_queue
