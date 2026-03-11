@@ -1,7 +1,7 @@
 import os
 from celery import shared_task
 import pywikibot
-
+from redis_state import set_progress, update_progress
 from toolsdb import get_conn
 
 
@@ -95,6 +95,11 @@ def process_rollback_job(job_id: int):
             return
 
         _update_job_status(job_id, "running")
+        set_progress(job_id, {
+            "status": "running",
+            "total": len(items),
+            "completed": 0,
+            "failed": 0 })
 
         site = None
         if not dry_run:
@@ -114,6 +119,7 @@ def process_rollback_job(job_id: int):
 
                 if dry_run:
                     _update_item(item_id, "completed", None)
+                    update_progress(job_id, "completed")
                     continue
 
                 token = site.tokens["rollback"]
@@ -130,10 +136,12 @@ def process_rollback_job(job_id: int):
                 ).submit()
 
                 _update_item(item_id, "completed", None)
+                update_progress(job_id, "completed")
 
             except Exception as exc:  # noqa: BLE001
                 failed += 1
                 _update_item(item_id, "failed", str(exc))
+                update_progress(job_id, "failed")
 
         _update_job_status(job_id, "failed" if failed else "completed")
 
@@ -144,6 +152,7 @@ def process_rollback_job(job_id: int):
         if items:
             for item_id, *_ in items:
                 _update_item(item_id, "failed", str(exc))
+                update_progress(job_id, "failed")
 
         _update_job_status(job_id, "failed")
 
