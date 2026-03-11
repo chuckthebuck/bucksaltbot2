@@ -57,45 +57,53 @@ def _bot_site() -> pywikibot.Site:
 
 @shared_task(ignore_result=True)
 def process_rollback_job(job_id: int):
-    job, items = _fetch_job(job_id)
-    if not job:
-        return
+    try:
+        job, items = _fetch_job(job_id)
+        if not job:
+            return
 
-    _, requested_by, current_status, dry_run = job
+        _, requested_by, current_status, dry_run = job
 
-    if current_status == "canceled":
-        return
+        if current_status == "canceled":
+            return
 
-    _update_job_status(job_id, "running")
+        _update_job_status(job_id, "running")
 
-    site = None
-    if not dry_run:
-        site = _bot_site()
+        site = None
+        if not dry_run:
+            site = _bot_site()
 
-    failed = 0
-    for item_id, file_title, target_user, summary in items:
-        refreshed_job, _ = _fetch_job(job_id)
-        if refreshed_job and refreshed_job[2] == "canceled":
-            _update_item(item_id, "canceled", "Canceled by requester")
-            continue
-        try:
-            if dry_run:
-                _update_item(item_id, "completed", None)
+        failed = 0
+        for item_id, file_title, target_user, summary in items:
+            refreshed_job, _ = _fetch_job(job_id)
+            if refreshed_job and refreshed_job[2] == "canceled":
+                _update_item(item_id, "canceled", "Canceled by requester")
                 continue
 
-            token = site.tokens["rollback"]
-            site.simple_request(
-                action="rollback",
-                title=file_title,
-                user=target_user,
-                token=token,
-                summary=summary or f"Mass rollback via bucksaltbot queue; requested-by={requested_by}",
-                markbot=1,
-                bot=1,
-            ).submit()
-            _update_item(item_id, "completed", None)
-        except Exception as exc:  # noqa: BLE001
-            failed += 1
-            _update_item(item_id, "failed", str(exc))
+            try:
+                if dry_run:
+                    _update_item(item_id, "completed", None)
+                    continue
 
-    _update_job_status(job_id, "failed" if failed else "completed")
+                token = site.tokens["rollback"]
+                site.simple_request(
+                    action="rollback",
+                    title=file_title,
+                    user=target_user,
+                    token=token,
+                    summary=summary or f"Mass rollback via bucksaltbot queue; requested-by={requested_by}",
+                    markbot=1,
+                    bot=1,
+                ).submit()
+
+                _update_item(item_id, "completed", None)
+
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                _update_item(item_id, "failed", str(exc))
+
+        _update_job_status(job_id, "failed" if failed else "completed")
+
+    except Exception as exc:  # catches login errors, OAuth failures, etc
+        _update_job_status(job_id, "failed")
+        raise
