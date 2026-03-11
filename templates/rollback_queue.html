@@ -1,287 +1,247 @@
 {% extends 'base.html' %}
 {% block content %}
+
+<style>
+
+.status-badge{
+    padding:4px 8px;
+    border-radius:4px;
+    font-weight:bold;
+}
+
+.status-queued{background:#eaf3ff;color:#3366cc}
+.status-running{background:#fff3cd;color:#946200}
+.status-completed{background:#d4edda;color:#155724}
+.status-failed{background:#f8d7da;color:#842029}
+.status-canceled{background:#eee;color:#444}
+
+.progress-bar{
+    height:12px;
+    background:#ddd;
+    border-radius:6px;
+    overflow:hidden;
+}
+
+.progress-inner{
+    height:100%;
+    background:#36c;
+    width:0%;
+}
+
+.job-details{
+    display:none;
+    background:#f8f9fa;
+    padding:10px;
+    border:1px solid #ccc;
+}
+
+</style>
+
+
 <h2>Rollback job queue</h2>
-<p>Use this page to authenticate and submit rollback jobs directly from the website.</p>
-
-<section class="rollback-tool-section">
-    <h3>Create rollback job</h3>
-    <p>You can authenticate either by Wikimedia login (if shown in header) or with a status token.</p>
-
-    <form id="create-job-form" class="rollback-tool-form">
-        <label for="requested-by">Requested by</label>
-        <input id="requested-by" name="requested_by" type="text" value="{{ username or '' }}" placeholder="Username or status actor" required>
-
-        <label for="status-token">Status token (optional when logged in)</label>
-        <input id="status-token" name="status_token" type="password" placeholder="X-Status-Token value">
-
-        <label for="job-items">Items (one per line: <code>File:Title.jpg|TargetUser|Optional summary</code>)</label>
-        <textarea id="job-items" name="items" rows="8" placeholder="File:Test.jpg|ExampleVandal|Rollback from web tool" required></textarea>
-
-        <label class="inline-checkbox">
-            <input id="dry-run" name="dry_run" type="checkbox">
-            Dry run (do not perform real rollback)
-        </label>
-
-        <button type="submit" class="cdx-button cdx-button--action-progressive">
-            Create job
-        </button>
-    </form>
-
-    <pre id="create-job-result" class="log-pre" style="display:none"></pre>
-</section>
-
-
-<section class="rollback-tool-section">
-    <h3>Cancel rollback job</h3>
-
-    <form id="cancel-job-form" class="rollback-tool-form">
-        <label for="cancel-job-id">Job ID</label>
-        <input id="cancel-job-id" name="job_id" type="number" min="1" required>
-
-        <label for="cancel-status-token">Status token (optional when logged in)</label>
-        <input id="cancel-status-token" name="status_token" type="password" placeholder="X-Status-Token value">
-
-        <button type="submit" class="cdx-button cdx-button--destructive">
-            Cancel job
-        </button>
-    </form>
-
-    <pre id="cancel-job-result" class="log-pre" style="display:none"></pre>
-</section>
 
 
 <h3>Recent jobs</h3>
 
 <table class="wikitable">
-<tbody>
 
 <tr>
-    <th>Job ID</th>
-    <th>Requester</th>
-    <th>Status</th>
-    <th>Dry run</th>
-    <th>Created at</th>
-    <th>Actions</th>
+<th>ID</th>
+<th>Requester</th>
+<th>Status</th>
+<th>Progress</th>
+<th>Created</th>
+<th>Actions</th>
 </tr>
 
 {% for job in jobs %}
-<tr>
+
+<tr id="job-row-{{job[0]}}">
 
 <td>
-<a href="/api/v1/rollback/jobs/{{ job[0] }}">
-{{ job[0] }}
+<a href="#" onclick="toggleJob({{job[0]}})">
+{{job[0]}}
 </a>
 </td>
 
-<td>{{ job[1] }}</td>
+<td>{{job[1]}}</td>
 
-<td>{{ job[2] }}</td>
-
-<td>
-{% if job[3] %}
-yes
-{% else %}
-no
-{% endif %}
+<td id="status-{{job[0]}}">
+<span class="status-badge status-{{job[2]}}">
+{{job[2]}}
+</span>
 </td>
 
-<td>{{ job[4] }}</td>
-
 <td>
 
+<div class="progress-bar">
+<div class="progress-inner" id="progress-{{job[0]}}"></div>
+</div>
+
+<span id="progress-text-{{job[0]}}">loading</span>
+
+</td>
+
+<td>{{job[4]}}</td>
+
+<td id="actions-{{job[0]}}">
+
 {% if job[2] == "failed" %}
+<button onclick="retryJob({{job[0]}})">Retry</button>
+{% endif %}
 
-<button
-class="cdx-button cdx-button--action-progressive"
-onclick="retryJob({{ job[0] }})"
->
-Retry
-</button>
-
+{% if job[2] == "queued" or job[2] == "running" %}
+<button onclick="cancelJob({{job[0]}})">Cancel</button>
 {% endif %}
 
 </td>
 
 </tr>
+
+<tr>
+<td colspan="6">
+<div id="details-{{job[0]}}" class="job-details"></div>
+</td>
+</tr>
+
 {% endfor %}
 
-</tbody>
 </table>
 
 
 <script>
 
 
-function parseItems(lines) {
+async function fetchJob(jobId){
 
-    return lines
-        .split(/\n+/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => {
+const r = await fetch(`/api/v1/rollback/jobs/${jobId}`)
+const data = await r.json()
 
-            const [title, user, ...summaryParts] =
-                line.split('|').map((part) => part.trim());
-
-            return {
-                title,
-                user,
-                summary: summaryParts.join('|') || null
-            };
-
-        })
-        .filter((item) => item.title && item.user);
-}
-
-
-function showResult(elementId, payload) {
-
-    const el = document.getElementById(elementId);
-
-    el.style.display = '';
-    el.textContent = JSON.stringify(payload, null, 2);
+updateRow(jobId,data)
 
 }
 
 
+function updateRow(jobId,data){
 
-async function retryJob(jobId) {
+const total=data.total
+const completed=data.completed
+const failed=data.failed
 
-    if (!confirm(`Retry rollback job ${jobId}?`)) {
-        return;
-    }
+const done=completed+failed
 
-    const response = await fetch(`/api/v1/rollback/jobs/${jobId}/retry`, {
-        method: 'POST'
-    });
+const pct = total ? Math.round(done/total*100) : 0
 
-    let body;
 
-    try {
-        body = await response.json();
-    }
-    catch {
-        body = { detail: "Non JSON response", status: response.status };
-    }
+/* progress bar */
 
-    alert(JSON.stringify(body, null, 2));
+const bar=document.getElementById(`progress-${jobId}`)
+bar.style.width=pct+"%"
 
-    location.reload();
+
+/* text */
+
+document.getElementById(`progress-text-${jobId}`)
+.textContent=`${done}/${total}`
+
+
+/* status */
+
+document.getElementById(`status-${jobId}`).innerHTML=
+`<span class="status-badge status-${data.status}">
+${data.status}
+</span>`
+
+
+/* actions */
+
+const actions=document.getElementById(`actions-${jobId}`)
+
+actions.innerHTML=""
+
+if(data.status==="failed"){
+
+actions.innerHTML+=
+`<button onclick="retryJob(${jobId})">Retry</button>`
+
+}
+
+if(data.status==="queued"||data.status==="running"){
+
+actions.innerHTML+=
+`<button onclick="cancelJob(${jobId})">Cancel</button>`
+
+}
+
 }
 
 
+async function retryJob(jobId){
 
-document.getElementById('create-job-form')
-.addEventListener('submit', async (event) => {
+if(!confirm(`Retry job ${jobId}?`))return
 
-    event.preventDefault();
+await fetch(`/api/v1/rollback/jobs/${jobId}/retry`,{
+method:"POST"
+})
 
-    const requestedBy =
-        document.getElementById('requested-by').value.trim();
-
-    const token =
-        document.getElementById('status-token').value.trim();
-
-    const itemsText =
-        document.getElementById('job-items').value;
-
-    const dryRun =
-        document.getElementById('dry-run').checked;
-
-    const items = parseItems(itemsText);
-
-    if (!items.length) {
-
-        showResult('create-job-result', {
-            error: "No valid items. Use: File:Title|User|Summary"
-        });
-
-        return;
-
-    }
-
-    const headers = {
-        "Content-Type": "application/json"
-    };
-
-    if (token) {
-        headers["X-Status-Token"] = token;
-    }
-
-    const response = await fetch("/api/v1/rollback/jobs", {
-
-        method: "POST",
-
-        headers,
-
-        body: JSON.stringify({
-            requested_by: requestedBy,
-            items,
-            dry_run: dryRun
-        })
-
-    });
-
-    let body;
-
-    try {
-        body = await response.json();
-    }
-    catch {
-        body = { detail: "Non JSON response", status: response.status };
-    }
-
-    showResult("create-job-result", {
-        status: response.status,
-        body
-    });
-
-});
+}
 
 
+async function cancelJob(jobId){
 
-document.getElementById('cancel-job-form')
-.addEventListener('submit', async (event) => {
+if(!confirm(`Cancel job ${jobId}?`))return
 
-    event.preventDefault();
+await fetch(`/api/v1/rollback/jobs/${jobId}`,{
+method:"DELETE"
+})
 
-    const jobId =
-        document.getElementById('cancel-job-id').value;
+}
 
-    const token =
-        document.getElementById('cancel-status-token').value.trim();
 
-    const headers = {};
+async function toggleJob(jobId){
 
-    if (token) {
-        headers["X-Status-Token"] = token;
-    }
+const el=document.getElementById(`details-${jobId}`)
 
-    const response = await fetch(`/api/v1/rollback/jobs/${jobId}`, {
+if(el.style.display==="block"){
+el.style.display="none"
+return
+}
 
-        method: "DELETE",
-        headers
+const r=await fetch(`/api/v1/rollback/jobs/${jobId}`)
+const data=await r.json()
 
-    });
+el.style.display="block"
 
-    let body;
+el.innerHTML=`
 
-    try {
-        body = await response.json();
-    }
-    catch {
-        body = { detail: "Non JSON response", status: response.status };
-    }
+<b>Status:</b> ${data.status}<br>
+<b>Total:</b> ${data.total}<br>
+<b>Completed:</b> ${data.completed}<br>
+<b>Failed:</b> ${data.failed}<br>
 
-    showResult("cancel-job-result", {
-        status: response.status,
-        body
-    });
+<pre>${JSON.stringify(data.items,null,2)}</pre>
 
-});
+`
+
+}
+
+
+/* live polling */
+
+function startPolling(){
+
+{% for job in jobs %}
+
+setInterval(()=>fetchJob({{job[0]}}),5000)
+
+{% endfor %}
+
+}
+
+
+startPolling()
 
 
 </script>
-
 
 {% endblock %}
