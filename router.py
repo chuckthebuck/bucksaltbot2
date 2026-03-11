@@ -96,7 +96,32 @@ def goto():
         return redirect('https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot')
     return redirect(url_for('rollback_queue_ui'))
 
+@app.route("/api/v1/rollback/jobs/progress")
+def batch_job_progress():
 
+    if session.get('username') is None:
+        return jsonify({'detail':'Not authenticated'}),401
+
+    ids=request.args.get("ids","")
+
+    if not ids:
+        return jsonify({"jobs":[]})
+
+    job_ids=[int(x) for x in ids.split(",") if x.strip()]
+
+    jobs=[]
+
+    for jid in job_ids:
+
+        p=get_progress(jid)
+
+        if p:
+            jobs.append({
+                "id":jid,
+                **p
+            })
+
+    return jsonify({"jobs":jobs})
 @app.route('/rollback-queue')
 def rollback_queue_ui():
     username = session.get('username')
