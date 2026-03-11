@@ -1,18 +1,10 @@
 - command: bash scripts/start_celery.sh
   continuous: true
   cpu: '1.0'
-  health-check-script: bash scripts/ping_celery.sh
   image: tool-buckbot/tool-buckbot:latest
   mem: 1.0Gi
   mount: all
   name: buckbot-celery
-- command: bash scripts/ping_celery.sh
-  continuous: true
-  cpu: '0.25'
-  image: tool-buckbot/tool-buckbot:latest
-  mem: 0.25Gi
-  mount: all
-  name: buckbot-ping
 - command: bash scripts/start_gunicorn.sh
   continuous: true
   cpu: '0.5'
