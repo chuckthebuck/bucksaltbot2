@@ -160,6 +160,46 @@ def create_rollback_job():
     process_rollback_job.delay(job_id)
     return jsonify({'job_id': job_id, 'status': 'queued'})
 
+@app.route('/api/v1/rollback/jobs/<int:job_id>/retry', methods=['POST'])
+def retry_job(job_id):
+    actor = _rollback_api_actor()
+    if actor is None:
+        return jsonify({'detail': 'Not authenticated'}), 401
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT requested_by FROM rollback_jobs WHERE id=%s",
+                (job_id,),
+            )
+            job = cursor.fetchone()
+            if not job:
+                return jsonify({'detail': 'Job not found'}), 404
+
+            if job[0] != actor:
+                return jsonify({'detail': 'Forbidden'}), 403
+
+            cursor.execute(
+                "UPDATE rollback_jobs SET status='queued' WHERE id=%s",
+                (job_id,),
+            )
+
+            cursor.execute(
+                """
+                UPDATE rollback_job_items
+                SET status='queued', error=NULL
+                WHERE job_id=%s
+                """,
+                (job_id,),
+            )
+
+        conn.commit()
+
+    process_rollback_job.delay(job_id)
+
+    return jsonify({"job_id": job_id, "status": "queued"})
+
+
 
 @app.route('/api/v1/rollback/jobs/<int:job_id>', methods=['DELETE'])
 def cancel_rollback_job(job_id):
