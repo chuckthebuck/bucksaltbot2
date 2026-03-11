@@ -1,106 +1,94 @@
-{% extends 'base.html' %}
+{% extends "base.html" %}
 {% block content %}
 
+<h2>Rollback job queue</h2>
+
+<p>Create and monitor rollback jobs.</p>
+
 <style>
-
-.status-badge{
-    padding:4px 8px;
-    border-radius:4px;
-    font-weight:bold;
-}
-
+.status{padding:3px 8px;border-radius:4px;font-weight:bold}
 .status-queued{background:#eaf3ff;color:#3366cc}
 .status-running{background:#fff3cd;color:#946200}
 .status-completed{background:#d4edda;color:#155724}
 .status-failed{background:#f8d7da;color:#842029}
 .status-canceled{background:#eee;color:#444}
 
-.progress-bar{
-    height:12px;
-    background:#ddd;
-    border-radius:6px;
-    overflow:hidden;
-}
+.progress{height:10px;background:#ddd;border-radius:6px;overflow:hidden}
+.progress>div{height:100%;background:#36c;width:0%}
 
-.progress-inner{
-    height:100%;
-    background:#36c;
-    width:0%;
-}
-
-.job-details{
-    display:none;
-    background:#f8f9fa;
-    padding:10px;
-    border:1px solid #ccc;
-}
-
+.job-details{display:none;background:#f8f9fa;padding:10px;border:1px solid #ccc}
 </style>
 
+<h3>Create job</h3>
 
-<h2>Rollback job queue</h2>
+<form id="create-form">
 
+<input id="requested-by" value="{{username}}" hidden>
 
-<h3>Recent jobs</h3>
+<label>Status token (optional)</label>
+<input id="token" type="password">
+
+<label>Items (File:Title|User|Summary)</label>
+<textarea id="items" rows="5"></textarea>
+
+<label>
+<input type="checkbox" id="dry">
+Dry run
+</label>
+
+<button>Create</button>
+
+</form>
+
+<pre id="create-result"></pre>
+
+<h3>Your jobs</h3>
 
 <table class="wikitable">
 
 <tr>
 <th>ID</th>
-<th>Requester</th>
 <th>Status</th>
 <th>Progress</th>
 <th>Created</th>
 <th>Actions</th>
 </tr>
 
-{% for job in jobs %}
+{% for j in jobs %}
 
-<tr id="job-row-{{job[0]}}">
+<tr id="job-{{j[0]}}">
 
 <td>
-<a href="#" onclick="toggleJob({{job[0]}})">
-{{job[0]}}
+<a onclick="toggle({{j[0]}})">
+{{j[0]}}
 </a>
 </td>
 
-<td>{{job[1]}}</td>
-
-<td id="status-{{job[0]}}">
-<span class="status-badge status-{{job[2]}}">
-{{job[2]}}
+<td id="status-{{j[0]}}">
+<span class="status status-{{j[2]}}">
+{{j[2]}}
 </span>
 </td>
 
 <td>
 
-<div class="progress-bar">
-<div class="progress-inner" id="progress-{{job[0]}}"></div>
+<div class="progress">
+<div id="bar-{{j[0]}}"></div>
 </div>
 
-<span id="progress-text-{{job[0]}}">loading</span>
+<span id="text-{{j[0]}}">0%</span>
 
 </td>
 
-<td>{{job[4]}}</td>
+<td>{{j[4]}}</td>
 
-<td id="actions-{{job[0]}}">
-
-{% if job[2] == "failed" %}
-<button onclick="retryJob({{job[0]}})">Retry</button>
-{% endif %}
-
-{% if job[2] == "queued" or job[2] == "running" %}
-<button onclick="cancelJob({{job[0]}})">Cancel</button>
-{% endif %}
-
-</td>
+<td id="actions-{{j[0]}}"></td>
 
 </tr>
 
 <tr>
-<td colspan="6">
-<div id="details-{{job[0]}}" class="job-details"></div>
+<td colspan="5">
+<div id="details-{{j[0]}}" class="job-details"></div>
 </td>
 </tr>
 
@@ -108,144 +96,182 @@
 
 </table>
 
-
 <script>
 
+const JOB_IDS=[
+{% for j in jobs %}
+{{j[0]}},
+{% endfor %}
+]
 
-function activeJobs(){
+const token=()=>document.getElementById("token").value.trim()
 
-return Object.entries(jobs)
-.filter(([id,job])=>job.status==="running"||job.status==="queued")
-.map(([id])=>id)
+const headers=json=>{
+let h={}
+if(json)h["Content-Type"]="application/json"
+if(token())h["X-Status-Token"]=token()
+return h
+}
+
+const esc=s=>String(s)
+.replaceAll("&","&amp;")
+.replaceAll("<","&lt;")
+.replaceAll(">","&gt;")
+
+function update(id,d){
+
+let done=(d.completed||0)+(d.failed||0)
+let pct=d.total?Math.round(done/d.total*100):0
+
+let bar=document.getElementById(`bar-${id}`)
+if(bar)bar.style.width=pct+"%"
+
+let txt=document.getElementById(`text-${id}`)
+if(txt)txt.textContent=`${done}/${d.total}`
+
+let st=document.getElementById(`status-${id}`)
+if(st)st.innerHTML=`<span class="status status-${d.status}">${d.status}</span>`
+
+let act=document.getElementById(`actions-${id}`)
+if(!act)return
+
+act.innerHTML=""
+
+if(d.status==="failed")
+act.innerHTML+=`<button onclick="retry(${id})">Retry</button>`
+
+if(d.status==="queued"||d.status==="running")
+act.innerHTML+=`<button onclick="cancel(${id})">Cancel</button>`
 
 }
 
-async function pollJobs(){
+async function refresh(){
 
-const ids=activeJobs()
+if(!JOB_IDS.length)return
 
-if(!ids.length) return
+const r=await fetch(
+"/api/v1/rollback/jobs/progress?ids="+JOB_IDS.join(",")
+)
 
-const r=await fetch(`/api/v1/rollback/jobs/progress?ids=${ids.join(",")}`)
 const data=await r.json()
 
-for(const job of data.jobs){
-updateRow(job.id,job)
-}
+if(data.jobs)
+data.jobs.forEach(j=>update(j.id,j))
 
 }
 
-setInterval(pollJobs,2000)
+async function toggle(id){
 
-
-/* progress bar */
-
-const bar=document.getElementById(`progress-${jobId}`)
-bar.style.width=pct+"%"
-
-
-/* text */
-
-document.getElementById(`progress-text-${jobId}`)
-.textContent=`${done}/${total}`
-
-
-/* status */
-
-document.getElementById(`status-${jobId}`).innerHTML=
-`<span class="status-badge status-${data.status}">
-${data.status}
-</span>`
-
-
-/* actions */
-
-const actions=document.getElementById(`actions-${jobId}`)
-
-actions.innerHTML=""
-
-if(data.status==="failed"){
-
-actions.innerHTML+=
-`<button onclick="retryJob(${jobId})">Retry</button>`
-
-}
-
-if(data.status==="queued"||data.status==="running"){
-
-actions.innerHTML+=
-`<button onclick="cancelJob(${jobId})">Cancel</button>`
-
-}
-
-}
-
-
-async function retryJob(jobId){
-
-if(!confirm(`Retry job ${jobId}?`))return
-
-await fetch(`/api/v1/rollback/jobs/${jobId}/retry`,{
-method:"POST"
-})
-
-}
-
-
-async function cancelJob(jobId){
-
-if(!confirm(`Cancel job ${jobId}?`))return
-
-await fetch(`/api/v1/rollback/jobs/${jobId}`,{
-method:"DELETE"
-})
-
-}
-
-
-async function toggleJob(jobId){
-
-const el=document.getElementById(`details-${jobId}`)
+let el=document.getElementById(`details-${id}`)
 
 if(el.style.display==="block"){
 el.style.display="none"
 return
 }
 
-const r=await fetch(`/api/v1/rollback/jobs/${jobId}`)
-const data=await r.json()
+const r=await fetch(`/api/v1/rollback/jobs/${id}`)
+const d=await r.json()
 
 el.style.display="block"
 
 el.innerHTML=`
-
-<b>Status:</b> ${data.status}<br>
-<b>Total:</b> ${data.total}<br>
-<b>Completed:</b> ${data.completed}<br>
-<b>Failed:</b> ${data.failed}<br>
-
-<pre>${JSON.stringify(data.items,null,2)}</pre>
-
+<b>Status:</b> ${esc(d.status)}<br>
+<b>Total:</b> ${d.total}<br>
+<b>Completed:</b> ${d.completed}<br>
+<b>Failed:</b> ${d.failed}<br>
+<pre>${esc(JSON.stringify(d.items,null,2))}</pre>
 `
 
 }
 
+async function retry(id){
 
-/* live polling */
+if(!confirm("Retry job "+id+"?"))return
 
-function startPolling(){
-
-{% for job in jobs %}
-
-setInterval(()=>fetchJob({{job[0]}}),5000)
-
-{% endfor %}
+await fetch(`/api/v1/rollback/jobs/${id}/retry`,{
+method:"POST",
+headers:headers()
+})
 
 }
 
+async function cancel(id){
 
-startPolling()
+if(!confirm("Cancel job "+id+"?"))return
 
+await fetch(`/api/v1/rollback/jobs/${id}`,{
+method:"DELETE",
+headers:headers()
+})
+
+}
+
+document.getElementById("create-form")
+.addEventListener("submit",async e=>{
+
+e.preventDefault()
+
+let items=document.getElementById("items").value
+.split("\n")
+.map(l=>l.trim())
+.filter(Boolean)
+.map(l=>{
+let[t,u,...s]=l.split("|")
+return{
+title:t.trim(),
+user:u.trim(),
+summary:s.join("|")||null
+}
+})
+
+const r=await fetch("/api/v1/rollback/jobs",{
+
+method:"POST",
+
+headers:headers(true),
+
+body:JSON.stringify({
+requested_by:document.getElementById("requested-by").value,
+dry_run:document.getElementById("dry").checked,
+items:items
+})
+
+})
+
+document.getElementById("create-result")
+.textContent=JSON.stringify(await r.json(),null,2)
+
+if(r.ok)location.reload()
+
+})
+
+/* polling system */
+
+let timer=null
+
+function start(){
+if(timer)return
+refresh()
+timer=setInterval(refresh,5000)
+}
+
+function stop(){
+clearInterval(timer)
+timer=null
+}
+
+document.addEventListener("visibilitychange",()=>{
+
+if(document.hidden)
+stop()
+else
+start()
+
+})
+
+window.addEventListener("load",()=>{
+if(!document.hidden)start()
+})
 
 </script>
 
