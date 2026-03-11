@@ -10,8 +10,6 @@ rm -f user-config.py
 cp user-config.tmpl user-config.py
 chmod 600 user-config.py
 
-echo "Starting Celery worker..."
-
-celery -A celery_worker:app worker \
+python -m celery -A celery_worker:app worker \
   --loglevel=INFO \
   --concurrency=2
