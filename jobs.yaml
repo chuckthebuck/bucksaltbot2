@@ -5,6 +5,7 @@
   mem: 1.0Gi
   mount: all
   name: buckbot-celery
+  health-check-script: bash scripts/ping_celery.sh
 - command: bash scripts/start_gunicorn.sh
   continuous: true
   cpu: '0.5'
