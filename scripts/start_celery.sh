@@ -12,4 +12,5 @@ chmod 600 user-config.py
 
 python -m celery -A celery_worker:app worker \
   --loglevel=INFO \
-  --concurrency=2
+  --concurrency=2 \
+  --max-tasks-per-child=50
