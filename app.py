@@ -1,36 +1,42 @@
+import os
 from flask import Flask
-from celery_init import celery_init_app
-from redis_init import redis_url, REDIS_KEY_PREFIX
-from blueprint import assets_blueprint
-import rollback_queue
+from celery import Celery
 
-def create_app() -> Flask:
-    app = Flask(__name__,
-        static_url_path="/",
-        static_folder="public",
-        template_folder="templates",
-    )
+flask_app = Flask(__name__)
 
-    app.register_blueprint(assets_blueprint)
-    app.config.from_mapping(
-        CELERY=dict(
-            broker_url=redis_url,
-            result_backend=redis_url,
-            retry_policy={
-                'max_retries': 10 * 1000, # absurdly high
-                'interval_start': 2,
-                'interval_step': 2
-            },
-            task_default_queue=REDIS_KEY_PREFIX + '-celery-queue',
-            task_ignore_result=True,
-        ),
-    )
-    app.config.from_prefixed_env()
-    celery_init_app(app)
-    return app
+flask_app.config["SECRET_KEY"] = os.getenv(
+    "SECRET_KEY",
+    "dev-insecure-secret"
+)
 
-flask_app = create_app()
+CELERY_BROKER_URL = os.getenv(
+    "CELERY_BROKER_URL",
+    "redis://redis.svc.tools.eqiad1.wikimedia.cloud:6379/9"
+)
 
-celery = flask_app.extensions["celery"]
+CELERY_RESULT_BACKEND = os.getenv(
+    "CELERY_RESULT_BACKEND",
+    CELERY_BROKER_URL
+)
 
-import rollback_queue
+celery = Celery(
+    flask_app.import_name,
+    broker=CELERY_BROKER_URL,
+    backend=CELERY_RESULT_BACKEND
+)
+
+celery.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    worker_prefetch_multiplier=1,
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+)
+
+class ContextTask(celery.Task):
+    def __call__(self, *args, **kwargs):
+        with flask_app.app_context():
+            return self.run(*args, **kwargs)
+
+celery.Task = ContextTask
