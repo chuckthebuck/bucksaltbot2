@@ -98,11 +98,15 @@ Dry run
 
 <script>
 
-const JOB_IDS=[
+/* ---------------- job list ---------------- */
+
+let JOB_IDS=[
 {% for j in jobs %}
 {{j[0]}},
 {% endfor %}
 ]
+
+/* ---------------- helpers ---------------- */
 
 const token=()=>document.getElementById("token").value.trim()
 
@@ -117,6 +121,8 @@ const esc=s=>String(s)
 .replaceAll("&","&amp;")
 .replaceAll("<","&lt;")
 .replaceAll(">","&gt;")
+
+/* ---------------- row update ---------------- */
 
 function update(id,d){
 
@@ -143,7 +149,14 @@ act.innerHTML+=`<button onclick="retry(${id})">Retry</button>`
 if(d.status==="queued"||d.status==="running")
 act.innerHTML+=`<button onclick="cancel(${id})">Cancel</button>`
 
+/* stop polling finished jobs */
+if(d.status==="completed"||d.status==="failed"||d.status==="canceled"){
+JOB_IDS=JOB_IDS.filter(x=>x!==id)
 }
+
+}
+
+/* ---------------- progress polling ---------------- */
 
 async function refresh(){
 
@@ -159,6 +172,8 @@ if(data.jobs)
 data.jobs.forEach(j=>update(j.id,j))
 
 }
+
+/* ---------------- job details ---------------- */
 
 async function toggle(id){
 
@@ -184,6 +199,8 @@ el.innerHTML=`
 
 }
 
+/* ---------------- job actions ---------------- */
+
 async function retry(id){
 
 if(!confirm("Retry job "+id+"?"))return
@@ -205,6 +222,51 @@ headers:headers()
 })
 
 }
+
+/* ---------------- dynamic row insertion ---------------- */
+
+function addJobRow(id){
+
+JOB_IDS.push(id)
+
+const table=document.querySelector(".wikitable")
+
+const row=`
+<tr id="job-${id}">
+
+<td>
+<a onclick="toggle(${id})">${id}</a>
+</td>
+
+<td id="status-${id}">
+<span class="status status-queued">queued</span>
+</td>
+
+<td>
+<div class="progress">
+<div id="bar-${id}"></div>
+</div>
+<span id="text-${id}">0%</span>
+</td>
+
+<td>just now</td>
+
+<td id="actions-${id}"></td>
+
+</tr>
+
+<tr>
+<td colspan="5">
+<div id="details-${id}" class="job-details"></div>
+</td>
+</tr>
+`
+
+table.insertAdjacentHTML("afterbegin",row)
+
+}
+
+/* ---------------- job creation ---------------- */
 
 document.getElementById("create-form")
 .addEventListener("submit",async e=>{
@@ -238,14 +300,16 @@ items:items
 
 })
 
-document.getElementById("create-result")
-.textContent=JSON.stringify(await r.json(),null,2)
+const result=await r.json()
 
-if(r.ok)location.reload()
+document.getElementById("create-result")
+.textContent=JSON.stringify(result,null,2)
+
+if(r.ok) addJobRow(result.job_id)
 
 })
 
-/* polling system */
+/* ---------------- polling system ---------------- */
 
 let timer=null
 
@@ -261,12 +325,8 @@ timer=null
 }
 
 document.addEventListener("visibilitychange",()=>{
-
-if(document.hidden)
-stop()
-else
-start()
-
+if(document.hidden)stop()
+else start()
 })
 
 window.addEventListener("load",()=>{
