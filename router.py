@@ -8,7 +8,7 @@ from flask import jsonify, redirect, render_template, request, session, url_for
 from app import flask_app as app
 from rollback_queue import process_rollback_job
 from toolsdb import get_conn
-from redis_state import r
+from redis_state import r, get_progress
 import time
 
 if not os.environ.get('NOTDEV'):
