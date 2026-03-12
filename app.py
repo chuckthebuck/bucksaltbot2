@@ -1,6 +1,8 @@
 import os
 from flask import Flask
 from celery import Celery
+from blueprint import assets_blueprint
+app.register_blueprint(assets_blueprint)
 
 flask_app = Flask(__name__)
 
