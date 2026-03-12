@@ -81,7 +81,6 @@ def _bot_site() -> pywikibot.Site:
 
 @shared_task(ignore_result=True)
 def process_rollback_job(job_id: int):
-
     try:
 
         job, items = _fetch_job(job_id)
@@ -99,7 +98,8 @@ def process_rollback_job(job_id: int):
             "status": "running",
             "total": len(items),
             "completed": 0,
-            "failed": 0 })
+            "failed": 0
+        })
 
         site = None
         if not dry_run:
@@ -138,52 +138,20 @@ def process_rollback_job(job_id: int):
                 _update_item(item_id, "completed", None)
                 update_progress(job_id, "completed")
 
-       for item_id, file_title, target_user, summary in items:
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                _update_item(item_id, "failed", str(exc))
+                update_progress(job_id, "failed")
 
-    refreshed_job, _ = _fetch_job(job_id)
+        # AFTER the loop finishes
+        set_progress(job_id, {
+            "status": "failed" if failed else "completed",
+            "total": len(items),
+            "completed": len(items) - failed,
+            "failed": failed
+        })
 
-    if refreshed_job and refreshed_job[2] == "canceled":
-        _update_item(item_id, "canceled", "Canceled by requester")
-        continue
-
-    try:
-
-        if dry_run:
-            _update_item(item_id, "completed", None)
-            update_progress(job_id, "completed")
-            continue
-
-        token = site.tokens["rollback"]
-
-        site.simple_request(
-            action="rollback",
-            title=file_title,
-            user=target_user,
-            token=token,
-            summary=summary
-            or f"Mass rollback via bucksaltbot queue; requested-by={requested_by}",
-            markbot=1,
-            bot=1,
-        ).submit()
-
-        _update_item(item_id, "completed", None)
-        update_progress(job_id, "completed")
-
-    except Exception as exc:  # noqa: BLE001
-        failed += 1
-        _update_item(item_id, "failed", str(exc))
-        update_progress(job_id, "failed")
-
-
-# AFTER the loop finishes
-set_progress(job_id, {
-    "status": "failed" if failed else "completed",
-    "total": len(items),
-    "completed": len(items) - failed,
-    "failed": failed
-})
-
-_update_job_status(job_id, "failed" if failed else "completed")
+        _update_job_status(job_id, "failed" if failed else "completed")
 
     except Exception as exc:
 
