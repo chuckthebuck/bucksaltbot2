@@ -4,7 +4,8 @@ import secrets
 import mwoauth
 import mwoauth.flask
 from flask import jsonify, redirect, render_template, request, session, url_for
-
+from blueprint import assets_blueprint
+app.register_blueprint(assets_blueprint)
 from app import flask_app as app
 from rollback_queue import process_rollback_job
 from toolsdb import get_conn
