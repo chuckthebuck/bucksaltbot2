@@ -33,6 +33,7 @@ def update_progress(job_id, field):
         return
 
     data = json.loads(val)
+
     data[field] = data.get(field, 0) + 1
-    
+
     r.set(key, json.dumps(data), ex=86400)
