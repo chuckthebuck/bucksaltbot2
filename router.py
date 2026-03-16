@@ -148,30 +148,7 @@ def goto():
     return redirect("/rollback-queue")
 
 
-@app.route("/login")
-def login():
 
-    consumer_token = _user_consumer_token()
-
-    # If OAuth is not configured, avoid a 500 and just send the user home.
-    if not consumer_token:
-        return redirect(url_for("index"))
-
-    callback_url = _oauth_callback_url()
-
-    try:
-        redirect_url, request_token = mwoauth.initiate(
-            "https://meta.wikimedia.org/w/index.php",
-            consumer_token,
-            callback_url
-        )
-    except Exception:
-        # On any failure, do not expose internals; just go back to index.
-        return redirect(url_for("index"))
-
-    session["request_token"] = _serialize_request_token(request_token)
-
-    return redirect(redirect_url)
 
 
 @app.route("/mas-oauth-callback")
