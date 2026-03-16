@@ -87,16 +87,27 @@ def _rollback_api_actor():
     return None
 
 
-@app.route('/goto')
+@app.route("/goto")
 def goto():
-    target = request.args.get('tab')
-    if session.get('username') is None:
-        return redirect(url_for('login', referrer='/goto?tab=' + str(target)))
-    if target == 'rollback-queue':
-        return redirect(url_for('rollback_queue_ui'))
-    if target == 'documentation':
-        return redirect('https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot')
-    return redirect(url_for('rollback_queue_ui'))
+
+    tab = request.args.get("tab")
+
+    if tab == "rollback-queue":
+        return redirect("/rollback_queue")
+
+    if tab == "rollback-batch":
+
+        username = session.get("username")
+
+        if not is_maintainer(username):
+            abort(403)
+
+        return redirect("/rollback_batch")
+
+    if tab == "documentation":
+        return redirect("/documentation")
+
+    return redirect("/rollback_queue")
 
 @app.route("/api/v1/rollback/worker")
 def worker_status():
