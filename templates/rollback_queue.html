@@ -56,7 +56,7 @@ margin:10px 0
 
 <form id="create-form">
 
-<input id="requested-by" value="{{username}}" hidden>
+<input id="requested-by" type="hidden" value="{{username}}">
 
 <label>Status token (optional)</label>
 <input id="token" type="password">
@@ -81,13 +81,15 @@ Dry run
 
 <br><br>
 
-<button type="submit">Create</button>
+<button type="submit">Create rollback job</button>
 
 </form>
 
 <pre id="create-result"></pre>
 
 <h3>Your jobs</h3>
+
+<p>To cancel a queued or running job, use the <em>Cancel rollback job</em> button in the Actions column.</p>
 
 <table class="wikitable">
 
@@ -145,6 +147,30 @@ Dry run
 
 const IS_MAINTAINER={{ 'true' if is_maintainer else 'false' }}
 
+/* ---------------- job list ---------------- */
+
+let JOB_IDS=[
+{% for j in jobs %}
+{{j[0]}},
+{% endfor %}
+]
+
+/* ---------------- helpers ---------------- */
+
+const token=()=>document.getElementById("token").value.trim()
+
+const headers=json=>{
+let h={}
+if(json)h["Content-Type"]="application/json"
+if(token())h["X-Status-Token"]=token()
+return h
+}
+
+const esc=s=>String(s)
+.replaceAll("&","&amp;")
+.replaceAll("<","&lt;")
+.replaceAll(">","&gt;")
+
 /* ---------------- namespace loader ---------------- */
 
 async function loadNamespaces(){
@@ -190,6 +216,151 @@ select.disabled=true
 
 function mwApi(params){
 return "https://commons.wikimedia.org/w/api.php?origin=*&format=json&"+params
+}
+
+/* ---------------- row update ---------------- */
+
+function update(id,d){
+
+let done=(d.completed||0)+(d.failed||0)
+let pct=d.total?Math.round(done/d.total*100):0
+
+let bar=document.getElementById(`bar-${id}`)
+if(bar)bar.style.width=pct+"%"
+
+let txt=document.getElementById(`text-${id}`)
+if(txt)txt.textContent=`${done}/${d.total}`
+
+let st=document.getElementById(`status-${id}`)
+if(st)st.innerHTML=`<span class="status status-${d.status}">${esc(d.status)}</span>`
+
+let act=document.getElementById(`actions-${id}`)
+if(!act)return
+
+act.innerHTML=""
+
+if(d.status==="failed")
+act.innerHTML+=`<button onclick="retry(${id})">Retry</button>`
+
+if(d.status==="queued"||d.status==="running")
+act.innerHTML+=`<button onclick="cancelJob(${id})">Cancel rollback job</button>`
+
+if(d.status==="completed"||d.status==="failed"||d.status==="canceled"){
+JOB_IDS=JOB_IDS.filter(x=>x!==id)
+}
+
+}
+
+/* ---------------- progress polling ---------------- */
+
+async function refresh(){
+
+if(!JOB_IDS.length)return
+
+const r=await fetch(
+"/api/v1/rollback/jobs/progress?ids="+JOB_IDS.join(",")
+)
+
+const data=await r.json()
+
+if(data.jobs)
+data.jobs.forEach(j=>update(j.id,j))
+
+}
+
+/* ---------------- job details ---------------- */
+
+async function toggle(id){
+
+let el=document.getElementById(`details-${id}`)
+
+if(el.style.display==="block"){
+el.style.display="none"
+return
+}
+
+const r=await fetch(`/api/v1/rollback/jobs/${id}`)
+const d=await r.json()
+
+el.style.display="block"
+
+el.innerHTML=`
+<b>Status:</b> ${esc(d.status)}<br>
+<b>Total:</b> ${d.total}<br>
+<b>Completed:</b> ${d.completed}<br>
+<b>Failed:</b> ${d.failed}<br>
+<pre>${esc(JSON.stringify(d.items,null,2))}</pre>
+`
+
+}
+
+/* ---------------- job actions ---------------- */
+
+async function retry(id){
+
+if(!confirm("Retry job "+id+"?"))return
+
+await fetch(`/api/v1/rollback/jobs/${id}/retry`,{
+method:"POST",
+headers:headers()
+})
+
+}
+
+async function cancelJob(id){
+
+if(!confirm("Cancel job "+id+"?"))return
+
+await fetch(`/api/v1/rollback/jobs/${id}`,{
+method:"DELETE",
+headers:headers()
+})
+
+}
+
+/* ---------------- dynamic row insertion ---------------- */
+
+function addJobRow(id){
+
+JOB_IDS.push(id)
+
+const table=document.querySelector(".wikitable")
+
+const row=document.createElement("tbody")
+
+row.innerHTML=`
+<tr id="job-${id}">
+
+<td>
+<a onclick="toggle(${id})">${id}</a>
+</td>
+
+<td id="status-${id}">
+<span class="status status-queued">queued</span>
+</td>
+
+<td>
+<div class="progress">
+<div id="bar-${id}"></div>
+</div>
+<span id="text-${id}">0%</span>
+</td>
+
+<td>just now</td>
+
+<td id="actions-${id}"></td>
+
+</tr>
+
+<tr>
+<td colspan="5">
+<div id="details-${id}" class="job-details"></div>
+</td>
+</tr>
+`
+
+table.insertAdjacentElement("afterbegin",row)
+
 }
 
 /* ---------------- codex lookup ---------------- */
@@ -384,9 +555,7 @@ const r=await fetch("/api/v1/rollback/jobs",{
 
 method:"POST",
 
-headers:{
-"Content-Type":"application/json"
-},
+headers:headers(true),
 
 body:JSON.stringify({
 requested_by:document.getElementById("requested-by").value,
@@ -401,11 +570,34 @@ const result=await r.json()
 document.getElementById("create-result")
 .textContent=JSON.stringify(result,null,2)
 
+if(r.ok && result.job_id) addJobRow(result.job_id)
+
 })
 
-/* ---------------- init ---------------- */
+/* ---------------- polling system ---------------- */
 
-window.addEventListener("load",loadNamespaces)
+let timer=null
+
+function start(){
+if(timer)return
+refresh()
+timer=setInterval(refresh,5000)
+}
+
+function stop(){
+clearInterval(timer)
+timer=null
+}
+
+document.addEventListener("visibilitychange",()=>{
+if(document.hidden)stop()
+else start()
+})
+
+window.addEventListener("load",()=>{
+loadNamespaces()
+if(!document.hidden)start()
+})
 
 </script>
 

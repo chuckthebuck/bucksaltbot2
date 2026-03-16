@@ -1,9 +1,10 @@
 import os
+import time
+import threading
 import requests
 
 from flask import Flask, session
 from celery import Celery
-from functools import lru_cache
 
 from blueprint import assets_blueprint
 
@@ -18,22 +19,39 @@ TOOLHUB_API = "https://toolhub.wikimedia.org/api/tools/buckbot/"
 
 MAX_JOB_ITEMS = int(os.getenv("MAX_JOB_ITEMS", "50"))
 
+_TOOLHUB_CACHE_TTL = 300  # 5 minutes
+_toolhub_maintainers_cache = None
+_toolhub_cache_expiry = 0.0
+_toolhub_cache_lock = threading.Lock()
 
-@lru_cache(maxsize=1)
+
 def get_toolhub_maintainers():
-    try:
-        r = requests.get(TOOLHUB_API, timeout=5)
-        r.raise_for_status()
-        data = r.json()
+    global _toolhub_maintainers_cache, _toolhub_cache_expiry
 
-        return {
-            m["username"].lower()
-            for m in data.get("maintainers", [])
-        }
+    with _toolhub_cache_lock:
+        if _toolhub_maintainers_cache is not None and time.time() < _toolhub_cache_expiry:
+            return _toolhub_maintainers_cache
 
-    except Exception as e:
-        print("Failed to load Toolhub maintainers:", e)
-        return set()
+        try:
+            r = requests.get(TOOLHUB_API, timeout=5)
+            r.raise_for_status()
+            data = r.json()
+
+            result = {
+                m["username"].lower()
+                for m in data.get("maintainers", [])
+            }
+
+            _toolhub_maintainers_cache = result
+            _toolhub_cache_expiry = time.time() + _TOOLHUB_CACHE_TTL
+            return result
+
+        except Exception as e:
+            print("Failed to load Toolhub maintainers:", e)
+            # Return stale cache if available rather than an empty set
+            if _toolhub_maintainers_cache is not None:
+                return _toolhub_maintainers_cache
+            return set()
 
 
 def is_maintainer(username):

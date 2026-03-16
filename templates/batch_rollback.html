@@ -49,6 +49,8 @@ margin-top:5px;
 
 <h3>Paste page titles</h3>
 
+<input id="requested-by" type="hidden" value="{{ username }}">
+
 <textarea id="batch-input"
 class="batch-box"
 placeholder="File:Example.jpg
@@ -140,24 +142,33 @@ row.className="job-item-row"
 
 row.dataset.title=title
 
-row.innerHTML=`
-<div>
-<b>${title}</b>
-<div class="lookup-meta">Latest editor: ${user||""}</div>
-</div>
+/* Build DOM safely to avoid XSS from page titles / edit summaries */
+const titleDiv=document.createElement("div")
+const titleBold=document.createElement("b")
+titleBold.textContent=title
+const metaDiv=document.createElement("div")
+metaDiv.className="lookup-meta"
+metaDiv.textContent="Latest editor: "+(user||"")
+titleDiv.appendChild(titleBold)
+titleDiv.appendChild(metaDiv)
 
-<select class="lookup-user"></select>
+const select=document.createElement("select")
+select.className="lookup-user"
 
-<input class="item-summary"
-value="${comment||""}"
-placeholder="Edit summary">
+const input=document.createElement("input")
+input.className="item-summary"
+input.placeholder="Edit summary"
+input.value=comment||""
 
-<button type="button">Remove</button>
-`
+const removeBtn=document.createElement("button")
+removeBtn.type="button"
+removeBtn.textContent="Remove"
+removeBtn.onclick=()=>row.remove()
 
-row.querySelector("button").onclick=()=>row.remove()
-
-const select=row.querySelector(".lookup-user")
+row.appendChild(titleDiv)
+row.appendChild(select)
+row.appendChild(input)
+row.appendChild(removeBtn)
 
 if(user){
 
@@ -291,6 +302,7 @@ headers:{
 },
 
 body:JSON.stringify({
+requested_by:document.getElementById("requested-by").value,
 dry_run:document.getElementById("dry").checked,
 items:items
 })

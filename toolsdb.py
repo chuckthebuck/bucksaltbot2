@@ -27,7 +27,22 @@ def init_db():
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (`id`),
             INDEX (`job_id`)
-        )''')  
+        )''')
+        # Graceful migration: add batch_id column to rollback_jobs if it doesn't exist yet.
+        # batch_id groups job chunks that belong to the same large batch submission.
+        try:
+            cursor.execute(
+                'ALTER TABLE `rollback_jobs` ADD COLUMN `batch_id` BIGINT NULL'
+            )
+        except sql.err.OperationalError as e:
+            if e.args[0] == 1060:  # Duplicate column name – already migrated, safe to ignore
+                pass
+            else:
+                import logging
+                logging.getLogger(__name__).error(
+                    "Unexpected error during batch_id migration: %s", e
+                )
+                raise
     initdbconn.commit()
     initdbconn.close()
 
