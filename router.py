@@ -136,7 +136,7 @@ def goto():
         return redirect("/rollback_batch")
 
     if tab == "documentation":
-        return redirect("/documentation")
+        return redirect("https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot")
 
     return redirect("/rollback-queue")
 
