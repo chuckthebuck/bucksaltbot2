@@ -151,51 +151,6 @@ def goto():
 
 
 
-@app.route("/mas-oauth-callback")
-def oauth_callback():
-
-    consumer_token = _user_consumer_token()
-
-    if not consumer_token:
-        return redirect(url_for("index"))
-
-    payload = session.get("request_token")
-
-    if not payload:
-        return redirect(url_for("index"))
-
-    try:
-        request_token = _deserialize_request_token(payload)
-
-        access_token = mwoauth.complete(
-            "https://meta.wikimedia.org/w/index.php",
-            consumer_token,
-            request_token,
-            request.query_string
-        )
-
-        identity = mwoauth.identify(
-            "https://meta.wikimedia.org/w/index.php",
-            consumer_token,
-            access_token
-        )
-    except Exception:
-        session.pop("request_token", None)
-        # Important: always redirect to index, never the referrer.
-        return redirect(url_for("index"))
-
-    session.pop("request_token", None)
-
-    username = None
-
-    if isinstance(identity, dict):
-        username = identity.get("username") or identity.get("user")
-
-    if username:
-        session["username"] = username
-
-    return redirect(url_for("index"))
-
 
 
 
