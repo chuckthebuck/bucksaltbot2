@@ -4,7 +4,11 @@ from celery import Celery
 from blueprint import assets_blueprint
 import requests
 from functools import lru_cache
-
+BOT_ADMIN_ACCOUNTS = {
+    u.strip().lower()
+    for u in os.getenv("BOT_ADMIN_ACCOUNTS", "").split(",")
+    if u.strip()
+}
 TOOLHUB_API = "https://toolhub.wikimedia.org/api/tools/buckbot/"
 
 @lru_cache(maxsize=1)
@@ -19,6 +23,28 @@ def get_toolhub_maintainers():
     except Exception as e:
         print("Failed to load Toolhub maintainers:", e)
         return set()
+
+def is_maintainer(username):
+    if not username:
+        return False
+
+    username = username.lower()
+
+    # Hardcoded override
+    if username in BOT_ADMIN_ACCOUNTS:
+        return True
+
+    maintainers = get_toolhub_maintainers()
+
+    return username in maintainers
+@app.context_processor
+def inject_user_permissions():
+    username = session.get("username")
+
+    return {
+        "username": username,
+        "is_maintainer": is_maintainer(username)
+    }
 flask_app = Flask(__name__)
 
 flask_app.register_blueprint(assets_blueprint)
