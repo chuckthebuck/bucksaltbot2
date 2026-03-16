@@ -2,7 +2,23 @@ import os
 from flask import Flask
 from celery import Celery
 from blueprint import assets_blueprint
+import requests
+from functools import lru_cache
 
+TOOLHUB_API = "https://toolhub.wikimedia.org/api/tools/buckbot/"
+
+@lru_cache(maxsize=1)
+def get_toolhub_maintainers():
+    try:
+        r = requests.get(TOOLHUB_API, timeout=5)
+        r.raise_for_status()
+        data = r.json()
+
+        return {m["username"] for m in data.get("maintainers", [])}
+
+    except Exception as e:
+        print("Failed to load Toolhub maintainers:", e)
+        return set()
 flask_app = Flask(__name__)
 
 flask_app.register_blueprint(assets_blueprint)
