@@ -49,6 +49,8 @@ margin-top:5px;
 
 <h3>Paste page titles</h3>
 
+<input id="requested-by" type="hidden" value="{{ username }}">
+
 <textarea id="batch-input"
 class="batch-box"
 placeholder="File:Example.jpg
@@ -140,36 +142,33 @@ row.className="job-item-row"
 
 row.dataset.title=title
 
-const titleContainer=document.createElement("div")
+/* Build DOM safely to avoid XSS from page titles / edit summaries */
+const titleDiv=document.createElement("div")
 const titleBold=document.createElement("b")
 titleBold.textContent=title
-titleContainer.appendChild(titleBold)
-
 const metaDiv=document.createElement("div")
 metaDiv.className="lookup-meta"
-metaDiv.textContent="Latest editor: " + (user||"")
-titleContainer.appendChild(metaDiv)
+metaDiv.textContent="Latest editor: "+(user||"")
+titleDiv.appendChild(titleBold)
+titleDiv.appendChild(metaDiv)
 
-const userSelect=document.createElement("select")
-userSelect.className="lookup-user"
+const select=document.createElement("select")
+select.className="lookup-user"
 
-const summaryInput=document.createElement("input")
-summaryInput.className="item-summary"
-summaryInput.placeholder="Edit summary"
-summaryInput.value=comment||""
+const input=document.createElement("input")
+input.className="item-summary"
+input.placeholder="Edit summary"
+input.value=comment||""
 
-const removeButton=document.createElement("button")
-removeButton.type="button"
-removeButton.textContent="Remove"
+const removeBtn=document.createElement("button")
+removeBtn.type="button"
+removeBtn.textContent="Remove"
+removeBtn.onclick=()=>row.remove()
 
-row.appendChild(titleContainer)
-row.appendChild(userSelect)
-row.appendChild(summaryInput)
-row.appendChild(removeButton)
-
-row.querySelector("button").onclick=()=>row.remove()
-
-const select=row.querySelector(".lookup-user")
+row.appendChild(titleDiv)
+row.appendChild(select)
+row.appendChild(input)
+row.appendChild(removeBtn)
 
 if(user){
 
@@ -302,6 +301,7 @@ headers:{
 },
 
 body:JSON.stringify({
+requested_by:document.getElementById("requested-by").value,
 dry_run:document.getElementById("dry").checked,
 items:items
 })

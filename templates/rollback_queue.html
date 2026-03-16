@@ -56,7 +56,7 @@ margin:10px 0
 
 <form id="create-form">
 
-<input id="requested-by" value="{{username}}" hidden>
+<input id="requested-by" type="hidden" value="{{username}}">
 
 <label>Status token (optional)</label>
 <input id="token" type="password">
@@ -81,13 +81,15 @@ Dry run
 
 <br><br>
 
-<button type="submit">Create</button>
+<button type="submit">Create rollback job</button>
 
 </form>
 
 <pre id="create-result"></pre>
 
 <h3>Your jobs</h3>
+
+<p>To cancel a queued or running job, use the <em>Cancel rollback job</em> button in the Actions column.</p>
 
 <table class="wikitable">
 
@@ -145,6 +147,30 @@ Dry run
 
 const IS_MAINTAINER={{ 'true' if is_maintainer else 'false' }}
 
+/* ---------------- job list ---------------- */
+
+let JOB_IDS=[
+{% for j in jobs %}
+{{j[0]}},
+{% endfor %}
+]
+
+/* ---------------- helpers ---------------- */
+
+const token=()=>document.getElementById("token").value.trim()
+
+const headers=json=>{
+let h={}
+if(json)h["Content-Type"]="application/json"
+if(token())h["X-Status-Token"]=token()
+return h
+}
+
+const esc=s=>String(s)
+.replaceAll("&","&amp;")
+.replaceAll("<","&lt;")
+.replaceAll(">","&gt;")
+
 /* ---------------- namespace loader ---------------- */
 
 async function loadNamespaces(){
@@ -190,6 +216,151 @@ select.disabled=true
 
 function mwApi(params){
 return "https://commons.wikimedia.org/w/api.php?origin=*&format=json&"+params
+}
+
+/* ---------------- row update ---------------- */
+
+function update(id,d){
+
+let done=(d.completed||0)+(d.failed||0)
+let pct=d.total?Math.round(done/d.total*100):0
+
+let bar=document.getElementById(`bar-${id}`)
+if(bar)bar.style.width=pct+"%"
+
+let txt=document.getElementById(`text-${id}`)
+if(txt)txt.textContent=`${done}/${d.total}`
+
+let st=document.getElementById(`status-${id}`)
+if(st)st.innerHTML=`<span class="status status-${d.status}">${esc(d.status)}</span>`
+
+let act=document.getElementById(`actions-${id}`)
+if(!act)return
+
+act.innerHTML=""
+
+if(d.status==="failed")
+act.innerHTML+=`<button onclick="retry(${id})">Retry</button>`
+
+if(d.status==="queued"||d.status==="running")
+act.innerHTML+=`<button onclick="cancelJob(${id})">Cancel rollback job</button>`
+
+if(d.status==="completed"||d.status==="failed"||d.status==="canceled"){
+JOB_IDS=JOB_IDS.filter(x=>x!==id)
+}
+
+}
+
+/* ---------------- progress polling ---------------- */
+
+async function refresh(){
+
+if(!JOB_IDS.length)return
+
+const r=await fetch(
+"/api/v1/rollback/jobs/progress?ids="+JOB_IDS.join(",")
+)
+
+const data=await r.json()
+
+if(data.jobs)
+data.jobs.forEach(j=>update(j.id,j))
+
+}
+
+/* ---------------- job details ---------------- */
+
+async function toggle(id){
+
+let el=document.getElementById(`details-${id}`)
+
+if(el.style.display==="block"){
+el.style.display="none"
+return
+}
+
+const r=await fetch(`/api/v1/rollback/jobs/${id}`)
+const d=await r.json()
+
+el.style.display="block"
+
+el.innerHTML=`
+<b>Status:</b> ${esc(d.status)}<br>
+<b>Total:</b> ${d.total}<br>
+<b>Completed:</b> ${d.completed}<br>
+<b>Failed:</b> ${d.failed}<br>
+<pre>${esc(JSON.stringify(d.items,null,2))}</pre>
+`
+
+}
+
+/* ---------------- job actions ---------------- */
+
+async function retry(id){
+
+if(!confirm("Retry job "+id+"?"))return
+
+await fetch(`/api/v1/rollback/jobs/${id}/retry`,{
+method:"POST",
+headers:headers()
+})
+
+}
+
+async function cancelJob(id){
+
+if(!confirm("Cancel job "+id+"?"))return
+
+await fetch(`/api/v1/rollback/jobs/${id}`,{
+method:"DELETE",
+headers:headers()
+})
+
+}
+
+/* ---------------- dynamic row insertion ---------------- */
+
+function addJobRow(id){
+
+JOB_IDS.push(id)
+
+const table=document.querySelector(".wikitable")
+
+const row=document.createElement("tbody")
+
+row.innerHTML=`
+<tr id="job-${id}">
+
+<td>
+<a onclick="toggle(${id})">${id}</a>
+</td>
+
+<td id="status-${id}">
+<span class="status status-queued">queued</span>
+</td>
+
+<td>
+<div class="progress">
+<div id="bar-${id}"></div>
+</div>
+<span id="text-${id}">0%</span>
+</td>
+
+<td>just now</td>
+
+<td id="actions-${id}"></td>
+
+</tr>
+
+<tr>
+<td colspan="5">
+<div id="details-${id}" class="job-details"></div>
+</td>
+</tr>
+`
+
+table.insertAdjacentElement("afterbegin",row)
+
 }
 
 /* ---------------- codex lookup ---------------- */
@@ -395,7 +566,7 @@ const r=await fetch("/api/v1/rollback/jobs",{
 
 method:"POST",
 
-headers:headers,
+headers:headers(true),
 
 body:JSON.stringify({
 requested_by:document.getElementById("requested-by").value,
@@ -410,152 +581,34 @@ const result=await r.json()
 document.getElementById("create-result")
 .textContent=JSON.stringify(result,null,2)
 
+if(r.ok && result.job_id) addJobRow(result.job_id)
+
 })
 
-/* ---------------- job polling & controls ---------------- */
+/* ---------------- polling system ---------------- */
 
-async function refresh() {
-  try {
-    const response = await fetch("/api/v1/rollback/jobs", {
-      method: "GET",
-      headers: {
-        "Accept": "application/json"
-      }
-    });
-    if (!response.ok) {
-      // Do not throw to avoid breaking the UI; just stop updating.
-      return;
-    }
-    const data = await response.json();
-    const jobs = Array.isArray(data) ? data : (data.jobs || []);
-    jobs.forEach(updateJobFromData);
-  } catch (e) {
-    // Swallow errors to avoid disrupting other page functionality.
-    console.error("Failed to refresh rollback jobs", e);
-  }
+let timer=null
+
+function start(){
+if(timer)return
+refresh()
+timer=setInterval(refresh,5000)
 }
 
-function updateJobFromData(job) {
-  if (!job) {
-    return;
-  }
-  // Support either object-based or tuple-based job representations.
-  const id = job.id !== undefined ? job.id : job[0];
-  if (id === undefined || id === null) {
-    return;
-  }
-  const barEl = document.getElementById("bar-" + id);
-  const textEl = document.getElementById("text-" + id);
-  const statusEl = document.getElementById("status-" + id);
-  const actionsEl = document.getElementById("actions-" + id);
-  const detailsEl = document.getElementById("details-" + id);
-
-  if (barEl) {
-    const progress = job.progress !== undefined ? job.progress : job[2];
-    const pct = typeof progress === "number" ? Math.max(0, Math.min(100, progress)) : 0;
-    barEl.style.width = pct + "%";
-  }
-
-  if (textEl) {
-    const text = job.message !== undefined ? job.message : (job[3] || "");
-    textEl.textContent = text;
-  }
-
-  if (statusEl) {
-    const status = job.status !== undefined ? job.status : job[1];
-    statusEl.textContent = status;
-  }
-
-  if (actionsEl) {
-    actionsEl.innerHTML = "";
-    const idStr = String(id);
-    const canRetry = job.can_retry !== undefined ? job.can_retry : true;
-    const canCancel = job.can_cancel !== undefined ? job.can_cancel : false;
-    if (canRetry) {
-      const retryBtn = document.createElement("button");
-      retryBtn.type = "button";
-      retryBtn.textContent = "Retry";
-      retryBtn.addEventListener("click", function () {
-        retry(idStr);
-      });
-      actionsEl.appendChild(retryBtn);
-    }
-    if (canCancel) {
-      const cancelBtn = document.createElement("button");
-      cancelBtn.type = "button";
-      cancelBtn.textContent = "Cancel";
-      cancelBtn.addEventListener("click", function () {
-        cancel(idStr);
-      });
-      actionsEl.appendChild(cancelBtn);
-    }
-  }
-
-  if (detailsEl && (job.details !== undefined || job[4] !== undefined)) {
-    const details = job.details !== undefined ? job.details : job[4];
-    if (typeof details === "string") {
-      detailsEl.textContent = details;
-    } else if (details !== null && details !== undefined) {
-      detailsEl.textContent = JSON.stringify(details, null, 2);
-    }
-  }
+function stop(){
+clearInterval(timer)
+timer=null
 }
 
-function toggle(id) {
-  const el = document.getElementById("details-" + id);
-  if (!el) {
-    return;
-  }
-  if (el.style.display === "none" || !el.style.display) {
-    el.style.display = "block";
-  } else {
-    el.style.display = "none";
-  }
-}
+document.addEventListener("visibilitychange",()=>{
+if(document.hidden)stop()
+else start()
+})
 
-async function retry(id) {
-  try {
-    await fetch("/api/v1/rollback/jobs/" + encodeURIComponent(id) + "/retry", {
-      method: "POST",
-      headers: {
-        "Accept": "application/json"
-      }
-    });
-    await refresh();
-  } catch (e) {
-    console.error("Failed to retry rollback job " + id, e);
-  }
-}
-
-async function cancel(id) {
-  try {
-    await fetch("/api/v1/rollback/jobs/" + encodeURIComponent(id), {
-      method: "DELETE",
-      headers: {
-        "Accept": "application/json"
-      }
-    });
-    await refresh();
-  } catch (e) {
-    console.error("Failed to cancel rollback job " + id, e);
-  }
-}
-
-function addJobRow(job) {
-  // Minimal implementation: update existing row if present.
-  updateJobFromData(job);
-}
-
-/* ---------------- init ---------------- */
-
-window.addEventListener("load", function () {
-  if (typeof loadNamespaces === "function") {
-    loadNamespaces();
-  }
-  // Initial job load and periodic polling.
-  refresh();
-  setInterval(refresh, 5000);
-});
+window.addEventListener("load",()=>{
+loadNamespaces()
+if(!document.hidden)start()
+})
 
 </script>
 
