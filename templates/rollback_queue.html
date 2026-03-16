@@ -403,9 +403,150 @@ document.getElementById("create-result")
 
 })
 
+/* ---------------- job polling & controls ---------------- */
+
+async function refresh() {
+  try {
+    const response = await fetch("/api/v1/rollback/jobs", {
+      method: "GET",
+      headers: {
+        "Accept": "application/json"
+      }
+    });
+    if (!response.ok) {
+      // Do not throw to avoid breaking the UI; just stop updating.
+      return;
+    }
+    const data = await response.json();
+    const jobs = Array.isArray(data) ? data : (data.jobs || []);
+    jobs.forEach(updateJobFromData);
+  } catch (e) {
+    // Swallow errors to avoid disrupting other page functionality.
+    console.error("Failed to refresh rollback jobs", e);
+  }
+}
+
+function updateJobFromData(job) {
+  if (!job) {
+    return;
+  }
+  // Support either object-based or tuple-based job representations.
+  const id = job.id !== undefined ? job.id : job[0];
+  if (id === undefined || id === null) {
+    return;
+  }
+  const barEl = document.getElementById("bar-" + id);
+  const textEl = document.getElementById("text-" + id);
+  const statusEl = document.getElementById("status-" + id);
+  const actionsEl = document.getElementById("actions-" + id);
+  const detailsEl = document.getElementById("details-" + id);
+
+  if (barEl) {
+    const progress = job.progress !== undefined ? job.progress : job[2];
+    const pct = typeof progress === "number" ? Math.max(0, Math.min(100, progress)) : 0;
+    barEl.style.width = pct + "%";
+  }
+
+  if (textEl) {
+    const text = job.message !== undefined ? job.message : (job[3] || "");
+    textEl.textContent = text;
+  }
+
+  if (statusEl) {
+    const status = job.status !== undefined ? job.status : job[1];
+    statusEl.textContent = status;
+  }
+
+  if (actionsEl) {
+    actionsEl.innerHTML = "";
+    const idStr = String(id);
+    const canRetry = job.can_retry !== undefined ? job.can_retry : true;
+    const canCancel = job.can_cancel !== undefined ? job.can_cancel : false;
+    if (canRetry) {
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.textContent = "Retry";
+      retryBtn.addEventListener("click", function () {
+        retry(idStr);
+      });
+      actionsEl.appendChild(retryBtn);
+    }
+    if (canCancel) {
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.addEventListener("click", function () {
+        cancel(idStr);
+      });
+      actionsEl.appendChild(cancelBtn);
+    }
+  }
+
+  if (detailsEl && (job.details !== undefined || job[4] !== undefined)) {
+    const details = job.details !== undefined ? job.details : job[4];
+    if (typeof details === "string") {
+      detailsEl.textContent = details;
+    } else if (details !== null && details !== undefined) {
+      detailsEl.textContent = JSON.stringify(details, null, 2);
+    }
+  }
+}
+
+function toggle(id) {
+  const el = document.getElementById("details-" + id);
+  if (!el) {
+    return;
+  }
+  if (el.style.display === "none" || !el.style.display) {
+    el.style.display = "block";
+  } else {
+    el.style.display = "none";
+  }
+}
+
+async function retry(id) {
+  try {
+    await fetch("/api/v1/rollback/jobs/" + encodeURIComponent(id) + "/retry", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json"
+      }
+    });
+    await refresh();
+  } catch (e) {
+    console.error("Failed to retry rollback job " + id, e);
+  }
+}
+
+async function cancel(id) {
+  try {
+    await fetch("/api/v1/rollback/jobs/" + encodeURIComponent(id), {
+      method: "DELETE",
+      headers: {
+        "Accept": "application/json"
+      }
+    });
+    await refresh();
+  } catch (e) {
+    console.error("Failed to cancel rollback job " + id, e);
+  }
+}
+
+function addJobRow(job) {
+  // Minimal implementation: update existing row if present.
+  updateJobFromData(job);
+}
+
 /* ---------------- init ---------------- */
 
-window.addEventListener("load",loadNamespaces)
+window.addEventListener("load", function () {
+  if (typeof loadNamespaces === "function") {
+    loadNamespaces();
+  }
+  // Initial job load and periodic polling.
+  refresh();
+  setInterval(refresh, 5000);
+});
 
 </script>
 
