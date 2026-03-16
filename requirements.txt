@@ -3,7 +3,6 @@ async-timeout==4.0.3
 billiard==4.2.0
 blinker==1.8.1
 cachetools
-wikimedia/codex
 celery==5.4.0
 certifi==2024.2.2
 charset-normalizer==3.3.2
