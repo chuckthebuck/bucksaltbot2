@@ -1,0 +1,324 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Batch rollback generator</h2>
+
+<p>
+Paste multiple page titles and Buckbot will detect the latest editor
+and generate rollback jobs automatically.
+</p>
+
+<style>
+
+.batch-box{
+width:700px;
+height:180px;
+padding:8px;
+font-family:monospace;
+}
+
+.job-item-row{
+display:grid;
+grid-template-columns:350px 200px 250px auto;
+gap:8px;
+margin:6px 0;
+align-items:center;
+}
+
+.lookup-meta{
+font-size:12px;
+color:#54595d;
+}
+
+.lookup-user{
+padding:5px;
+}
+
+.item-summary{
+padding:5px;
+width:100%;
+}
+
+.progress{
+font-size:13px;
+color:#54595d;
+margin-top:5px;
+}
+
+</style>
+
+<h3>Paste page titles</h3>
+
+<input id="requested-by" type="hidden" value="{{ username }}">
+
+<textarea id="batch-input"
+class="batch-box"
+placeholder="File:Example.jpg
+File:Another.jpg
+Category:Example"></textarea>
+
+<br><br>
+
+<label>Namespace</label>
+
+<select id="namespace-select">
+<option value="">All</option>
+</select>
+
+<br><br>
+
+<button id="generate">Generate rollback rows</button>
+
+<div class="progress" id="progress"></div>
+
+<hr>
+
+<h3>Rollback items</h3>
+
+<div id="job-items"></div>
+
+<br>
+
+<label>
+<input type="checkbox" id="dry">
+Dry run
+</label>
+
+<br><br>
+
+<button id="submit-job">Create rollback job</button>
+
+<pre id="result"></pre>
+
+<script>
+
+const IS_MAINTAINER={{ 'true' if is_maintainer else 'false' }}
+
+function mwApi(params){
+return "https://commons.wikimedia.org/w/api.php?origin=*&format=json&"+params
+}
+
+/* ---------------- namespace loader ---------------- */
+
+async function loadNamespaces(){
+
+const r=await fetch(
+mwApi("action=query&meta=siteinfo&siprop=namespaces")
+)
+
+const data=await r.json()
+
+const select=document.getElementById("namespace-select")
+
+Object.keys(data.query.namespaces).forEach(id=>{
+
+const ns=data.query.namespaces[id]
+
+const name=ns["*"]||"(Main)"
+
+let opt=document.createElement("option")
+
+opt.value=id
+opt.textContent=name
+
+select.appendChild(opt)
+
+})
+
+if(!IS_MAINTAINER){
+select.value="6"
+select.disabled=true
+}
+
+}
+
+/* ---------------- row builder ---------------- */
+
+function createRow(title,user,comment){
+
+const row=document.createElement("div")
+
+row.className="job-item-row"
+
+row.dataset.title=title
+
+/* Build DOM safely to avoid XSS from page titles / edit summaries */
+const titleDiv=document.createElement("div")
+const titleBold=document.createElement("b")
+titleBold.textContent=title
+const metaDiv=document.createElement("div")
+metaDiv.className="lookup-meta"
+metaDiv.textContent="Latest editor: "+(user||"")
+titleDiv.appendChild(titleBold)
+titleDiv.appendChild(metaDiv)
+
+const select=document.createElement("select")
+select.className="lookup-user"
+
+const input=document.createElement("input")
+input.className="item-summary"
+input.placeholder="Edit summary"
+input.value=comment||""
+
+const removeBtn=document.createElement("button")
+removeBtn.type="button"
+removeBtn.textContent="Remove"
+removeBtn.onclick=()=>row.remove()
+
+row.appendChild(titleDiv)
+row.appendChild(select)
+row.appendChild(input)
+row.appendChild(removeBtn)
+
+if(user){
+
+let opt=document.createElement("option")
+opt.value=user
+opt.textContent=user
+
+select.appendChild(opt)
+select.value=user
+
+}
+
+document.getElementById("job-items").appendChild(row)
+
+}
+
+/* ---------------- batched revision lookup ---------------- */
+
+async function fetchLatestBatch(titles){
+
+const CHUNK_SIZE=50
+
+let results={}
+
+for(let i=0;i<titles.length;i+=CHUNK_SIZE){
+
+const chunk=titles.slice(i,i+CHUNK_SIZE)
+
+const r=await fetch(
+mwApi(
+"action=query"+
+"&prop=revisions"+
+"&titles="+encodeURIComponent(chunk.join("|"))+
+"&rvprop=user|comment"+
+"&rvlimit=1"
+)
+)
+
+const data=await r.json()
+
+const pages=data.query.pages
+
+Object.values(pages).forEach(page=>{
+
+const rev=page.revisions?.[0]
+
+results[page.title]={
+user:rev?.user||"",
+comment:rev?.comment||""
+}
+
+})
+
+}
+
+return results
+
+}
+
+/* ---------------- generator ---------------- */
+
+document.getElementById("generate").onclick=async()=>{
+
+const progress=document.getElementById("progress")
+
+const titles=document.getElementById("batch-input")
+.value
+.split("\n")
+.map(x=>x.trim())
+.filter(Boolean)
+
+if(!titles.length){
+alert("No page titles provided")
+return
+}
+
+progress.textContent="Fetching latest editors..."
+
+const data=await fetchLatestBatch(titles)
+
+progress.textContent="Generating rows..."
+
+titles.forEach(title=>{
+
+const info=data[title]||{user:"",comment:""}
+
+createRow(title,info.user,info.comment)
+
+})
+
+progress.textContent="Rows generated."
+
+}
+
+/* ---------------- job submission ---------------- */
+
+document.getElementById("submit-job").onclick=async()=>{
+
+const rows=[...document.querySelectorAll(".job-item-row")]
+
+const items=rows.map(r=>{
+
+const title=r.dataset.title
+
+const user=r.querySelector(".lookup-user").value
+
+const summary=r.querySelector(".item-summary").value
+
+if(!title||!user)return null
+
+return{
+title:title,
+user:user,
+summary:summary||null
+}
+
+}).filter(Boolean)
+
+if(!items.length){
+alert("No valid rollback items")
+return
+}
+
+const r=await fetch("/api/v1/rollback/jobs",{
+
+method:"POST",
+
+headers:{
+"Content-Type":"application/json"
+},
+
+body:JSON.stringify({
+requested_by:document.getElementById("requested-by").value,
+dry_run:document.getElementById("dry").checked,
+items:items
+})
+
+})
+
+const result=await r.json()
+
+document.getElementById("result")
+.textContent=JSON.stringify(result,null,2)
+
+}
+
+/* ---------------- init ---------------- */
+
+window.addEventListener("load",loadNamespaces)
+
+</script>
+
+{% endblock %}

@@ -30,32 +30,50 @@
       </div>
     </div>
     <div class="cdx-tabs">
-      <form class="cdx-tabs__header" method="get" action="/goto">
-        <div class="cdx-tabs__list" tabindex="-1" role="tablist">
-          <button
-            id="form-tabs-rollback-label"
-            class="cdx-tabs__list__item"
-            role="tab"
-            aria-selected="{% if type == 'rollback-queue' %}true{% else %}false{% endif %}"
-            aria-controls="form-tabs-rollback"
-            value="rollback-queue"
-            name="tab"
-          >
-            Rollback Queue
-          </button>
-          <button
-            id="form-tabs-docs-label"
-            class="cdx-tabs__list__item"
-            role="tab"
-            aria-selected="false"
-            aria-controls="form-tabs-docs"
-            value="documentation"
-            name="tab"
-          >
-            Documentation
-          </button>
-        </div>
-      </form>
+  <form class="cdx-tabs__header" method="get" action="/goto">
+    <div class="cdx-tabs__list" tabindex="-1" role="tablist">
+
+      <button
+        id="form-tabs-rollback-label"
+        class="cdx-tabs__list__item"
+        role="tab"
+        aria-selected="{% if type == 'rollback-queue' %}true{% else %}false{% endif %}"
+        aria-controls="form-tabs-rollback"
+        value="rollback-queue"
+        name="tab"
+      >
+        Rollback Queue
+      </button>
+
+      {% if is_maintainer %}
+      <button
+        id="form-tabs-batch-label"
+        class="cdx-tabs__list__item"
+        role="tab"
+        aria-selected="{% if type == 'rollback-batch' %}true{% else %}false{% endif %}"
+        aria-controls="form-tabs-batch"
+        value="rollback-batch"
+        name="tab"
+      >
+        Batch Rollback
+      </button>
+      {% endif %}
+
+      <button
+        id="form-tabs-docs-label"
+        class="cdx-tabs__list__item"
+        role="tab"
+        aria-selected="{% if type == 'documentation' %}true{% else %}false{% endif %}"
+        aria-controls="form-tabs-docs"
+        value="documentation"
+        name="tab"
+      >
+        Documentation
+      </button>
+
+    </div>
+  </form>
+</div>
       {% block content %}
       {% endblock %}
     </div>
