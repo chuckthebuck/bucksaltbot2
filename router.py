@@ -220,18 +220,6 @@ def oauth_callback():
     return redirect(url_for("index"))
 
 
-@app.route("/api/v1/rollback/jobs")
-def list_rollback_jobs():
-
-    actor = _rollback_api_actor()
-
-    if not actor:
-        abort(403)
-
-    # Minimal implementation: return an empty list of jobs.
-    # This satisfies tests that expect the route to exist and be authorized
-    # without making assumptions about the underlying storage schema.
-    return jsonify([])
 
 
 @app.route("/api/v1/rollback/worker")
