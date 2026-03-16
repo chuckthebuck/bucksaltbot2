@@ -380,13 +380,22 @@ alert("Add at least one item")
 return
 }
 
+const statusTokenMeta=document.querySelector('meta[name="status-token"]')
+const statusToken=statusTokenMeta?statusTokenMeta.getAttribute("content"):null
+
+const headers={
+"Content-Type":"application/json"
+}
+
+if(statusToken){
+headers["X-Status-Token"]=statusToken
+}
+
 const r=await fetch("/api/v1/rollback/jobs",{
 
 method:"POST",
 
-headers:{
-"Content-Type":"application/json"
-},
+headers:headers,
 
 body:JSON.stringify({
 requested_by:document.getElementById("requested-by").value,
