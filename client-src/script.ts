@@ -1,3 +1,8 @@
+import * as Codex from '@wikimedia/codex';
+import '@wikimedia/codex/dist/codex.style.css';
+
+(window as any).Codex = Codex;
+
 window.addEventListener('load', () => {
     const mainForm: HTMLElement|null = document.getElementById('mainForm');
     const formTypeElement = document.querySelector('.hidden-type');
