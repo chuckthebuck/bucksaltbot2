@@ -4,6 +4,13 @@
 <h2>Rollback job queue</h2>
 
 <p>Create and monitor rollback jobs.</p>
+<p><a href="/rollback_batch">Use the batch job creator for mass requests.</a></p>
+
+<link rel="stylesheet"
+href="https://unpkg.com/@wikimedia/codex@1.24.0/dist/codex.style.css">
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/@wikimedia/codex@1.24.0/dist/codex.umd.js"></script>
 
 <style>
 .status{padding:3px 8px;border-radius:4px;font-weight:bold}
@@ -17,6 +24,32 @@
 .progress>div{height:100%;background:#36c;width:0%}
 
 .job-details{display:none;background:#f8f9fa;padding:10px;border:1px solid #ccc}
+
+.job-item-row{
+display:grid;
+grid-template-columns:320px 200px 240px auto;
+gap:8px;
+margin:6px 0
+}
+
+.lookup-meta{
+font-size:12px;
+color:#54595d
+}
+
+.item-summary{
+width:100%;
+padding:6px
+}
+
+.lookup-user{
+width:100%;
+padding:6px
+}
+
+.job-items{
+margin:10px 0
+}
 </style>
 
 <h3>Create job</h3>
@@ -28,15 +61,27 @@
 <label>Status token (optional)</label>
 <input id="token" type="password">
 
-<label>Items (File:Title|User|Summary)</label>
-<textarea id="items" rows="5"></textarea>
+<br><br>
+
+<label>Namespace</label>
+<select id="namespace-select">
+<option value="">All</option>
+</select>
+
+<br><br>
+
+<button type="button" id="add-item">Add item</button>
+
+<div id="job-items" class="job-items"></div>
 
 <label>
 <input type="checkbox" id="dry">
 Dry run
 </label>
 
-<button>Create</button>
+<br><br>
+
+<button type="submit">Create</button>
 
 </form>
 
@@ -98,173 +143,212 @@ Dry run
 
 <script>
 
-/* ---------------- job list ---------------- */
+const IS_MAINTAINER={{ 'true' if is_maintainer else 'false' }}
 
-let JOB_IDS=[
-{% for j in jobs %}
-{{j[0]}},
-{% endfor %}
-]
+/* ---------------- namespace loader ---------------- */
 
-/* ---------------- helpers ---------------- */
-
-const token=()=>document.getElementById("token").value.trim()
-
-const headers=json=>{
-let h={}
-if(json)h["Content-Type"]="application/json"
-if(token())h["X-Status-Token"]=token()
-return h
-}
-
-const esc=s=>String(s)
-.replaceAll("&","&amp;")
-.replaceAll("<","&lt;")
-.replaceAll(">","&gt;")
-
-/* ---------------- row update ---------------- */
-
-function update(id,d){
-
-let done=(d.completed||0)+(d.failed||0)
-let pct=d.total?Math.round(done/d.total*100):0
-
-let bar=document.getElementById(`bar-${id}`)
-if(bar)bar.style.width=pct+"%"
-
-let txt=document.getElementById(`text-${id}`)
-if(txt)txt.textContent=`${done}/${d.total}`
-
-let st=document.getElementById(`status-${id}`)
-if(st)st.innerHTML=`<span class="status status-${d.status}">${d.status}</span>`
-
-let act=document.getElementById(`actions-${id}`)
-if(!act)return
-
-act.innerHTML=""
-
-if(d.status==="failed")
-act.innerHTML+=`<button onclick="retry(${id})">Retry</button>`
-
-if(d.status==="queued"||d.status==="running")
-act.innerHTML+=`<button onclick="cancel(${id})">Cancel</button>`
-
-/* stop polling finished jobs */
-if(d.status==="completed"||d.status==="failed"||d.status==="canceled"){
-JOB_IDS=JOB_IDS.filter(x=>x!==id)
-}
-
-}
-
-/* ---------------- progress polling ---------------- */
-
-async function refresh(){
-
-if(!JOB_IDS.length)return
+async function loadNamespaces(){
 
 const r=await fetch(
-"/api/v1/rollback/jobs/progress?ids="+JOB_IDS.join(",")
+"https://commons.wikimedia.org/w/api.php"+
+"?origin=*"+
+"&action=query"+
+"&meta=siteinfo"+
+"&siprop=namespaces"+
+"&format=json"
 )
 
 const data=await r.json()
 
-if(data.jobs)
-data.jobs.forEach(j=>update(j.id,j))
+const select=document.getElementById("namespace-select")
+
+const namespaces=data.query.namespaces
+
+Object.keys(namespaces).forEach(id=>{
+
+const ns=namespaces[id]
+
+const name=ns["*"]||"(Main)"
+
+const opt=document.createElement("option")
+
+opt.value=id
+opt.textContent=name
+
+select.appendChild(opt)
+
+})
+
+if(!IS_MAINTAINER){
+select.value="6"
+select.disabled=true
+}
 
 }
 
-/* ---------------- job details ---------------- */
+/* ---------------- helpers ---------------- */
 
-async function toggle(id){
+function mwApi(params){
+return "https://commons.wikimedia.org/w/api.php?origin=*&format=json&"+params
+}
 
-let el=document.getElementById(`details-${id}`)
+/* ---------------- codex lookup ---------------- */
 
-if(el.style.display==="block"){
-el.style.display="none"
+function mountLookup(row){
+
+const container=row.querySelector(".lookup-title")
+const meta=row.querySelector(".lookup-meta")
+const userSelect=row.querySelector(".lookup-user")
+const summary=row.querySelector(".item-summary")
+
+const {createApp,ref,watch}=Vue
+const {CdxLookup}=Codex
+
+createApp({
+
+components:{CdxLookup},
+
+setup(){
+
+const selected=ref("")
+const menuItems=ref([])
+
+async function search(value){
+
+if(!value){
+menuItems.value=[]
 return
 }
 
-const r=await fetch(`/api/v1/rollback/jobs/${id}`)
+let ns=document.getElementById("namespace-select").value
+
+let nsParam=""
+
+if(ns) nsParam="&namespace="+ns
+
+const r=await fetch(
+mwApi(
+"action=opensearch"+
+"&limit=10"+
+nsParam+
+"&search="+encodeURIComponent(value)
+)
+)
+
 const d=await r.json()
 
-el.style.display="block"
+menuItems.value=(d[1]||[]).map(t=>({
+label:t,
+value:t
+}))
 
-el.innerHTML=`
-<b>Status:</b> ${esc(d.status)}<br>
-<b>Total:</b> ${d.total}<br>
-<b>Completed:</b> ${d.completed}<br>
-<b>Failed:</b> ${d.failed}<br>
-<pre>${esc(JSON.stringify(d.items,null,2))}</pre>
+}
+
+async function loadEditor(title){
+
+row.dataset.title=title
+
+userSelect.innerHTML=""
+meta.textContent=""
+
+const r=await fetch(
+mwApi(
+"action=query"+
+"&prop=revisions"+
+"&titles="+encodeURIComponent(title)+
+"&rvprop=user|comment"+
+"&rvlimit=10"
+)
+)
+
+const data=await r.json()
+
+const pages=data.query.pages
+
+let revisions=[]
+
+for(let id in pages){
+if(pages[id].revisions){
+revisions=pages[id].revisions
+break
+}
+}
+
+if(!revisions.length) return
+
+const latest=revisions[0]
+
+const users=[...new Set(revisions.map(r=>r.user))]
+
+users.forEach(u=>{
+let opt=document.createElement("option")
+opt.value=u
+opt.textContent=u
+userSelect.appendChild(opt)
+})
+
+userSelect.value=latest.user
+
+if(!summary.value)
+summary.value=latest.comment||""
+
+meta.textContent="Latest editor: "+latest.user
+
+}
+
+watch(selected,v=>{
+let title=(typeof v==="string")?v:v.value
+loadEditor(title)
+})
+
+return{selected,menuItems,search}
+
+},
+
+template:`
+<cdx-lookup
+v-model:selected="selected"
+:menu-items="menuItems"
+placeholder="Search page"
+@input="search"
+/>
 `
 
-}
-
-/* ---------------- job actions ---------------- */
-
-async function retry(id){
-
-if(!confirm("Retry job "+id+"?"))return
-
-await fetch(`/api/v1/rollback/jobs/${id}/retry`,{
-method:"POST",
-headers:headers()
-})
+}).mount(container)
 
 }
 
-async function cancel(id){
+/* ---------------- item rows ---------------- */
 
-if(!confirm("Cancel job "+id+"?"))return
+function createItemRow(){
 
-await fetch(`/api/v1/rollback/jobs/${id}`,{
-method:"DELETE",
-headers:headers()
-})
+const row=document.createElement("div")
 
-}
+row.className="job-item-row"
 
-/* ---------------- dynamic row insertion ---------------- */
-
-function addJobRow(id){
-
-JOB_IDS.push(id)
-
-const table=document.querySelector(".wikitable")
-
-const row=`
-<tr id="job-${id}">
-
-<td>
-<a onclick="toggle(${id})">${id}</a>
-</td>
-
-<td id="status-${id}">
-<span class="status status-queued">queued</span>
-</td>
-
-<td>
-<div class="progress">
-<div id="bar-${id}"></div>
+row.innerHTML=`
+<div>
+<div class="lookup-title"></div>
+<div class="lookup-meta"></div>
 </div>
-<span id="text-${id}">0%</span>
-</td>
-
-<td>just now</td>
-
-<td id="actions-${id}"></td>
-
-</tr>
-
-<tr>
-<td colspan="5">
-<div id="details-${id}" class="job-details"></div>
-</td>
-</tr>
+<select class="lookup-user"></select>
+<input class="item-summary" placeholder="Summary (optional)">
+<button type="button">Remove</button>
 `
 
-table.insertAdjacentHTML("afterbegin",row)
+row.querySelector("button").onclick=()=>row.remove()
+
+document.getElementById("job-items").appendChild(row)
+
+mountLookup(row)
+
+return row
 
 }
+
+document.getElementById("add-item").onclick=createItemRow
+
+createItemRow()
 
 /* ---------------- job creation ---------------- */
 
@@ -273,24 +357,36 @@ document.getElementById("create-form")
 
 e.preventDefault()
 
-let items=document.getElementById("items").value
-.split("\n")
-.map(l=>l.trim())
-.filter(Boolean)
-.map(l=>{
-let[t,u,...s]=l.split("|")
+let items=[...document.querySelectorAll(".job-item-row")]
+.map(row=>{
+
+const title=row.dataset.title
+const user=row.querySelector(".lookup-user").value.trim()
+const summary=row.querySelector(".item-summary").value.trim()
+
+if(!title||!user)return null
+
 return{
-title:t.trim(),
-user:u.trim(),
-summary:s.join("|")||null
+title:title,
+user:user,
+summary:summary||null
 }
+
 })
+.filter(Boolean)
+
+if(!items.length){
+alert("Add at least one item")
+return
+}
 
 const r=await fetch("/api/v1/rollback/jobs",{
 
 method:"POST",
 
-headers:headers(true),
+headers:{
+"Content-Type":"application/json"
+},
 
 body:JSON.stringify({
 requested_by:document.getElementById("requested-by").value,
@@ -305,33 +401,11 @@ const result=await r.json()
 document.getElementById("create-result")
 .textContent=JSON.stringify(result,null,2)
 
-if(r.ok) addJobRow(result.job_id)
-
 })
 
-/* ---------------- polling system ---------------- */
+/* ---------------- init ---------------- */
 
-let timer=null
-
-function start(){
-if(timer)return
-refresh()
-timer=setInterval(refresh,5000)
-}
-
-function stop(){
-clearInterval(timer)
-timer=null
-}
-
-document.addEventListener("visibilitychange",()=>{
-if(document.hidden)stop()
-else start()
-})
-
-window.addEventListener("load",()=>{
-if(!document.hidden)start()
-})
+window.addEventListener("load",loadNamespaces)
 
 </script>
 
