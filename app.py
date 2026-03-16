@@ -3,7 +3,7 @@ import requests
 
 from flask import Flask, session
 from celery import Celery
-from functools import lru_cache
+from cachetools import TTLCache
 
 from blueprint import assets_blueprint
 
@@ -18,21 +18,38 @@ TOOLHUB_API = "https://toolhub.wikimedia.org/api/tools/buckbot/"
 
 MAX_JOB_ITEMS = int(os.getenv("MAX_JOB_ITEMS", "50"))
 
+TOOLHUB_MAINTAINERS_CACHE_TTL = int(
+    os.getenv("TOOLHUB_MAINTAINERS_CACHE_TTL", "300")
+)
 
-@lru_cache(maxsize=1)
+TOOLHUB_MAINTAINERS_CACHE = TTLCache(maxsize=1, ttl=TOOLHUB_MAINTAINERS_CACHE_TTL)
+
+
 def get_toolhub_maintainers():
+    # Return cached maintainers if available and not expired
+    cached_maintainers = TOOLHUB_MAINTAINERS_CACHE.get("maintainers")
+    if cached_maintainers is not None:
+        return cached_maintainers
+
     try:
         r = requests.get(TOOLHUB_API, timeout=5)
         r.raise_for_status()
         data = r.json()
 
-        return {
+        maintainers = {
             m["username"].lower()
             for m in data.get("maintainers", [])
         }
 
+        TOOLHUB_MAINTAINERS_CACHE["maintainers"] = maintainers
+        return maintainers
+
     except Exception as e:
         print("Failed to load Toolhub maintainers:", e)
+        # On failure, fall back to previously cached maintainers if any,
+        # otherwise return an empty set (preserving existing behavior).
+        if cached_maintainers is not None:
+            return cached_maintainers
         return set()
 
 
