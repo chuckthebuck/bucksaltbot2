@@ -139,6 +139,7 @@ def batch_job_progress():
             })
 
     return jsonify({"jobs":jobs})
+    
 @app.route('/rollback-queue')
 def rollback_queue_ui():
     username = session.get('username')
@@ -159,7 +160,21 @@ def rollback_queue_ui():
 
     return render_template('rollback_queue.html', jobs=jobs, username=username, type='rollback-queue')
 
+@app.route("/rollback_batch")
+def rollback_batch():
 
+    username = session.get("username")
+
+    if not username:
+        abort(401)
+
+    if not is_maintainer(username):
+        abort(403)
+
+    return render_template(
+        "rollback_batch.html",
+        username=username
+    )
 @app.route('/api/v1/rollback/jobs', methods=['POST'])
 def create_rollback_job():
     actor = _rollback_api_actor()
