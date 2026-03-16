@@ -352,7 +352,19 @@ def list_rollback_jobs():
         for row in jobs
     ]})
 
+@app.route("/admin/jobs")
+def admin_jobs():
+    username = session.get("username")
 
+    if not is_maintainer(username):
+        abort(403)
+
+    jobs = get_all_jobs()
+
+    return render_template(
+        "admin_jobs.html",
+        jobs=jobs
+    )
 @app.route('/')
 def index():
     return render_template('index.html', username=session.get('username'), type='index')
