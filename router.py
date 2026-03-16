@@ -121,13 +121,11 @@ def _rollback_api_actor():
 @app.route("/goto")
 def goto():
 
-    username = session.get("username")
+   username = session.get("username")
+tab = request.args.get("tab")
 
-    # Unauthenticated users should be redirected to the login flow
-    if not username:
-        return redirect(url_for("login"))
-
-    tab = request.args.get("tab")
+if not username:
+    return redirect(url_for('login', referrer='/goto?tab=' + str(tab)))
 
     if session.get("username") is None:
         return redirect(url_for('login', referrer='/goto?tab=' + str(tab)))
