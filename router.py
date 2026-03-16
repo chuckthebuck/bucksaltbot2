@@ -121,31 +121,26 @@ def _rollback_api_actor():
 @app.route("/goto")
 def goto():
 
-   username = session.get("username")
-tab = request.args.get("tab")
+    username = session.get("username")
+    tab = request.args.get("tab")
 
-if not username:
-    return redirect(url_for('login', referrer='/goto?tab=' + str(tab)))
-
-    if session.get("username") is None:
+    if not username:
         return redirect(url_for('login', referrer='/goto?tab=' + str(tab)))
 
     if tab == "rollback-queue":
         return redirect("/rollback-queue")
 
     if tab == "rollback-batch":
-
         if not is_maintainer(username):
             abort(403)
-
         return redirect("/rollback_batch")
 
     if tab == "documentation":
-        return redirect('https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot')
+        return redirect(
+            "https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot"
+        )
 
     return redirect("/rollback-queue")
-
-
 
 
 
