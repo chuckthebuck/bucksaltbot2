@@ -140,20 +140,32 @@ row.className="job-item-row"
 
 row.dataset.title=title
 
-row.innerHTML=`
-<div>
-<b>${title}</b>
-<div class="lookup-meta">Latest editor: ${user||""}</div>
-</div>
+const titleContainer=document.createElement("div")
+const titleBold=document.createElement("b")
+titleBold.textContent=title
+titleContainer.appendChild(titleBold)
 
-<select class="lookup-user"></select>
+const metaDiv=document.createElement("div")
+metaDiv.className="lookup-meta"
+metaDiv.textContent="Latest editor: " + (user||"")
+titleContainer.appendChild(metaDiv)
 
-<input class="item-summary"
-value="${comment||""}"
-placeholder="Edit summary">
+const userSelect=document.createElement("select")
+userSelect.className="lookup-user"
 
-<button type="button">Remove</button>
-`
+const summaryInput=document.createElement("input")
+summaryInput.className="item-summary"
+summaryInput.placeholder="Edit summary"
+summaryInput.value=comment||""
+
+const removeButton=document.createElement("button")
+removeButton.type="button"
+removeButton.textContent="Remove"
+
+row.appendChild(titleContainer)
+row.appendChild(userSelect)
+row.appendChild(summaryInput)
+row.appendChild(removeButton)
 
 row.querySelector("button").onclick=()=>row.remove()
 
@@ -166,7 +178,6 @@ opt.value=user
 opt.textContent=user
 
 select.appendChild(opt)
-
 select.value=user
 
 }
