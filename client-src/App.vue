@@ -14,7 +14,9 @@ const namespaceId = ref("");
 const namespaces = ref<Array<{ id: string; name: string }>>([]);
 const createResult = ref("");
 const pollingTimer = ref<number | null>(null);
-
+<template>
+  <h1 style="color:red;">APP IS RENDERING</h1>
+</template>
 const items = ref<Array<{ key: number; data: CreateJobItem | null }>>([
   { key: Date.now(), data: null },
 ]);
