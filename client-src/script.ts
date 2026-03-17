@@ -108,11 +108,12 @@ function mountLookup(row: HTMLElement) {
         meta.textContent = "Latest editor: " + latest.user;
       }
 
-      watch(selected, (v: any) => {
-        const title = typeof v === "string" ? v : v?.value;
-        if (title) loadEditor(title);
-      });
-
+      wwatch(selected, (v: any) => {
+  // Only trigger when a real selection object is chosen
+  if (v && typeof v === "object" && v.value) {
+    loadEditor(v.value);
+  }
+});
       return { selected, menuItems, search };
     },
 
