@@ -6,11 +6,11 @@ export default defineConfig({
   base: "/assets/",
 
   resolve: {
-    dedupe: ["vue"], // 🔥 CRITICAL
+    dedupe: ["vue"], 
   },
 
   optimizeDeps: {
-    include: ["vue", "@wikimedia/codex"], // 🔥 helps dev + build consistency
+    include: ["vue", "@wikimedia/codex"], 
   },
 
   build: {
@@ -27,7 +27,7 @@ export default defineConfig({
       ],
 
       output: {
-        format: "iife", // 🔥 ensures globals work predictably
+        format: "iife", 
         entryFileNames: "bundled/script-[hash].js",
       },
     },
