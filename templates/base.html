@@ -5,9 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rollback queue</title>
   {%- if not is_production %}
-    <script type="module" src="{{ asset('@vite/client') }}"></script>
-  {%- endif %}
+  <!-- Vite dev mode -->
+  <script type="module" src="{{ asset('@vite/client') }}"></script>
   <script type="module" src="{{ asset('script.ts') }}"></script>
+{%- else %}
+  <!-- Production build -->
+  <script src="{{ url_for('static', filename='dist/bundle.js') }}"></script>
+{%- endif %}
 </head>
 <body>
   <header class="header">
