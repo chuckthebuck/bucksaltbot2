@@ -1,22 +1,17 @@
-import path from "node:path";
-import { defineConfig } from "vite";
-import vue from "@vitejs/plugin-vue";
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+import path from 'path'
 
 export default defineConfig({
-  root: path.join(__dirname, "./client-src/"),
-  base: "/assets/",
   plugins: [vue()],
-  resolve: {
-    dedupe: ["vue"],
-  },
   build: {
-    outDir: path.join(__dirname, "./assets_compiled/"),
-    manifest: "manifest.json",
-    assetsDir: "bundled",
+    outDir: 'static/dist',
     emptyOutDir: true,
-    copyPublicDir: false,
     rollupOptions: {
-      input: "script.ts",
-    },
-  },
-});
+      input: path.resolve(__dirname, 'client-src/script.ts'),
+      output: {
+        entryFileNames: 'bundle.js'
+      }
+    }
+  }
+})
