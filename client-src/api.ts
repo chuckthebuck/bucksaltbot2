@@ -89,14 +89,14 @@ export async function loadEditorsForTitle(title: string): Promise<{ users: strin
   const data = await r.json();
   const pages = data.query.pages as Record<string, { revisions?: Array<{ user: string; comment?: string }> }>;
 
-  let revisions: Array<{ user: string; comment?: string }> = [];
+  let revisions: { user: string; comment?: string }[] = []
 
-  for (const id in pages) {
-    if (pages[id].revisions) {
-      revisions = pages[id].revisions;
-      break;
-    }
+for (const page of Object.values(pages)) {
+  if (page.revisions?.length) {
+    revisions = page.revisions
+    break
   }
+}
 
   if (!revisions.length) {
     return { users: [], latestUser: "", latestComment: "" };
