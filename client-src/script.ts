@@ -1,4 +1,4 @@
-import { createApp, ref, watch } from 'vue'
+import { createApp, ref, watch } from 'Vue'
 import * as Codex from '@wikimedia/codex'
 import '@wikimedia/codex/dist/codex.style.css'
 
