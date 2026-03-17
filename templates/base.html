@@ -10,8 +10,8 @@
   <script type="module" src="{{ asset('script.ts') }}"></script>
 {%- else %}
   <!-- Production build -->
-  <script src="{{ url_for('static', filename='dist/bundle.js') }}"></script>
-{%- endif %}
+<script type="module" src="{{ url_for('static', filename='dist/bundle.js') }}"></script>
+  {%- endif %}
 </head>
 <body>
   <header class="header">
