@@ -32,19 +32,30 @@ def load_manifest():
 # Add `asset()` function and `is_production` to app context.
 @assets_blueprint.app_context_processor
 def add_context():
+
     def dev_asset(file_path):
         return f"{VITE_ORIGIN}/assets/{file_path}"
 
     def prod_asset(file_path):
-        manifest = load_manifest()  
+        manifest = load_manifest()
 
         asset_meta = manifest.get(file_path)
-        if asset_meta and asset_meta.get('file'):
+        if asset_meta and asset_meta.get("file"):
             return f"/assets/{asset_meta['file']}"
 
         return f"/assets/{file_path}"
 
+    def prod_css(file_path):
+        manifest = load_manifest()
+
+        asset_meta = manifest.get(file_path)
+        if asset_meta and asset_meta.get("css"):
+            return [f"/assets/{css}" for css in asset_meta["css"]]
+
+        return []
+
     return {
         "asset": prod_asset if is_production else dev_asset,
+        "asset_css": prod_css if is_production else (lambda x: []),
         "is_production": is_production,
     }
