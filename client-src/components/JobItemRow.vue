@@ -30,16 +30,16 @@ const canEmit = computed(() => {
   return !!selected.value && typeof selected.value === "object" && !!selected.value.value && !!selectedUser.value;
 });
 
-async function onInputValue(value: string) {
+watch(inputValue, async (value) => {
   console.log("🔥 typing:", value);
 
-  if (!value.trim()) {
+  if (!value || !value.trim()) {
     menuItems.value = [];
     return;
   }
 
   menuItems.value = await searchTitles(value, props.namespaceId);
-}
+});
 
 
 async function onSelectionChanged(v: any) {
