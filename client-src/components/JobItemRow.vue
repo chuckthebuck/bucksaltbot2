@@ -25,28 +25,31 @@ const selectedUser = ref("");
 const summary = ref("");
 const meta = ref("");
 const inputValue = ref("");
-const inputRef = ref<HTMLInputElement | null>(null);
+const fieldRef = ref<any>(null);
 
 const canEmit = computed(() => {
   return !!selected.value && typeof selected.value === "object" && !!selected.value.value && !!selectedUser.value;
 });
 
 onMounted(() => {
-  // Try to find the input element inside CdxLookup and listen directly
+  // Try to find the input element inside CdxField and listen directly
   setTimeout(() => {
-    const input = inputRef.value?.querySelector('input') as HTMLInputElement | null;
-    if (input) {
-      input.addEventListener('input', async (e) => {
-        const value = (e.target as HTMLInputElement).value;
-        console.log("🔥 direct input:", value);
-        
-        if (!value || !value.trim()) {
-          menuItems.value = [];
-          return;
-        }
+    const fieldEl = fieldRef.value?.$el as HTMLElement | null;
+    if (fieldEl) {
+      const input = fieldEl.querySelector('input') as HTMLInputElement | null;
+      if (input) {
+        input.addEventListener('input', async (e) => {
+          const value = (e.target as HTMLInputElement).value;
+          console.log("🔥 direct input:", value);
+          
+          if (!value || !value.trim()) {
+            menuItems.value = [];
+            return;
+          }
 
-        menuItems.value = await searchTitles(value, props.namespaceId);
-      });
+          menuItems.value = await searchTitles(value, props.namespaceId);
+        });
+      }
     }
   }, 100);
 });
@@ -97,7 +100,7 @@ watch([selected, selectedUser, summary], () => {
 
 <template>
   <div class="job-item-row">
-    <CdxField ref="inputRef">
+    <CdxField ref="fieldRef">
       <CdxLookup
         :selected="selected"
         v-model:input-value="inputValue"
