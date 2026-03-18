@@ -1,11 +1,12 @@
-{% extends 'base.html' %}
-{% block content %}
-    {% if not username %}
-        <h2>Wikimedia Login</h2>
-        <p>This tool accepts rollback jobs submitted by the Commons userscript and processes them through a queue.</p>
-        <a class="cdx-button cdx-button--fake-button cdx-button--fake-button--enabled cdx-button--action-progressive" href="/login">Login with Wikimedia to continue</a>
-    {% else %}
-        <h2>Welcome, {{ username }}</h2>
-        <p>The old match/split functionality has been removed from this deployment. Use the <a href="/rollback-queue">rollback queue interface</a> to monitor rollback jobs.</p>
-    {% endif %}
-{% endblock %}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Vite Entry</title>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <script type="module" src="/client-src/script.ts"></script>
+  </body>
+</html>
