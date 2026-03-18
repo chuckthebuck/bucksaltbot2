@@ -184,7 +184,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="container">
+  <div class="container rollback-queue-container">
     <CdxMessage class="top-message">
       Submitting a job will trigger your configured rollback bot account on Wikimedia Commons.
       You are responsible for reviewing results.

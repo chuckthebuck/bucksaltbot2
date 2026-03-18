@@ -129,7 +129,7 @@ watch([selected, selectedUser, summary], () => {
       placeholder="Summary (optional)"
     />
 
-    <CdxButton action="destructive" weight="quiet" @click="emit('remove')">
+    <CdxButton action="destructive" weight="normal" @click="emit('remove')">
       Remove
     </CdxButton>
   </div>
