@@ -191,14 +191,14 @@ async function submit() {
   <div class="container">
 
     <!-- instructions -->
-    <cdx-message>
+    <CdxMessage>
       Enter one item per line:
       <br>
       <code>Title|User|Optional summary</code>
-    </cdx-message>
+    </CdxMessage>
 
     <!-- textarea -->
-    <cdx-text-area
+    <CdxTextArea
       v-model="input"
       rows="8"
       placeholder="File:Example.jpg|Username|Optional summary"
@@ -222,9 +222,9 @@ async function submit() {
         style="padding:6px; width:250px"
       />
 
-      <cdx-button @click="loadContribs">
+      <CdxButton @click="loadContribs">
         Import
-      </cdx-button>
+      </CdxButton>
     </div>
 
     <br>
@@ -238,13 +238,13 @@ async function submit() {
     <br>
 
     <!-- buttons -->
-    <cdx-button @click="parseInput">
+    <CdxButton @click="parseInput">
       Preview
-    </cdx-button>
+    </CdxButton>
 
-    <cdx-button action="progressive" weight="primary" @click="submit">
+    <CdxButton action="progressive" weight="primary" @click="submit">
       Submit batch job
-    </cdx-button>
+    </CdxButton>
 
     <!-- errors -->
     <div v-if="errors.length" style="color:red; margin-top:10px">
@@ -253,9 +253,9 @@ async function submit() {
 
     <!-- selection controls -->
     <div v-if="parsed.length" style="margin-top:10px">
-      <cdx-button @click="selectAll(true)">Select all</cdx-button>
-      <cdx-button @click="selectAll(false)">Select none</cdx-button>
-      <cdx-button @click="invertSelection()">Invert</cdx-button>
+      <CdxButton @click="selectAll(true)">Select all</CdxButton>
+      <CdxButton @click="selectAll(false)">Select none</CdxButton>
+      <CdxButton @click="invertSelection()">Invert</CdxButton>
 
       <span style="margin-left:10px">
         {{ selectedCount }} / {{ parsed.length }} selected
