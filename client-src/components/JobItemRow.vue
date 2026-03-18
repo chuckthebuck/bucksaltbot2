@@ -70,7 +70,7 @@ watch([selected, selectedUser, summary], () => {
 <template>
   <div class="job-item-row">
     <div>
-      <cdx-lookup
+      <CdxLookup
         v-model:selected="selected"
         :input-value="inputValue"
         :menu-items="menuItems"
@@ -80,23 +80,23 @@ watch([selected, selectedUser, summary], () => {
       <div class="lookup-meta">{{ meta }}</div>
     </div>
 
-    <cdx-field>
+    <CdxField>
       <select class="lookup-user" v-model="selectedUser">
         <option value="" disabled>Select user</option>
         <option v-for="u in users" :key="u" :value="u">
           {{ u }}
         </option>
       </select>
-    </cdx-field>
+    </CdxField>
 
-    <cdx-text-input
+    <CdxTextInput
       v-model="summary"
       class="item-summary"
       placeholder="Summary (optional)"
     />
 
-    <cdx-button action="destructive" weight="quiet" @click="emit('remove')">
+    <CdxButton action="destructive" weight="quiet" @click="emit('remove')">
       Remove
-    </cdx-button>
+    </CdxButton>
   </div>
 </template>
