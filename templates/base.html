@@ -4,27 +4,22 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rollback queue</title>
-  {%- if not is_production %}
+{%- if not is_production %}
   <!-- Vite dev mode -->
   <script type="module" src="{{ asset('@vite/client') }}"></script>
   <script type="module" src="{{ asset('script.ts') }}"></script>
+
 {%- else %}
   <!-- Production build -->
-<script type="module" src="{{ url_for('static', filename='dist/bundle.js') }}"></script>
-  {%- endif %}
-</head>
-<body>
-  <header class="header">
-    <span class="logo">
-      <b>Rollback</b>
-      &
-      <b>Queue</b>
-    </span>
-    {% if username %}
-    <span>{{ username }}</span>
-    <a href="/logout" class="logout">Logout</a>
-    {% endif %}
-  </header>
+
+  {% for css_file in asset_css('client-src/script.ts') %}
+    <link rel="stylesheet" href="{{ css_file }}">
+  {% endfor %}
+
+  <script type="module" src="{{ asset('client-src/script.ts') }}"></script>
+
+{%- endif %}
+  </head>
 
   <div class="container">
     <div class="cdx-message cdx-message--block cdx-message--notice top-message" aria-live="polite">
