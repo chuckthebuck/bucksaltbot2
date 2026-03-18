@@ -237,9 +237,9 @@ def rollback_batch():
         abort(403)
 
     return render_template(
-        "rollback_batch.html",
+        "batch_rollback.html",
         username=username,
-        type="rollback-batch"
+        type="batch-rollback"
     )
 
 
