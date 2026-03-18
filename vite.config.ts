@@ -7,9 +7,7 @@ export default defineConfig({
   build: {
     outDir: 'static/dist',
     emptyOutDir: true,
-    manifest: true, 
-    cssCodeSplit: true,
-    
-    }
+    manifest: true,
+    cssCodeSplit: true
   }
 })
