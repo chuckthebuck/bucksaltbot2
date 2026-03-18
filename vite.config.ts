@@ -7,9 +7,8 @@ export default defineConfig({
   build: {
     outDir: 'static/dist',
     emptyOutDir: true,
-
-    cssCodeSplit: true, 
-
+    manifest: true, 
+    cssCodeSplit: true,
     rollupOptions: {
       input: path.resolve(__dirname, 'client-src/script.ts'),
       output: {
