@@ -81,7 +81,7 @@ watch([selected, selectedUser, summary], () => {
   v-model:input-value="inputValue"
   :menu-items="menuItems"
   placeholder="Search page"
-  @update=input-value="onInputValue"
+  @update:input-value="onInputValue"
 />
       <div class="lookup-meta">{{ meta }}</div>
     </div>
