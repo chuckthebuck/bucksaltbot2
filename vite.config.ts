@@ -9,11 +9,7 @@ export default defineConfig({
     emptyOutDir: true,
     manifest: true, 
     cssCodeSplit: true,
-    rollupOptions: {
-      input: path.resolve(__dirname, 'client-src/script.ts'),
-      output: {
-        entryFileNames: 'bundle.js'
-      }
+    
     }
   }
 })
