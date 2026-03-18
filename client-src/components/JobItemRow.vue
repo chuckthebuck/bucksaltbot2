@@ -30,8 +30,14 @@ const canEmit = computed(() => {
   return !!selected.value && typeof selected.value === "object" && !!selected.value.value && !!selectedUser.value;
 });
 
-async function onInputValue(value: string) {
-  inputValue.value = value;
+sync function onInputValue(value: string) {
+  console.log("🔥 typing:", value);
+
+  if (!value.trim()) {
+    menuItems.value = [];
+    return;
+  }
+
   menuItems.value = await searchTitles(value, props.namespaceId);
 }
 
@@ -71,12 +77,12 @@ watch([selected, selectedUser, summary], () => {
   <div class="job-item-row">
     <div>
       <CdxLookup
-        v-model:selected="selected"
-        :input-value="inputValue"
-        :menu-items="menuItems"
-        placeholder="Search page"
-        @update:input-value="onInputValue"
-      />
+  v-model:selected="selected"
+  v-model:input-value="inputValue"
+  :menu-items="menuItems"
+  placeholder="Search page"
+  @update=input-value="onInputValue"
+/>
       <div class="lookup-meta">{{ meta }}</div>
     </div>
 
