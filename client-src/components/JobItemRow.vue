@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { CdxButton, CdxField, CdxLookup, CdxTextInput } from "@wikimedia/codex";
+import { CdxButton, CdxField, CdxLookup, CdxSelect, CdxTextInput } from "@wikimedia/codex";
 import { loadEditorsForTitle, searchTitles } from "../api";
 
 const props = defineProps<{
@@ -74,24 +74,27 @@ watch([selected, selectedUser, summary], () => {
 });
 </script>
 
-<CdxLookup
-  :selected="selected"
-  :input-value="inputValue"
-  :menu-items="menuItems"
-  placeholder="Search page"
-  @update:selected="selected = $event"
-  @update:input-value="handleInput"
-/>
+<template>
+  <div class="job-item-row">
+    <CdxField>
+      <CdxLookup
+        :selected="selected"
+        :input-value="inputValue"
+        :menu-items="menuItems"
+        placeholder="Search page"
+        @update:selected="selected = $event"
+        @update:input-value="inputValue = $event"
+      />
       <div class="lookup-meta">{{ meta }}</div>
-    </div>
+    </CdxField>
 
     <CdxField>
-      <select class="lookup-user" v-model="selectedUser">
-        <option value="" disabled>Select user</option>
-        <option v-for="u in users" :key="u" :value="u">
-          {{ u }}
-        </option>
-      </select>
+      <CdxSelect
+        :selected="selectedUser"
+        :menu-items="users.map(u => ({ label: u, value: u }))"
+        @update:selected="selectedUser = $event"
+        class="lookup-user"
+      />
     </CdxField>
 
     <CdxTextInput
