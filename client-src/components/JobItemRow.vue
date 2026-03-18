@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch, onMounted } from "vue";
 import { CdxButton, CdxField, CdxLookup, CdxSelect, CdxTextInput } from "@wikimedia/codex";
 import { loadEditorsForTitle, searchTitles } from "../api";
 
@@ -25,13 +25,34 @@ const selectedUser = ref("");
 const summary = ref("");
 const meta = ref("");
 const inputValue = ref("");
+const inputRef = ref<HTMLInputElement | null>(null);
 
 const canEmit = computed(() => {
   return !!selected.value && typeof selected.value === "object" && !!selected.value.value && !!selectedUser.value;
 });
 
+onMounted(() => {
+  // Try to find the input element inside CdxLookup and listen directly
+  setTimeout(() => {
+    const input = inputRef.value?.querySelector('input') as HTMLInputElement | null;
+    if (input) {
+      input.addEventListener('input', async (e) => {
+        const value = (e.target as HTMLInputElement).value;
+        console.log("🔥 direct input:", value);
+        
+        if (!value || !value.trim()) {
+          menuItems.value = [];
+          return;
+        }
+
+        menuItems.value = await searchTitles(value, props.namespaceId);
+      });
+    }
+  }, 100);
+});
+
 watch(inputValue, async (value) => {
-  console.log("🔥 typing:", value);
+  console.log("🔥 watch inputValue:", value);
 
   if (!value || !value.trim()) {
     menuItems.value = [];
@@ -76,7 +97,7 @@ watch([selected, selectedUser, summary], () => {
 
 <template>
   <div class="job-item-row">
-    <CdxField>
+    <CdxField ref="inputRef">
       <CdxLookup
         :selected="selected"
         v-model:input-value="inputValue"
