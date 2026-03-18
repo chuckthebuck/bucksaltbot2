@@ -1,24 +1,20 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { CdxMessage } from "@wikimedia/codex";
+import { CdxButton, CdxMessage } from "@wikimedia/codex";
+import JobItemRow from "./components/JobItemRow.vue";
 import JobsTable, { type UiJob } from "./components/JobsTable.vue";
-import { createJob, fetchProgress, getInitialProps, loadEditorsForTitle } from "./api";
+import { createJob, fetchProgress, getInitialProps, loadNamespaces, type CreateJobItem } from "./api";
 
 const props = getInitialProps();
 
 const requestedBy = ref(props.username || "");
+const items = ref<Array<{ key: number; data: CreateJobItem | null }>>([
+  { key: Date.now(), data: null },
+]);
 
-const items = ref<Array<{ title: string; user: string; summary: string }>>([]);
-
-const newItem = ref({
-  title: "",
-  user: "",
-  summary: "",
-});
-
-const users = ref<string[]>([]);
 const statusToken = ref("");
-const namespace = ref("all");
+const namespaceId = ref("");
+const namespaces = ref<Array<{ id: string; name: string }>>([]);
 const dryRun = ref(false);
 const createResult = ref("");
 const pollingTimer = ref<number | null>(null);
@@ -40,61 +36,35 @@ const activeJobIds = computed(() =>
     .map((j) => j.id)
 );
 
-async function loadContributorsForTitle() {
-  const title = newItem.value.title.trim();
-
-  if (!title) {
-    users.value = [];
-    newItem.value.user = "";
-    return;
-  }
-
-  try {
-    const editorData = await loadEditorsForTitle(title);
-    users.value = editorData.users;
-
-    if (!users.value.includes(newItem.value.user)) {
-      newItem.value.user = editorData.latestUser || "";
-    }
-  } catch {
-    users.value = [];
-    newItem.value.user = "";
-  }
-}
-
 function addItem() {
-  if (!newItem.value.title || !newItem.value.user) return;
-
-  items.value.push({ ...newItem.value });
-
-  newItem.value = {
-    title: "",
-    user: "",
-    summary: "",
-  };
-
-  users.value = [];
+  items.value.push({ key: Date.now() + Math.floor(Math.random() * 1000), data: null });
 }
 
 function removeItem(index: number) {
   items.value.splice(index, 1);
+  if (!items.value.length) addItem();
+}
+
+function updateItem(index: number, data: CreateJobItem | null) {
+  items.value[index].data = data;
 }
 
 async function submitJob() {
   console.log({
-    items: items.value,
+    items: items.value.map((item) => item.data).filter(Boolean),
     statusToken: statusToken.value,
-    namespace: namespace.value,
+    namespace: namespaceId.value,
     dryRun: dryRun.value,
   });
 
-  if (!items.value.length) return;
+  const payload = items.value
+    .map((item) => item.data)
+    .filter(Boolean) as CreateJobItem[];
 
-  const payload = items.value.map((item) => ({
-    title: item.title,
-    user: item.user,
-    summary: item.summary || null,
-  }));
+  if (!payload.length) {
+    alert("Add at least one item");
+    return;
+  }
 
   const { ok, result } = await createJob({
     requested_by: requestedBy.value,
@@ -167,6 +137,12 @@ function onVisibilityChange() {
 }
 
 onMounted(async () => {
+  namespaces.value = await loadNamespaces();
+
+  if (!props.is_maintainer) {
+    namespaceId.value = "6";
+  }
+
   if (!document.hidden) startPolling();
   document.addEventListener("visibilitychange", onVisibilityChange);
 });
@@ -188,38 +164,16 @@ onBeforeUnmount(() => {
       <div class="left-panel">
         <h3>Create job</h3>
 
-        <div class="item-row">
-          <input
-            v-model="newItem.title"
-            placeholder="Search page"
-            @change="loadContributorsForTitle"
+        <CdxButton type="button" @click="addItem">Add item</CdxButton>
+
+        <div id="job-items" class="job-items">
+          <JobItemRow
+            v-for="(item, index) in items"
+            :key="item.key"
+            :namespace-id="namespaceId"
+            @remove="removeItem(index)"
+            @update="updateItem(index, $event)"
           />
-
-          <select v-model="newItem.user">
-            <option disabled value="">Select contributor</option>
-            <option v-for="u in users" :key="u">{{ u }}</option>
-          </select>
-
-          <input v-model="newItem.summary" placeholder="Summary (optional)" />
-
-          <button class="cdx-button" type="button" @click="addItem">Add</button>
-        </div>
-
-        <div class="item-list">
-          <div v-for="(item, i) in items" :key="i" class="item-card">
-            <div>
-              <strong>{{ item.title }}</strong> - {{ item.user }}
-              <div class="meta">{{ item.summary }}</div>
-            </div>
-
-            <button
-              class="cdx-button cdx-button--destructive"
-              type="button"
-              @click="removeItem(i)"
-            >
-              Remove
-            </button>
-          </div>
         </div>
       </div>
 
@@ -230,11 +184,14 @@ onBeforeUnmount(() => {
         <input v-model="statusToken" type="password" />
 
         <label>Namespace</label>
-        <select v-model="namespace">
-          <option value="all">All</option>
+        <select v-model="namespaceId" :disabled="!props.is_maintainer">
+          <option value="">All</option>
+          <option v-for="ns in namespaces" :key="ns.id" :value="ns.id">
+            {{ ns.name }}
+          </option>
         </select>
 
-        <label>
+        <label class="inline-checkbox">
           <input type="checkbox" v-model="dryRun" />
           Dry run
         </label>
@@ -242,13 +199,14 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="submit-bar">
-      <button
-        class="cdx-button cdx-button--action-progressive"
+      <CdxButton
+        action="progressive"
+        weight="primary"
         type="button"
         @click="submitJob"
       >
         Create rollback job
-      </button>
+      </CdxButton>
     </div>
 
     <pre id="create-result">{{ createResult }}</pre>

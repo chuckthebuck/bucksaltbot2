@@ -150,6 +150,31 @@ body {
     margin-bottom: @spacing-100;
 }
 
+.job-items {
+    display: flex;
+    flex-direction: column;
+    gap: @spacing-75;
+    margin-top: @spacing-100;
+}
+
+.job-item-row {
+    display: grid;
+    grid-template-columns: minmax( 220px, 1.8fr ) minmax( 180px, 1.2fr ) minmax( 220px, 1.8fr ) auto;
+    gap: @spacing-75;
+    align-items: start;
+}
+
+.lookup-meta {
+    color: @color-subtle;
+    font-size: @font-size-small;
+    margin-top: @spacing-25;
+}
+
+.lookup-user,
+.item-summary {
+    width: 100%;
+}
+
 .item-list {
     display: flex;
     flex-direction: column;
@@ -194,60 +219,8 @@ body {
     .item-row {
         grid-template-columns: 1fr;
     }
-}
-/* === Rollback tool layout === */
 
-.layout {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: @spacing-200;
-    align-items: start;
-}
-
-.left-panel,
-.right-panel {
-    background-color: @background-color-base;
-    border: @border-base;
-    border-radius: @border-radius-base;
-    padding: @spacing-150;
-}
-
-/* === Item builder row === */
-.item-row {
-    display: grid;
-    grid-template-columns: 2fr 1fr 2fr auto;
-    gap: @spacing-75;
-    align-items: center;
-    margin-bottom: @spacing-125;
-}
-
-/* === Item cards === */
-.item-card {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border: @border-base;
-    border-radius: @border-radius-base;
-    padding: @spacing-75;
-    margin-bottom: @spacing-75;
-    background-color: @background-color-neutral-subtle;
-}
-
-.item-card .meta {
-    font-size: @font-size-small;
-    color: @color-subtle;
-}
-
-/* === Submit button alignment === */
-.submit-bar {
-    margin-top: @spacing-200;
-    display: flex;
-    justify-content: flex-end;
-}
-
-/* === Responsive === */
-@media ( max-width: @max-width-breakpoint-tablet ) {
-    .layout {
+    .job-item-row {
         grid-template-columns: 1fr;
     }
 }
