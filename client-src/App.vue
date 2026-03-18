@@ -140,10 +140,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="container">
-    <cdx-message class="top-message">
+    <CdxMessage class="top-message">
       Submitting a job will trigger your configured rollback bot account on Wikimedia Commons.
       You are responsible for reviewing results.
-    </cdx-message>
+    </CdxMessage>
 
     <h3>Create job</h3>
 
@@ -165,7 +165,7 @@ onBeforeUnmount(() => {
 
       <br /><br />
 
-      <cdx-button type="button" @click="addItem">Add item</cdx-button>
+      <CdxButton type="button" @click="addItem">Add item</CdxButton>
 
       <div id="job-items" class="job-items">
         <JobItemRow
@@ -184,9 +184,9 @@ onBeforeUnmount(() => {
 
       <br /><br />
 
-      <cdx-button action="progressive" weight="primary" type="submit">
+      <CdxButton action="progressive" weight="primary" type="submit">
         Create rollback job
-      </cdx-button>
+      </CdxButton>
     </form>
 
     <pre id="create-result">{{ createResult }}</pre>
