@@ -97,22 +97,22 @@ async function onCancel(id: number) {
         <td>{{ job.created }}</td>
 
         <td>
-          <cdx-button
+          <Cdxbutton
             v-if="job.status === 'failed'"
             weight="quiet"
             @click="onRetry(job.id)"
           >
             Retry
-          </cdx-button>
+          </Cdxbutton>
 
-          <cdx-button
+          <Cdxbutton
             v-if="job.status === 'queued' || job.status === 'running'"
             action="destructive"
             weight="quiet"
             @click="onCancel(job.id)"
           >
             Cancel rollback job
-          </cdx-button>
+          </Cdxbutton>
         </td>
       </tr>
 
