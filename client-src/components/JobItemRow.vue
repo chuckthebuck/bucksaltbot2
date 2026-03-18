@@ -79,11 +79,10 @@ watch([selected, selectedUser, summary], () => {
     <CdxField>
       <CdxLookup
         :selected="selected"
-        :input-value="inputValue"
+        v-model:input-value="inputValue"
         :menu-items="menuItems"
         placeholder="Search page"
         @update:selected="selected = $event"
-        @update:input-value="inputValue = $event"
       />
       <div class="lookup-meta">{{ meta }}</div>
     </CdxField>
