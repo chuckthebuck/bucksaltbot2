@@ -74,15 +74,13 @@ watch([selected, selectedUser, summary], () => {
 });
 </script>
 
-<template>
-  <div class="job-item-row">
-    <div>
-      <CdxLookup
-  v-model:selected="selected"
-  v-model:input-value="inputValue"
+<CdxLookup
+  :selected="selected"
+  :input-value="inputValue"
   :menu-items="menuItems"
   placeholder="Search page"
-  @update:input-value="onInputValue"
+  @update:selected="selected = $event"
+  @update:input-value="handleInput"
 />
       <div class="lookup-meta">{{ meta }}</div>
     </div>
