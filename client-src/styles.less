@@ -244,13 +244,17 @@ body {
 }
 
 .rollback-queue-container .job-item-row {
-    grid-template-columns: minmax( 0, 1.6fr ) minmax( 0, 1.2fr ) minmax( 0, 1.6fr ) auto;
-    gap: @spacing-75;
-    align-items: end;
+    grid-template-columns: 1fr;
+    gap: @spacing-50;
+    align-items: stretch;
 }
 
 .rollback-queue-container .job-item-row > * {
     min-width: 0;
+}
+
+.rollback-queue-container .job-item-row .cdx-button {
+    justify-self: start;
 }
 
 .rollback-queue-container .job-item-row .cdx-field {
@@ -258,7 +262,12 @@ body {
 }
 
 .rollback-queue-container .lookup-meta {
-    min-height: 1.2em;
+    min-height: 0;
+    line-height: 1.2;
+}
+
+.rollback-queue-container .lookup-meta:empty {
+    display: none;
 }
 
 .rollback-queue-container .submit-bar {
