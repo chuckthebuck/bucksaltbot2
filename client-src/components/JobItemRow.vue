@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted } from "vue";
+import { computed, ref, watch } from "vue";
 import { CdxButton, CdxField, CdxLookup, CdxSelect, CdxTextInput } from "@wikimedia/codex";
 import { loadEditorsForTitle, searchTitles } from "../api";
 
@@ -18,94 +18,72 @@ const emit = defineEmits<{
   ];
 }>();
 
-const selected = ref<any>(null);
+const selected = ref<string | number | null>(null);
 const menuItems = ref<Array<{ label: string; value: string }>>([]);
 const users = ref<string[]>([]);
-const selectedUser = ref("");
+const selectedUser = ref<string | number | null>(null);
 const summary = ref("");
 const meta = ref("");
-const inputValue = ref("");
-const fieldRef = ref<any>(null);
+let lookupRequestId = 0;
+let editorsRequestId = 0;
 
 const canEmit = computed(() => {
-  return !!selected.value && typeof selected.value === "object" && !!selected.value.value && !!selectedUser.value;
+  return selected.value !== null && selectedUser.value !== null;
 });
 
-onMounted(() => {
-  // Try to find the input element inside CdxField and listen directly
-  setTimeout(() => {
-    const fieldEl = fieldRef.value?.$el as HTMLElement | null;
-    if (fieldEl) {
-      const input = fieldEl.querySelector('input') as HTMLInputElement | null;
-      if (input) {
-        input.addEventListener('input', async (e) => {
-          const value = (e.target as HTMLInputElement).value;
-          console.log("🔥 direct input:", value);
-          
-          if (!value || !value.trim()) {
-            menuItems.value = [];
-            return;
-          }
+async function onLookupInput(value: string | number) {
+  const query = String(value || "").trim();
+  const requestId = ++lookupRequestId;
 
-          menuItems.value = await searchTitles(value, props.namespaceId);
-        });
-
-        // Listen for menu item clicks/selection
-        input.addEventListener('keydown', (e) => {
-          if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
-            console.log("🔥 keydown:", e.key, "menu items:", menuItems.value.length);
-          }
-        });
-
-        // Listen for blur to capture selection
-        input.addEventListener('blur', async (e) => {
-          const value = (e.target as HTMLInputElement).value;
-          console.log("🔥 blur with value:", value);
-          
-          // Check if value matches a menu item
-          const match = menuItems.value.find(item => item.label === value);
-          if (match) {
-            console.log("🔥 matched menu item, loading editors");
-            selected.value = match;
-            await onSelectionChanged(match);
-          }
-        });
-      }
-    }
-  }, 100);
-});
-
-watch(inputValue, async (value) => {
-  console.log("🔥 watch inputValue:", value);
-
-  if (!value || !value.trim()) {
+  if (!query) {
     menuItems.value = [];
     return;
   }
 
-  menuItems.value = await searchTitles(value, props.namespaceId);
-});
+  try {
+    const results = await searchTitles(query, props.namespaceId);
+    if (requestId !== lookupRequestId) return;
+    menuItems.value = results;
+  } catch {
+    if (requestId !== lookupRequestId) return;
+    menuItems.value = [];
+  }
+}
 
 
-async function onSelectionChanged(v: any) {
-  console.log("🔥 onSelectionChanged called with:", v);
-  
-  if (!v || typeof v !== "object" || !v.value) {
+async function onSelectionChanged(v: string | number | null) {
+  const title = v === null ? "" : String(v);
+  const requestId = ++editorsRequestId;
+
+  if (!title) {
     users.value = [];
-    selectedUser.value = "";
+    selectedUser.value = null;
     meta.value = "";
     emit("update", null);
     return;
   }
 
-  console.log("🔥 loading editors for:", v.value);
-  const editorData = await loadEditorsForTitle(v.value);
-  console.log("🔥 loaded editors:", editorData);
-  
-  users.value = editorData.users;
-  selectedUser.value = editorData.latestUser;
-  if (!summary.value) summary.value = editorData.latestComment;
-  meta.value = editorData.latestUser ? `Latest editor: ${editorData.latestUser}` : "";
+  try {
+    const editorData = await loadEditorsForTitle(title);
+    if (requestId !== editorsRequestId) return;
+
+    users.value = editorData.users;
+
+    const fallbackUser = editorData.users[0] || null;
+    selectedUser.value = editorData.latestUser || fallbackUser;
+
+    if (!summary.value) {
+      summary.value = editorData.latestComment || "";
+    }
+
+    meta.value = editorData.latestUser ? `Latest editor: ${editorData.latestUser}` : "No contributors found";
+  } catch {
+    if (requestId !== editorsRequestId) return;
+    users.value = [];
+    selectedUser.value = null;
+    meta.value = "Failed to load contributors";
+    emit("update", null);
+  }
 }
 
 watch(selected, onSelectionChanged);
@@ -117,8 +95,8 @@ watch([selected, selectedUser, summary], () => {
   }
 
   emit("update", {
-    title: selected.value.value,
-    user: selectedUser.value,
+    title: String(selected.value),
+    user: String(selectedUser.value),
     summary: summary.value || null,
   });
 });
@@ -126,22 +104,21 @@ watch([selected, selectedUser, summary], () => {
 
 <template>
   <div class="job-item-row">
-    <CdxField ref="fieldRef">
+    <CdxField>
       <CdxLookup
-        :selected="selected"
-        v-model:input-value="inputValue"
+        v-model:selected="selected"
         :menu-items="menuItems"
         placeholder="Search page"
-        @update:selected="selected = $event"
+        @input="onLookupInput"
       />
       <div class="lookup-meta">{{ meta }}</div>
     </CdxField>
 
     <CdxField>
       <CdxSelect
-        :selected="selectedUser"
+        v-model:selected="selectedUser"
         :menu-items="users.map(u => ({ label: u, value: u }))"
-        @update:selected="selectedUser = $event"
+        default-label="Select contributor"
         class="lookup-user"
       />
     </CdxField>
