@@ -38,6 +38,7 @@ def add_context():
 
     def prod_asset(file_path):
         manifest = load_manifest()
+        print(load_manifest())
 
         asset_meta = manifest.get(file_path)
         if asset_meta and asset_meta.get("file"):
