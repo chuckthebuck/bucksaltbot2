@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { CdxButton } from "@wikimedia/codex";
+import { CdxButton, CdxProgressBar } from "@wikimedia/codex";
 import { cancelJob, fetchJobDetails, retryJob } from "../api";
 
 export interface UiJob {
@@ -22,9 +22,9 @@ const openRows = ref<Record<number, boolean>>({});
 
 function esc(s: unknown): string {
   return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function progressText(job: UiJob): string {
@@ -82,16 +82,30 @@ async function onCancel(id: number) {
         </td>
 
         <td>
-          <span :class="`status status-${job.status}`">
+          <span
+            class="cdx-tag"
+            :class="{
+              'cdx-tag--status-success': job.status === 'completed',
+              'cdx-tag--status-error': job.status === 'failed',
+              'cdx-tag--status-warning': job.status === 'queued'
+            }"
+          >
             {{ job.status }}
           </span>
         </td>
 
         <td>
-          <div class="progress">
-            <div :style="{ width: `${progressPct(job)}%` }"></div>
+          <div class="job-progress">
+            <CdxProgressBar
+              inline
+              :disabled="!(job.status === 'queued' || job.status === 'running')"
+              :aria-label="`Job ${job.id} progress`"
+            />
           </div>
-          <span>{{ progressText(job) }}</span>
+          <div class="job-progress-text">
+            <span>{{ progressText(job) }}</span>
+            <span>{{ progressPct(job) }}%</span>
+          </div>
         </td>
 
         <td>{{ job.created }}</td>
@@ -99,7 +113,9 @@ async function onCancel(id: number) {
         <td>
           <CdxButton
             v-if="job.status === 'failed'"
-            weight="quiet"
+            action="progressive"
+            weight="primary"
+            type="button"
             @click="onRetry(job.id)"
           >
             Retry
@@ -109,6 +125,7 @@ async function onCancel(id: number) {
             v-if="job.status === 'queued' || job.status === 'running'"
             action="destructive"
             weight="quiet"
+            type="button"
             @click="onCancel(job.id)"
           >
             Cancel rollback job
@@ -124,3 +141,48 @@ async function onCancel(id: number) {
     </template>
   </table>
 </template>
+
+<style scoped>
+.cdx-tag {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-color-subtle, #c8ccd1);
+  border-radius: 9999px;
+  padding: 2px 8px;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  text-transform: capitalize;
+  background-color: var(--background-color-neutral-subtle, #f8f9fa);
+  color: var(--color-base, #202122);
+}
+
+.cdx-tag--status-success {
+  background-color: var(--background-color-success-subtle, #d5fdf4);
+  border-color: var(--color-success, #14866d);
+  color: var(--color-success, #14866d);
+}
+
+.cdx-tag--status-error {
+  background-color: var(--background-color-error-subtle, #fee7e6);
+  border-color: var(--color-error, #d73333);
+  color: var(--color-error, #d73333);
+}
+
+.cdx-tag--status-warning {
+  background-color: var(--background-color-warning-subtle, #fef6e7);
+  border-color: var(--color-warning, #edab00);
+  color: var(--color-warning, #7a4b00);
+}
+
+.job-progress {
+  min-width: 160px;
+}
+
+.job-progress-text {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 0.8125rem;
+}
+</style>
