@@ -19,15 +19,45 @@ const dryRun = ref(false);
 const createResult = ref("");
 const pollingTimer = ref<number | null>(null);
 
+function normalizeJob(row: unknown): UiJob | null {
+  if (Array.isArray(row)) {
+    // rollback_queue.html currently injects DB tuples:
+    // [id, requested_by, status, dry_run, created_at]
+    const id = Number(row[0]);
+    if (!Number.isFinite(id) || id <= 0) return null;
+
+    return {
+      id,
+      status: String(row[2] ?? "queued"),
+      created: String(row[4] ?? ""),
+      total: 0,
+      completed: 0,
+      failed: 0,
+    };
+  }
+
+  if (row && typeof row === "object") {
+    const obj = row as Partial<UiJob>;
+    const id = Number(obj.id);
+    if (!Number.isFinite(id) || id <= 0) return null;
+
+    return {
+      id,
+      status: String(obj.status ?? "queued"),
+      created: String(obj.created ?? ""),
+      total: Number(obj.total ?? 0),
+      completed: Number(obj.completed ?? 0),
+      failed: Number(obj.failed ?? 0),
+    };
+  }
+
+  return null;
+}
+
 const jobs = ref<UiJob[]>(
-  props.jobs.map((j) => ({
-    id: j.id,
-    status: j.status,
-    created: j.created,
-    total: j.total || 0,
-    completed: j.completed || 0,
-    failed: j.failed || 0,
-  }))
+  ((props.jobs as unknown[]) || [])
+    .map((j) => normalizeJob(j))
+    .filter((j): j is UiJob => j !== null)
 );
 
 const activeJobIds = computed(() =>
