@@ -6,17 +6,18 @@
   <title>Rollback queue</title>
 
   {%- if not is_production %}
-    <!-- Vite dev mode -->
+    <!-- Vite dev -->
     <script type="module" src="{{ asset('@vite/client') }}"></script>
-    <script type="module" src="{{ asset('script.ts') }}"></script>
+    <script type="module" src="{{ asset('index.html') }}"></script>
 
   {%- else %}
-    <!-- Production build -->
-    {% for css_file in asset_css('client-src/script.ts') %}
+    <!-- Production -->
+
+    {% for css_file in asset_css('index.html') %}
       <link rel="stylesheet" href="{{ css_file }}">
     {% endfor %}
 
-    <script type="module" src="{{ asset('client-src/script.ts') }}"></script>
+    <script type="module" src="{{ asset('index.html') }}"></script>
   {%- endif %}
 </head>
 
@@ -71,7 +72,7 @@
         </div>
       </form>
     </div>
-
+<div id="app"></div>
     {% block content %}
     {% endblock %}
   </div>
