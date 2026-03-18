@@ -41,6 +41,7 @@ async function onInputValue(value: string) {
   menuItems.value = await searchTitles(value, props.namespaceId);
 }
 
+
 async function onSelectionChanged(v: any) {
   if (!v || typeof v !== "object" || !v.value) {
     users.value = [];
