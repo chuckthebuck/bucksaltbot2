@@ -126,6 +126,75 @@ body {
     align-items: center;
     gap: @spacing-50;
 }
+
+.layout {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: @spacing-125;
+    margin-top: @spacing-125;
+    margin-bottom: @spacing-125;
+}
+
+.left-panel,
+.right-panel {
+    border: @border-base;
+    background-color: @background-color-base;
+    padding: @spacing-100;
+}
+
+.item-row {
+    display: grid;
+    grid-template-columns: minmax( 160px, 1.4fr ) minmax( 160px, 1fr ) minmax( 180px, 1.4fr ) auto;
+    gap: @spacing-75;
+    align-items: center;
+    margin-bottom: @spacing-100;
+}
+
+.item-list {
+    display: flex;
+    flex-direction: column;
+    gap: @spacing-75;
+}
+
+.item-card {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: @spacing-100;
+    border: @border-base;
+    background-color: @background-color-neutral-subtle;
+    padding: @spacing-75;
+}
+
+.meta {
+    color: @color-subtle;
+    margin-top: @spacing-25;
+}
+
+.right-panel {
+    display: flex;
+    flex-direction: column;
+    gap: @spacing-75;
+}
+
+.right-panel input,
+.right-panel select {
+    max-width: 100%;
+}
+
+.submit-bar {
+    margin-bottom: @spacing-150;
+}
+
+@media all and ( max-width: @max-width-breakpoint-mobile ) {
+    .layout {
+        grid-template-columns: 1fr;
+    }
+
+    .item-row {
+        grid-template-columns: 1fr;
+    }
+}
 /* === Rollback tool layout === */
 
 .layout {
