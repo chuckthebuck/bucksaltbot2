@@ -34,24 +34,26 @@ def load_manifest():
 def add_context():
 
     def dev_asset(file_path):
-        return f"{VITE_ORIGIN}/assets/{file_path}"
+        return f"{VITE_ORIGIN}/{file_path}"  # ✅ FIXED (no /assets)
 
     def prod_asset(file_path):
         manifest = load_manifest()
-        print(load_manifest())
 
         asset_meta = manifest.get(file_path)
         if asset_meta and asset_meta.get("file"):
-            return f"/assets/{asset_meta['file']}"
+            return url_for("static", filename=f"dist/{asset_meta['file']}")
 
-        return f"/assets/{file_path}"
+        return url_for("static", filename=f"dist/{file_path}")
 
     def prod_css(file_path):
         manifest = load_manifest()
 
         asset_meta = manifest.get(file_path)
         if asset_meta and asset_meta.get("css"):
-            return [f"/assets/{css}" for css in asset_meta["css"]]
+            return [
+                url_for("static", filename=f"dist/{css}")
+                for css in asset_meta["css"]
+            ]
 
         return []
 
