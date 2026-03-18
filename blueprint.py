@@ -1,58 +1,55 @@
 import json
 import os
 from pathlib import Path
-from flask import Blueprint
+from flask import Blueprint, url_for
+from functools import lru_cache
 
-# Get environment variables.
 FLASK_DEBUG = os.getenv("FLASK_DEBUG", "0")
 VITE_ORIGIN = os.getenv("VITE_ORIGIN", "http://localhost:5173")
 
-# Set application constants.
 is_production = FLASK_DEBUG != "1"
-project_path = Path(os.path.dirname(os.path.abspath(__file__)))
+project_path = Path(__file__).parent
 
-# Create a blueprint that stores all Vite-related functionality.
+# ✅ REMOVE static_folder config
 assets_blueprint = Blueprint(
     "assets_blueprint",
     __name__,
-    static_folder="assets_compiled/bundled",
-    static_url_path="/assets/bundled",
 )
 
-# Load manifest file in the production environment.
+# ✅ FIXED manifest path
+@lru_cache()
 def load_manifest():
-    manifest_path = project_path / "assets_compiled/manifest.json"
+    manifest_path = project_path / "static/dist/.vite/manifest.json"
     try:
-        with open(manifest_path, "r") as content:
-            return json.load(content)
+        with open(manifest_path, "r") as f:
+            return json.load(f)
     except OSError:
         return {}
 
-
-# Add `asset()` function and `is_production` to app context.
+# ✅ Context helpers
 @assets_blueprint.app_context_processor
 def add_context():
 
     def dev_asset(file_path):
-        return f"{VITE_ORIGIN}/{file_path}"  # ✅ FIXED (no /assets)
+        return f"{VITE_ORIGIN}/{file_path}"
 
     def prod_asset(file_path):
         manifest = load_manifest()
+        entry = manifest.get(file_path)
 
-        asset_meta = manifest.get(file_path)
-        if asset_meta and asset_meta.get("file"):
-            return url_for("static", filename=f"dist/{asset_meta['file']}")
+        if entry:
+            return url_for("static", filename=f"dist/{entry['file']}")
 
         return url_for("static", filename=f"dist/{file_path}")
 
     def prod_css(file_path):
         manifest = load_manifest()
+        entry = manifest.get(file_path)
 
-        asset_meta = manifest.get(file_path)
-        if asset_meta and asset_meta.get("css"):
+        if entry and entry.get("css"):
             return [
                 url_for("static", filename=f"dist/{css}")
-                for css in asset_meta["css"]
+                for css in entry["css"]
             ]
 
         return []
