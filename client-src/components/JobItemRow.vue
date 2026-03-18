@@ -30,7 +30,7 @@ const canEmit = computed(() => {
   return !!selected.value && typeof selected.value === "object" && !!selected.value.value && !!selectedUser.value;
 });
 
-sync function onInputValue(value: string) {
+async function onInputValue(value: string) {
   console.log("🔥 typing:", value);
 
   if (!value.trim()) {
