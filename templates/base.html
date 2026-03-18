@@ -21,8 +21,17 @@
   {%- endif %}
 </head>
 
-<body>  <!-- ✅ ADD THIS -->
+<body> 
+<header class="header">
+  <span class="logo">
+    <b>Rollback</b> & <b>Queue</b>
+  </span>
 
+  {% if username %}
+    <span>{{ username }}</span>
+    <a href="/logout" class="logout">Logout</a>
+  {% endif %}
+</header>
   <div class="container">
     <div class="cdx-message cdx-message--block cdx-message--notice top-message" aria-live="polite">
       <span class="cdx-message__icon"></span>
