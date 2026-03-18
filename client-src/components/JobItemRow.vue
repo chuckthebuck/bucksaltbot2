@@ -49,6 +49,27 @@ onMounted(() => {
 
           menuItems.value = await searchTitles(value, props.namespaceId);
         });
+
+        // Listen for menu item clicks/selection
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
+            console.log("🔥 keydown:", e.key, "menu items:", menuItems.value.length);
+          }
+        });
+
+        // Listen for blur to capture selection
+        input.addEventListener('blur', async (e) => {
+          const value = (e.target as HTMLInputElement).value;
+          console.log("🔥 blur with value:", value);
+          
+          // Check if value matches a menu item
+          const match = menuItems.value.find(item => item.label === value);
+          if (match) {
+            console.log("🔥 matched menu item, loading editors");
+            selected.value = match;
+            await onSelectionChanged(match);
+          }
+        });
       }
     }
   }, 100);
@@ -67,6 +88,8 @@ watch(inputValue, async (value) => {
 
 
 async function onSelectionChanged(v: any) {
+  console.log("🔥 onSelectionChanged called with:", v);
+  
   if (!v || typeof v !== "object" || !v.value) {
     users.value = [];
     selectedUser.value = "";
@@ -75,7 +98,10 @@ async function onSelectionChanged(v: any) {
     return;
   }
 
+  console.log("🔥 loading editors for:", v.value);
   const editorData = await loadEditorsForTitle(v.value);
+  console.log("🔥 loaded editors:", editorData);
+  
   users.value = editorData.users;
   selectedUser.value = editorData.latestUser;
   if (!summary.value) summary.value = editorData.latestComment;
