@@ -60,6 +60,16 @@
           >
             Batch Rollback
           </button>
+
+          <button
+            class="cdx-tabs__list__item"
+            role="tab"
+            aria-selected="{% if type == 'rollback-all-jobs' %}true{% else %}false{% endif %}"
+            value="rollback-all-jobs"
+            name="tab"
+          >
+            All Jobs
+          </button>
           {% endif %}
 
           <button

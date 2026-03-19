@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>All rollback jobs</h2>
+<p>Maintainer view of all rollback queue jobs.</p>
+
+<table class="wikitable">
+  <tbody>
+    <tr>
+      <th>ID</th>
+      <th>Requested by</th>
+      <th>Status</th>
+      <th>Mode</th>
+      <th>Total</th>
+      <th>Completed</th>
+      <th>Failed</th>
+      <th>Created</th>
+    </tr>
+    {% for job in jobs %}
+      <tr>
+        <td>{{ job[0] }}</td>
+        <td>{{ job[1] }}</td>
+        <td>{{ job[2] }}</td>
+        <td>{% if job[3] %}Dry run{% else %}Live{% endif %}</td>
+        <td>{{ job[5] }}</td>
+        <td>{{ job[6] }}</td>
+        <td>{{ job[7] }}</td>
+        <td>{{ job[4] }}</td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}

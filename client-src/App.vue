@@ -18,6 +18,7 @@ const namespaces = ref<Array<{ id: string; name: string }>>([]);
 const dryRun = ref(false);
 const createResult = ref("");
 const pollingTimer = ref<number | null>(null);
+const terminalStatuses = new Set(["completed", "failed", "canceled"]);
 
 function asBoolean(value: unknown): boolean {
   if (typeof value === "boolean") return value;
@@ -76,9 +77,28 @@ const jobs = ref<UiJob[]>(
 
 const activeJobIds = computed(() =>
   jobs.value
-    .filter((j) => !["completed", "failed", "canceled"].includes(j.status))
+    .filter((j) => !terminalStatuses.has(j.status))
     .map((j) => j.id)
 );
+
+function createdTimeMs(created: string): number | null {
+  const parsed = Date.parse(created);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function shouldShowInUserJobs(job: UiJob): boolean {
+  if (!terminalStatuses.has(job.status)) return true;
+
+  if (job.status !== "failed") return false;
+
+  const createdAt = createdTimeMs(job.created);
+  if (createdAt === null) return false;
+
+  const ageMs = Date.now() - createdAt;
+  return ageMs <= 24 * 60 * 60 * 1000;
+}
+
+const visibleJobs = computed(() => jobs.value.filter(shouldShowInUserJobs));
 
 function addItem() {
   items.value.push({ key: Date.now() + Math.floor(Math.random() * 1000), data: null });
@@ -124,7 +144,7 @@ async function submitJob() {
       id: result.job_id,
       status: "queued",
       dryRun: dryRun.value,
-      created: "just now",
+      created: new Date().toISOString(),
       total: payload.length,
       completed: 0,
       failed: 0,
@@ -212,6 +232,13 @@ onBeforeUnmount(() => {
         <CdxButton type="button" @click="addItem">Add item</CdxButton>
 
         <div id="job-items" class="job-items">
+          <div class="job-item-table-head" aria-hidden="true">
+            <span>Page</span>
+            <span>Contributor</span>
+            <span>Summary</span>
+            <span>Action</span>
+          </div>
+
           <JobItemRow
             v-for="(item, index) in items"
             :key="item.key"
@@ -254,8 +281,9 @@ onBeforeUnmount(() => {
     <pre id="create-result">{{ createResult }}</pre>
 
     <h3>Your jobs</h3>
+    <p>Showing active jobs and failures from the last 24 hours.</p>
     <p>To cancel a queued or running job, use the <em>Cancel rollback job</em> button in the Actions column.</p>
 
-    <JobsTable :jobs="jobs" :token="statusToken" />
+    <JobsTable :jobs="visibleJobs" :token="statusToken" />
   </div>
 </template>

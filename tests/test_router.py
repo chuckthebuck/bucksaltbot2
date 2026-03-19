@@ -170,6 +170,44 @@ def test_create_job_dry_run_string_true_persisted_as_one(client):
     assert insert_args.args[1][2] == 1
 
 
+def test_create_job_uses_client_batch_id_when_provided(client):
+    """batch_id allows grouping multiple POSTs under one logical batch."""
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.lastrowid = 6
+    with patch("router.get_conn", return_value=mock_conn), \
+         patch("router.process_rollback_job") as mock_task:
+        mock_task.delay = MagicMock()
+        resp = client.post(
+            "/api/v1/rollback/jobs",
+            json={
+                "requested_by": "alice",
+                "batch_id": 123456789,
+                "items": [{"title": "File:Test.jpg", "user": "Vandal"}],
+            },
+        )
+    assert resp.status_code == 200
+    assert resp.get_json()["batch_id"] == 123456789
+    insert_args = mock_cursor.execute.call_args_list[0]
+    assert insert_args.args[1][3] == 123456789
+
+
+def test_create_job_rejects_invalid_batch_id(client):
+    _set_session(client, "alice")
+    mock_conn, _ = _make_mock_conn()
+    with patch("router.get_conn", return_value=mock_conn):
+        resp = client.post(
+            "/api/v1/rollback/jobs",
+            json={
+                "requested_by": "alice",
+                "batch_id": "not-a-number",
+                "items": [{"title": "File:Test.jpg", "user": "Vandal"}],
+            },
+        )
+    assert resp.status_code == 400
+    assert "batch_id" in resp.get_json().get("detail", "")
+
+
 def test_create_job_allows_status_token_auth(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 13
@@ -342,6 +380,29 @@ def test_rollback_queue_ui_returns_200_for_authenticated_user(client):
     assert resp.status_code == 200
 
 
+def test_all_jobs_ui_returns_401_when_not_authenticated(client):
+    resp = client.get("/rollback-queue/all-jobs")
+    assert resp.status_code == 401
+
+
+def test_all_jobs_ui_returns_403_for_non_maintainer(client):
+    _set_session(client, "alice")
+    with patch("router.is_maintainer", return_value=False):
+        resp = client.get("/rollback-queue/all-jobs")
+    assert resp.status_code == 403
+
+
+def test_all_jobs_ui_returns_200_for_maintainer(client):
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchall.return_value = []
+    with patch("router.is_maintainer", return_value=True), \
+         patch("router.get_conn", return_value=mock_conn):
+        resp = client.get("/rollback-queue/all-jobs")
+    assert resp.status_code == 200
+    assert "All rollback jobs" in resp.get_data(as_text=True)
+
+
 # ── GET / ─────────────────────────────────────────────────────────────────────
 
 def test_index_returns_200(client):
@@ -423,3 +484,18 @@ def test_goto_rollback_queue_tab_redirects_to_rollback_queue(client):
     resp = client.get("/goto?tab=rollback-queue")
     assert resp.status_code == 302
     assert "/rollback-queue" in resp.headers["Location"]
+
+
+def test_goto_all_jobs_tab_redirects_for_maintainer(client):
+    _set_session(client, "alice")
+    with patch("router.is_maintainer", return_value=True):
+        resp = client.get("/goto?tab=rollback-all-jobs")
+    assert resp.status_code == 302
+    assert "/rollback-queue/all-jobs" in resp.headers["Location"]
+
+
+def test_goto_all_jobs_tab_returns_403_for_non_maintainer(client):
+    _set_session(client, "alice")
+    with patch("router.is_maintainer", return_value=False):
+        resp = client.get("/goto?tab=rollback-all-jobs")
+    assert resp.status_code == 403

@@ -7,6 +7,6 @@ import BatchApp from "./BatchApp.vue";
 
 if (document.getElementById("batch-props")) {
   createApp(BatchApp).mount("#app");
-} else {
+} else if (document.getElementById("rollback-queue-props")) {
   createApp(App).mount("#app");
 }

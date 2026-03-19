@@ -157,6 +157,11 @@ def goto():
             abort(403)
         return redirect("/rollback_batch")
 
+    if tab == "rollback-all-jobs":
+        if not is_maintainer(username):
+            abort(403)
+        return redirect("/rollback-queue/all-jobs")
+
     if tab == "documentation":
         return redirect(
             "https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot"
@@ -230,7 +235,11 @@ def rollback_queue_ui():
                     '''
                     SELECT id, requested_by, status, dry_run, created_at
                     FROM rollback_jobs
-                    WHERE requested_by=%s
+                                        WHERE requested_by=%s
+                                            AND (
+                                                status NOT IN ('completed', 'failed', 'canceled')
+                                                OR (status='failed' AND created_at >= (NOW() - INTERVAL 24 HOUR))
+                                            )
                     ORDER BY id DESC
                     LIMIT 100
                     ''',
@@ -244,6 +253,49 @@ def rollback_queue_ui():
         jobs=jobs,
         username=username,
         type='rollback-queue'
+    )
+
+
+@app.route('/rollback-queue/all-jobs')
+def rollback_queue_all_jobs_ui():
+
+    username = session.get('username')
+
+    if not username:
+        abort(401)
+
+    if not is_maintainer(username):
+        abort(403)
+
+    with get_conn() as conn:
+
+        with conn.cursor() as cursor:
+
+            cursor.execute(
+                '''
+                SELECT
+                    j.id,
+                    j.requested_by,
+                    j.status,
+                    j.dry_run,
+                    j.created_at,
+                    COUNT(i.id) AS total_items,
+                    COALESCE(SUM(CASE WHEN i.status='completed' THEN 1 ELSE 0 END), 0) AS completed_items,
+                    COALESCE(SUM(CASE WHEN i.status='failed' THEN 1 ELSE 0 END), 0) AS failed_items
+                FROM rollback_jobs j
+                LEFT JOIN rollback_job_items i ON i.job_id = j.id
+                GROUP BY j.id, j.requested_by, j.status, j.dry_run, j.created_at
+                ORDER BY j.id DESC
+                '''
+            )
+
+            jobs = cursor.fetchall()
+
+    return render_template(
+        'rollback_queue_all_jobs.html',
+        jobs=jobs,
+        username=username,
+        type='rollback-all-jobs'
     )
 
 
@@ -314,6 +366,19 @@ def create_rollback_job():
     items = payload.get('items') or payload.get('files') or []
     dry_run = _parse_bool(payload.get('dry_run', False), default=False)
 
+    raw_batch_id = payload.get('batch_id')
+
+    if raw_batch_id in (None, ""):
+        batch_id = int(time.time() * 1000)
+    else:
+        try:
+            batch_id = int(raw_batch_id)
+        except (TypeError, ValueError):
+            return jsonify({'detail': 'batch_id must be an integer'}), 400
+
+        if batch_id <= 0:
+            return jsonify({'detail': 'batch_id must be a positive integer'}), 400
+
     if requested_by != actor:
         return jsonify({'detail': 'requested_by must match authenticated user'}), 403
 
@@ -322,8 +387,6 @@ def create_rollback_job():
 
     if len(items) > 1000:
         return jsonify({'detail': 'Too many rollback items'}), 400
-
-    batch_id = int(time.time() * 1000)
 
     job_ids = []
 

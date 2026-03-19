@@ -21,6 +21,7 @@ const result = ref("");
 
 const dryRun = ref(false);
 const importUser = ref("");
+const batchNumber = ref("");
 
 /* ---------------- parsing ---------------- */
 
@@ -170,6 +171,14 @@ async function submit() {
     return;
   }
 
+  const trimmedBatch = batchNumber.value.trim();
+  const batchId = trimmedBatch ? Number(trimmedBatch) : undefined;
+
+  if (batchId !== undefined && (!Number.isInteger(batchId) || batchId <= 0)) {
+    errors.value = ["Batch number must be a positive integer"];
+    return;
+  }
+
   const r = await fetch("/api/v1/rollback/jobs", {
     method: "POST",
     headers: {
@@ -178,6 +187,7 @@ async function submit() {
     body: JSON.stringify({
       requested_by: props.username,
       dry_run: dryRun.value,
+      batch_id: batchId,
       items
     })
   });
@@ -222,10 +232,23 @@ async function submit() {
         style="padding:6px; width:250px"
       />
 
-      <CdxButton @click="loadContribs">
+      <CdxButton type="button" @click="loadContribs">
         Import
       </CdxButton>
     </div>
+
+    <br>
+
+    <label style="display:flex; flex-direction:column; gap:4px; max-width:250px; margin-top:8px">
+      Batch number (optional)
+      <input
+        v-model="batchNumber"
+        type="number"
+        min="1"
+        placeholder="Auto-generated if blank"
+        style="padding:6px"
+      />
+    </label>
 
     <br>
 
@@ -238,11 +261,11 @@ async function submit() {
     <br>
 
     <!-- buttons -->
-    <CdxButton @click="parseInput">
+    <CdxButton type="button" @click="parseInput">
       Preview
     </CdxButton>
 
-    <CdxButton action="progressive" weight="primary" @click="submit">
+    <CdxButton type="button" action="progressive" weight="primary" @click="submit">
       Submit batch job
     </CdxButton>
 
@@ -253,9 +276,9 @@ async function submit() {
 
     <!-- selection controls -->
     <div v-if="parsed.length" style="margin-top:10px">
-      <CdxButton @click="selectAll(true)">Select all</CdxButton>
-      <CdxButton @click="selectAll(false)">Select none</CdxButton>
-      <CdxButton @click="invertSelection()">Invert</CdxButton>
+      <CdxButton type="button" @click="selectAll(true)">Select all</CdxButton>
+      <CdxButton type="button" @click="selectAll(false)">Select none</CdxButton>
+      <CdxButton type="button" @click="invertSelection()">Invert</CdxButton>
 
       <span style="margin-left:10px">
         {{ selectedCount }} / {{ parsed.length }} selected
