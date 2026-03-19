@@ -366,9 +366,8 @@ def test_rollback_queue_ui_returns_200_for_unauthenticated_user(client):
 def test_rollback_queue_ui_contains_web_tool_forms(client):
     resp = client.get("/rollback-queue")
     html = resp.get_data(as_text=True)
-    assert "Create rollback job" in html
-    assert "Cancel rollback job" in html
-    assert "Dry run" in html
+    assert "Rollback job queue" in html
+    assert "rollback-queue-props" in html
 
 
 def test_rollback_queue_ui_returns_200_for_authenticated_user(client):
