@@ -6,6 +6,7 @@ import { cancelJob, fetchJobDetails, retryJob } from "../api";
 export interface UiJob {
   id: number;
   status: string;
+  dryRun: boolean;
   created: string;
   total: number;
   completed: number;
@@ -37,6 +38,10 @@ function progressPct(job: UiJob): number {
   return job.total ? Math.round((done / job.total) * 100) : 0;
 }
 
+function modeLabel(job: UiJob): string {
+  return job.dryRun ? "Dry run" : "Live";
+}
+
 async function toggle(id: number) {
   if (openRows.value[id]) {
     openRows.value[id] = false;
@@ -44,8 +49,11 @@ async function toggle(id: number) {
   }
 
   const d = await fetchJobDetails(id);
+  const isDryRun = !!((d as { dry_run?: boolean; dryRun?: boolean }).dry_run ??
+    (d as { dry_run?: boolean; dryRun?: boolean }).dryRun);
   details.value[id] = `
     <b>Status:</b> ${esc(d.status)}<br>
+    <b>Mode:</b> ${isDryRun ? "Dry run" : "Live"}<br>
     <b>Total:</b> ${d.total}<br>
     <b>Completed:</b> ${d.completed}<br>
     <b>Failed:</b> ${d.failed}<br>
@@ -70,6 +78,7 @@ async function onCancel(id: number) {
     <tr>
       <th>ID</th>
       <th>Status</th>
+      <th>Mode</th>
       <th>Progress</th>
       <th>Created</th>
       <th>Actions</th>
@@ -91,6 +100,18 @@ async function onCancel(id: number) {
             }"
           >
             {{ job.status }}
+          </span>
+        </td>
+
+        <td>
+          <span
+            class="cdx-tag"
+            :class="{
+              'cdx-tag--mode-dry-run': job.dryRun,
+              'cdx-tag--mode-live': !job.dryRun
+            }"
+          >
+            {{ modeLabel(job) }}
           </span>
         </td>
 
@@ -134,7 +155,7 @@ async function onCancel(id: number) {
       </tr>
 
       <tr v-if="openRows[job.id]">
-        <td colspan="5">
+        <td colspan="6">
           <div class="job-details" style="display:block" v-html="details[job.id]"></div>
         </td>
       </tr>
@@ -172,6 +193,18 @@ async function onCancel(id: number) {
   background-color: var(--background-color-warning-subtle, #fef6e7);
   border-color: var(--color-warning, #edab00);
   color: var(--color-warning, #7a4b00);
+}
+
+.cdx-tag--mode-dry-run {
+  background-color: var(--background-color-warning-subtle, #fef6e7);
+  border-color: var(--color-warning, #edab00);
+  color: var(--color-warning, #7a4b00);
+}
+
+.cdx-tag--mode-live {
+  background-color: var(--background-color-neutral-subtle, #f8f9fa);
+  border-color: var(--border-color-subtle, #c8ccd1);
+  color: var(--color-base, #202122);
 }
 
 .job-progress {

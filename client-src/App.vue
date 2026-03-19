@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { CdxButton, CdxMessage } from "@wikimedia/codex";
+import { CdxButton, CdxCheckbox, CdxMessage } from "@wikimedia/codex";
 import JobItemRow from "./components/JobItemRow.vue";
 import JobsTable, { type UiJob } from "./components/JobsTable.vue";
 import { createJob, fetchProgress, getInitialProps, loadNamespaces, type CreateJobItem } from "./api";
@@ -19,6 +19,18 @@ const dryRun = ref(false);
 const createResult = ref("");
 const pollingTimer = ref<number | null>(null);
 
+function asBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return ["1", "true", "yes", "on"].includes(normalized);
+  }
+
+  return false;
+}
+
 function normalizeJob(row: unknown): UiJob | null {
   if (Array.isArray(row)) {
     // rollback_queue.html currently injects DB tuples:
@@ -29,6 +41,7 @@ function normalizeJob(row: unknown): UiJob | null {
     return {
       id,
       status: String(row[2] ?? "queued"),
+      dryRun: asBoolean(row[3]),
       created: String(row[4] ?? ""),
       total: 0,
       completed: 0,
@@ -37,14 +50,15 @@ function normalizeJob(row: unknown): UiJob | null {
   }
 
   if (row && typeof row === "object") {
-    const obj = row as Partial<UiJob>;
+    const obj = row as Record<string, unknown>;
     const id = Number(obj.id);
     if (!Number.isFinite(id) || id <= 0) return null;
 
     return {
       id,
       status: String(obj.status ?? "queued"),
-      created: String(obj.created ?? ""),
+      dryRun: asBoolean(obj.dryRun ?? obj.dry_run),
+      created: String(obj.created ?? obj.created_at ?? ""),
       total: Number(obj.total ?? 0),
       completed: Number(obj.completed ?? 0),
       failed: Number(obj.failed ?? 0),
@@ -109,6 +123,7 @@ async function submitJob() {
     jobs.value.unshift({
       id: result.job_id,
       status: "queued",
+      dryRun: dryRun.value,
       created: "just now",
       total: payload.length,
       completed: 0,
@@ -221,10 +236,7 @@ onBeforeUnmount(() => {
           </option>
         </select>
 
-        <label class="inline-checkbox">
-          <input type="checkbox" v-model="dryRun" />
-          Dry run
-        </label>
+        <CdxCheckbox v-model="dryRun">Dry run</CdxCheckbox>
       </div>
     </div>
 

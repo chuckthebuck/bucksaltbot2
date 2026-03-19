@@ -3,9 +3,12 @@
 export interface JobRow {
   id: number;
   status: string;
+  dry_run?: boolean;
+  dryRun?: boolean;
   progressText: string;
   progressPct: number;
   created: string;
+  created_at?: string;
   total?: number;
   completed?: number;
   failed?: number;

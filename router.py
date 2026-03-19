@@ -118,6 +118,28 @@ def _rollback_api_actor():
     return None
 
 
+def _parse_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+
+    if value is None:
+        return default
+
+    if isinstance(value, (int, float)):
+        return value != 0
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+
+    return default
+
+
 @app.route("/goto")
 def goto():
 
@@ -290,7 +312,7 @@ def create_rollback_job():
 
     requested_by = payload.get('requested_by') or actor
     items = payload.get('items') or payload.get('files') or []
-    dry_run = bool(payload.get('dry_run', False))
+    dry_run = _parse_bool(payload.get('dry_run', False), default=False)
 
     if requested_by != actor:
         return jsonify({'detail': 'requested_by must match authenticated user'}), 403

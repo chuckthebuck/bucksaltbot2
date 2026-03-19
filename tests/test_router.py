@@ -128,6 +128,48 @@ def test_create_job_dry_run_flag_persisted(client):
     assert 1 in insert_args.args[1]  # dry_run value is 1
 
 
+def test_create_job_dry_run_string_false_persisted_as_zero(client):
+    """dry_run='false' should be interpreted as False and stored as 0."""
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.lastrowid = 6
+    with patch("router.get_conn", return_value=mock_conn), \
+         patch("router.process_rollback_job") as mock_task:
+        mock_task.delay = MagicMock()
+        resp = client.post(
+            "/api/v1/rollback/jobs",
+            json={
+                "requested_by": "alice",
+                "dry_run": "false",
+                "items": [{"title": "File:Test.jpg", "user": "Vandal"}],
+            },
+        )
+    assert resp.status_code == 200
+    insert_args = mock_cursor.execute.call_args_list[0]
+    assert insert_args.args[1][2] == 0
+
+
+def test_create_job_dry_run_string_true_persisted_as_one(client):
+    """dry_run='true' should be interpreted as True and stored as 1."""
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.lastrowid = 6
+    with patch("router.get_conn", return_value=mock_conn), \
+         patch("router.process_rollback_job") as mock_task:
+        mock_task.delay = MagicMock()
+        resp = client.post(
+            "/api/v1/rollback/jobs",
+            json={
+                "requested_by": "alice",
+                "dry_run": "true",
+                "items": [{"title": "File:Test.jpg", "user": "Vandal"}],
+            },
+        )
+    assert resp.status_code == 200
+    insert_args = mock_cursor.execute.call_args_list[0]
+    assert insert_args.args[1][2] == 1
+
+
 def test_create_job_allows_status_token_auth(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 13
