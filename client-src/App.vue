@@ -83,7 +83,14 @@ const activeJobIds = computed(() =>
 
 function createdTimeMs(created: string): number | null {
   const parsed = Date.parse(created);
-  return Number.isNaN(parsed) ? null : parsed;
+  if (!Number.isNaN(parsed)) return parsed;
+
+  if (created.includes(" ") && !created.includes("T")) {
+    const sqlLike = Date.parse(created.replace(" ", "T"));
+    if (!Number.isNaN(sqlLike)) return sqlLike;
+  }
+
+  return null;
 }
 
 function shouldShowInUserJobs(job: UiJob): boolean {
