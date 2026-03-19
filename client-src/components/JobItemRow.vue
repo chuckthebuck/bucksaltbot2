@@ -105,29 +105,19 @@ watch([selected, selectedUser, summary], () => {
 <template>
   <div class="job-item-row">
     <CdxField>
-      <CdxLookup
-        v-model:selected="selected"
-        :menu-items="menuItems"
-        placeholder="Search page"
-        @input="onLookupInput"
-      />
+      <CdxLookup v-model:selected="selected" :menu-items="menuItems" placeholder="Search page" @input="onLookupInput" />
       <div class="lookup-meta">{{ meta }}</div>
     </CdxField>
 
     <CdxField>
-      <CdxSelect
-        v-model:selected="selectedUser"
-        :menu-items="users.map(u => ({ label: u, value: u }))"
-        default-label="Select contributor"
-        class="lookup-user"
-      />
+      <CdxSelect v-model:selected="selectedUser" :menu-items="users.map(u => ({ label: u, value: u }))"
+        default-label="Select user" class="lookup-user" />
+    </CdxField>
+    <CdxField>
+      <CdxTextInput v-model="summary" class="item-summary" placeholder="Summary (optional)" />
     </CdxField>
 
-    <CdxTextInput
-      v-model="summary"
-      class="item-summary"
-      placeholder="Summary (optional)"
-    />
+
 
     <CdxButton action="destructive" weight="normal" @click="emit('remove')">
       Remove
