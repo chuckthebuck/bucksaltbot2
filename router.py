@@ -367,10 +367,10 @@ def rollback_batch():
 def list_rollback_jobs():
  if not username or not is_authorized(username):
         return jsonify({"error": "Unauthorized"}), 403
-    if session.get('username') is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
+ if session.get('username') is None:
+    return jsonify({'detail': 'Not authenticated'}), 401
 
-    with get_conn() as conn:
+with get_conn() as conn:
 
         with conn.cursor() as cursor:
 
@@ -1843,9 +1843,23 @@ def oauth_callback():
     except Exception:
         app.logger.exception('OAuth authentication failed')
     else:
-        session['access_token'] = dict(zip(access_token._fields, access_token))
-        session['username'] = identity['username']
-        authenticated = True
+        username = identity['username']
+
+#  AUTH CHECK
+    if not is_authorized(username):
+        session.clear()
+        return (
+        "This tool is restricted to Commons admins and maintainers.",
+        403
+    )
+
+session['access_token'] = dict(zip(access_token._fields, access_token))
+session['username'] = username
+session['authorized'] = True
+session['is_maintainer'] = bool(is_maintainer(username))
+session['is_admin'] = "sysop" in get_user_groups(username)
+
+authenticated = True
 
     referrer = session.get('referrer')
     session['referrer'] = None
