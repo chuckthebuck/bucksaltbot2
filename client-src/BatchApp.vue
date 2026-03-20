@@ -73,7 +73,7 @@ async function loadContribs() {
     "https://commons.wikimedia.org/w/api.php?origin=*&format=json" +
     "&action=query" +
     "&list=usercontribs" +
-    "&uclimit=50" +
+    "&uclimit=500" +
     "&ucprop=title|comment|timestamp" +
     "&ucuser=" + encodeURIComponent(importUser.value);
 
