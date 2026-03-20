@@ -74,7 +74,6 @@ async function loadContribs() {
     "&action=query" +
     "&list=usercontribs" +
     "&uclimit=50" +
-    "&ucnamespace=6" + // files only
     "&ucprop=title|comment|timestamp" +
     "&ucuser=" + encodeURIComponent(importUser.value);
 
