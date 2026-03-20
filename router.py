@@ -40,7 +40,9 @@ def _ensure_secret_key():
 
 _ensure_secret_key()
 
-
+def is_authorized(username):
+    groups = get_user_groups(username)
+    return any(group in ALLOWED_GROUPS for group in groups)
 def _user_consumer_token():
     key = os.environ.get('USER_OAUTH_CONSUMER_KEY')
     secret = os.environ.get('USER_OAUTH_CONSUMER_SECRET')
@@ -319,7 +321,8 @@ def rollback_batch():
 
 @app.route('/api/v1/rollback/jobs', methods=['GET'])
 def list_rollback_jobs():
-
+ if not username or not is_authorized(username):
+        return jsonify({"error": "Unauthorized"}), 403
     if session.get('username') is None:
         return jsonify({'detail': 'Not authenticated'}), 401
 
