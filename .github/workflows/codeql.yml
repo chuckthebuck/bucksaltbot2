@@ -14,16 +14,12 @@ permissions:
 
 jobs:
   analyze:
-    # If GitHub code scanning "Default setup" is enabled, advanced-workflow SARIF uploads
-    # are rejected. Enable this job by setting repo variable CODEQL_ADVANCED_ENABLED=true
-    # after switching code scanning to advanced/manual mode.
-    if: ${{ vars.CODEQL_ADVANCED_ENABLED == 'true' }}
     name: Analyze
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        language: ["javascript", "python"]
+        language: ["actions", "javascript-typescript", "python"]
 
     steps:
       - name: Checkout
@@ -39,3 +35,5 @@ jobs:
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
