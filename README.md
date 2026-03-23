@@ -43,7 +43,7 @@ This triggers `toolforge build start .` from `bucksaltbot/`, then restarts webse
 
 The deploy helper script supports choosing the Toolforge buildpack channel via the `BUILDPACK_CHANNEL` environment variable:
 
-- `default` (implicit): use Toolforge default buildpack versions.
+- `latest` (implicit): use Toolforge latest buildpack versions.
 - `latest`: pass `--use-latest-versions` to test upcoming changes.
 - `deprecated`: pass `--use-deprecated-versions` temporarily while fixing breakages.
 
@@ -56,8 +56,11 @@ BUILDPACK_CHANNEL=latest ./scripts/toolforge-deploy-new-version.sh
 # Fall back temporarily while debugging
 BUILDPACK_CHANNEL=deprecated ./scripts/toolforge-deploy-new-version.sh
 
-# Use platform defaults
+# Use latest buildpack versions (default)
 ./scripts/toolforge-deploy-new-version.sh
+
+# Explicitly use platform defaults
+BUILDPACK_CHANNEL=default ./scripts/toolforge-deploy-new-version.sh
 ```
 
 #### Troubleshooting Toolforge builds

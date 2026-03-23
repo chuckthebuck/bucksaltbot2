@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_DIR="$HOME"
 REPO_URL="https://github.com/chuckthebuck/bucksaltbot2"
 BRANCH="main"
-BUILDPACK_CHANNEL="${BUILDPACK_CHANNEL:-default}"
+BUILDPACK_CHANNEL="${BUILDPACK_CHANNEL:-latest}"
 
 build_args=()
 
