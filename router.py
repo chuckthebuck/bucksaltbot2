@@ -344,7 +344,6 @@ def rollback_queue_ui():
     )
 
 @app.route("/api/v1/rollback/from-diff", methods=["POST"])
-@flask_app.route("/rollback/from-diff")
 def rollback_from_diff_page():
     user = request.args.get("user")
     diff = request.args.get("diff")
