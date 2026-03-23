@@ -637,9 +637,7 @@ def get_rollback_job(job_id):
 
         for item in items:
             item_id, title, target_user, _summary, status, error = item
-            line = (
-                f"item_id={item_id} status={status} title={title} user={target_user}"
-            )
+            line = f"item_id={item_id} status={status} title={title} user={target_user}"
 
             if error:
                 line += f" error={error}"
