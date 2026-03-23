@@ -3,6 +3,7 @@ import time
 import threading
 import requests
 
+from flask_cors import CORS
 from flask import Flask, session
 from celery import Celery
 
@@ -24,7 +25,11 @@ _toolhub_maintainers_cache = None
 _toolhub_cache_expiry = 0.0
 _toolhub_cache_lock = threading.Lock()
 
-
+CORS(app, resources={
+    r"/api/*": {
+        "origins": ["https://commons.wikimedia.org"]
+    }
+})
 def get_toolhub_maintainers():
     global _toolhub_maintainers_cache, _toolhub_cache_expiry
 
