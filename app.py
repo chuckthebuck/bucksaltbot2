@@ -120,6 +120,7 @@ def inject_user_permissions():
 import router  # noqa: E402,F401
 CORS(flask_app, resources={
     r"/api/*": {
-        "origins": ["https://commons.wikimedia.org"]
+        "origins": ["https://commons.wikimedia.org"],
+        "supports_credentials": True
     }
 })
