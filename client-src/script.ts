@@ -4,9 +4,12 @@ import "./styles.less"; // 👈 you already have this file, USE IT
 import { createApp } from "vue";
 import App from "./App.vue";
 import BatchApp from "./BatchApp.vue";
+import AllJobsApp from "./AllJobsApp.vue";
 
 if (document.getElementById("batch-props")) {
   createApp(BatchApp).mount("#app");
+} else if (document.getElementById("all-jobs-props")) {
+  createApp(AllJobsApp).mount("#app");
 } else if (document.getElementById("rollback-queue-props")) {
   createApp(App).mount("#app");
 }
