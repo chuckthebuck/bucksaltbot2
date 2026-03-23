@@ -6,11 +6,5 @@
   mount: all
   name: buckbot-celery
   health-check-script: bash scripts/ping_celery.sh
-- command: bash scripts/start_gunicorn.sh
-  continuous: true
-  cpu: '0.5'
-  image: tool-buckbot/tool-buckbot:latest
-  mount: all
-  name: buckbot-web
-  port: '8000'
+
 
