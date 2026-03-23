@@ -22,7 +22,7 @@
     "eslint": "^9.23.0",
     "eslint-plugin-vue": "^10.0.0",
     "jsdom": "^26.0.0",
-    "vitest": "^3.0.9",
+    "vitest": "^4.1.1",
     "vue-eslint-parser": "^10.1.1"
   },
   "dependencies": {
