@@ -39,6 +39,27 @@ cd ..
 
 This triggers `toolforge build start .` from `bucksaltbot/`, then restarts webservice/jobs.
 
+#### Buildpack channel selection during Toolforge rollouts
+
+The deploy helper script supports choosing the Toolforge buildpack channel via the `BUILDPACK_CHANNEL` environment variable:
+
+- `default` (implicit): use Toolforge default buildpack versions.
+- `latest`: pass `--use-latest-versions` to test upcoming changes.
+- `deprecated`: pass `--use-deprecated-versions` temporarily while fixing breakages.
+
+Examples:
+
+```bash
+# Test upcoming buildpack versions
+BUILDPACK_CHANNEL=latest ./scripts/toolforge-deploy-new-version.sh
+
+# Fall back temporarily while debugging
+BUILDPACK_CHANNEL=deprecated ./scripts/toolforge-deploy-new-version.sh
+
+# Use platform defaults
+./scripts/toolforge-deploy-new-version.sh
+```
+
 #### Troubleshooting Toolforge builds
 
 If you see warnings like the following during `toolforge build start`, they are usually harmless platform-level credential setup messages and **not** the root cause of a failed build:
