@@ -36,3 +36,4 @@ throttle.ctrl
 replica.my.cnf
 data/
 .tokens
+5.code-workspace

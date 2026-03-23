@@ -36,54 +36,50 @@
     
 
     <div class="cdx-tabs">
-      <form class="cdx-tabs__header" method="get" action="/goto">
+      <div class="cdx-tabs__header">
         <div class="cdx-tabs__list" tabindex="-1" role="tablist">
 
-          <button
+          <a
             id="form-tabs-rollback-label"
             class="cdx-tabs__list__item"
             role="tab"
             aria-selected="{% if type == 'rollback-queue' %}true{% else %}false{% endif %}"
-            value="rollback-queue"
-            name="tab"
+            href="/goto?tab=rollback-queue"
           >
             Rollback Queue
-          </button>
+          </a>
 
           {% if is_maintainer %}
-          <button
+          <a
             class="cdx-tabs__list__item"
             role="tab"
             aria-selected="{% if type == 'rollback-batch' %}true{% else %}false{% endif %}"
-            value="rollback-batch"
-            name="tab"
+            href="/goto?tab=rollback-batch"
           >
             Batch Rollback
-          </button>
+          </a>
 
-          <button
+          <a
             class="cdx-tabs__list__item"
             role="tab"
             aria-selected="{% if type == 'rollback-all-jobs' %}true{% else %}false{% endif %}"
-            value="rollback-all-jobs"
-            name="tab"
+            href="/goto?tab=rollback-all-jobs"
           >
             All Jobs
-          </button>
+          </a>
           {% endif %}
 
-          <button
+          <a
             class="cdx-tabs__list__item"
             role="tab"
             aria-selected="{% if type == 'documentation' %}true{% else %}false{% endif %}"
-            value="documentation"
-            name="tab"
+            href="/goto?tab=documentation"
           >
             Documentation
-          </button>
+          </a>
 
         </div>
-      </form>
+      </div>
     </div>
 <div id="app"></div>
     {% block content %}

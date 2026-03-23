@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import {
   CdxButton,
   CdxTextArea,
   CdxMessage
 } from "@wikimedia/codex";
+import { loadDraft, saveDraft } from "./draft";
 
 /* ---------------- props ---------------- */
 
@@ -22,6 +23,19 @@ const result = ref("");
 const dryRun = ref(false);
 const importUser = ref("");
 const batchNumber = ref("");
+
+const draftKey = `buckbot:batchDraft:${props.username ?? "anon"}`;
+
+onMounted(() => {
+  const saved = loadDraft(draftKey);
+  if (saved && !input.value) {
+    input.value = saved;
+  }
+});
+
+watch(input, (value) => {
+  saveDraft(draftKey, value);
+});
 
 /* ---------------- parsing ---------------- */
 
@@ -78,7 +92,10 @@ async function loadContribs() {
     "&ucuser=" + encodeURIComponent(importUser.value);
 
   try {
-    const r = await fetch(url);
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) {
+      throw new Error(`HTTP ${r.status}`);
+    }
     const data = await r.json();
 
     const contribs = data?.query?.usercontribs || [];
@@ -231,7 +248,7 @@ async function submit() {
         style="padding:6px; width:250px"
       />
 
-      <CdxButton type="button" @click="loadContribs">
+      <CdxButton type="button" @click.prevent="loadContribs">
         Import
       </CdxButton>
     </div>
@@ -260,11 +277,11 @@ async function submit() {
     <br>
 
     <!-- buttons -->
-    <CdxButton type="button" @click="parseInput">
+    <CdxButton type="button" @click.prevent="parseInput">
       Preview
     </CdxButton>
 
-    <CdxButton type="button" action="progressive" weight="primary" @click="submit">
+    <CdxButton type="button" action="progressive" weight="primary" @click.prevent="submit">
       Submit batch job
     </CdxButton>
 

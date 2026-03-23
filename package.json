@@ -6,12 +6,24 @@
   "scripts": {
     "dev": "vite build --watch",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint client-src --ext .ts,.vue",
+    "test": "vitest run"
   },
   "devDependencies": {
+    "@eslint/js": "^9.23.0",
+    "@typescript-eslint/eslint-plugin": "^8.28.0",
+    "@typescript-eslint/parser": "^8.28.0",
     "typescript": "^5.2.2",
     "vite": "^5.2.0",
-    "@vitejs/plugin-vue": "^5.0.0"
+    "@vitejs/plugin-vue": "^5.0.0",
+    "@vue/test-utils": "^2.4.6",
+    "eslint": "^9.23.0",
+    "eslint-plugin-vue": "^10.0.0",
+    "jsdom": "^26.0.0",
+    "vitest": "^3.0.9",
+    "vue-eslint-parser": "^10.1.1"
   },
   "dependencies": {
     "vue": "3.3.9",

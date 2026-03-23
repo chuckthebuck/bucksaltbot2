@@ -4,6 +4,10 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [vue()],
+  test: {
+    environment: 'jsdom',
+    globals: true
+  },
   build: {
     outDir: 'static/dist',
     emptyOutDir: true,

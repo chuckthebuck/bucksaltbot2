@@ -4,26 +4,33 @@ import time
 
 import mwoauth
 import mwoauth.flask
+import requests
 
 from flask import (
+    abort,
     jsonify,
     redirect,
     render_template,
     request,
     session,
     url_for,
-    abort
 )
 
-from app import flask_app as app, is_maintainer, MAX_JOB_ITEMS
+from app import MAX_JOB_ITEMS, flask_app as app, is_maintainer
+from redis_state import get_progress, r
 from rollback_queue import process_rollback_job
 from toolsdb import get_conn
-from redis_state import r, get_progress
-import requests
 
 ALLOWED_GROUPS = {"sysop"}
 GROUP_CACHE_TTL = 300
 _group_cache = {}
+
+
+if not os.environ.get("NOTDEV"):
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
 
 def get_user_groups(username):
     now = time.time()
@@ -63,33 +70,27 @@ def is_authorized(username):
         return True
 
     groups = get_user_groups(username)
-    return any(g in ALLOWED_GROUPS for g in groups)
-
-if not os.environ.get('NOTDEV'):
-    from dotenv import load_dotenv
-    load_dotenv()
+    return any(group in ALLOWED_GROUPS for group in groups)
 
 
 def _ensure_secret_key():
-    configured = app.config.get('SECRET_KEY') or os.environ.get('SECRET_KEY')
+    configured = app.config.get("SECRET_KEY") or os.environ.get("SECRET_KEY")
     if not configured:
         configured = os.environ.get(
-            'FALLBACK_SECRET_KEY',
-            'dev-insecure-secret-change-me'
+            "FALLBACK_SECRET_KEY",
+            "dev-insecure-secret-change-me",
         )
 
-    app.config['SECRET_KEY'] = configured
+    app.config["SECRET_KEY"] = configured
     return configured
 
 
 _ensure_secret_key()
 
-def is_authorized(username):
-    groups = get_user_groups(username)
-    return any(group in ALLOWED_GROUPS for group in groups)
+
 def _user_consumer_token():
-    key = os.environ.get('USER_OAUTH_CONSUMER_KEY')
-    secret = os.environ.get('USER_OAUTH_CONSUMER_SECRET')
+    key = os.environ.get("USER_OAUTH_CONSUMER_KEY")
+    secret = os.environ.get("USER_OAUTH_CONSUMER_SECRET")
 
     if not key or not secret:
         return None
@@ -98,36 +99,32 @@ def _user_consumer_token():
 
 
 def _serialize_request_token(request_token):
-
     if isinstance(request_token, dict):
         return request_token
 
-    token_fields = getattr(request_token, '_fields', None)
+    token_fields = getattr(request_token, "_fields", None)
 
     if token_fields:
         return dict(zip(token_fields, request_token))
 
     if isinstance(request_token, (tuple, list)) and len(request_token) == 2:
         return {
-            'key': request_token[0],
-            'secret': request_token[1]
+            "key": request_token[0],
+            "secret": request_token[1],
         }
 
-    raise ValueError('Unsupported request token format')
+    raise ValueError("Unsupported request token format")
 
 
 def _deserialize_request_token(payload):
-
     if not isinstance(payload, dict):
-        raise ValueError('request_token payload must be a dict')
+        raise ValueError("request_token payload must be a dict")
 
     try:
         return mwoauth.RequestToken(**payload)
-
     except TypeError:
-
-        key = payload.get('key')
-        secret = payload.get('secret')
+        key = payload.get("key")
+        secret = payload.get("secret")
 
         if key and secret:
             return mwoauth.RequestToken(key, secret)
@@ -136,30 +133,27 @@ def _deserialize_request_token(payload):
 
 
 def _oauth_callback_url():
-
-    configured = os.environ.get('USER_OAUTH_CALLBACK_URL')
+    configured = os.environ.get("USER_OAUTH_CALLBACK_URL")
 
     if configured:
         return configured
 
-    tool_name = os.environ.get('TOOL_NAME') or 'buckbot'
+    tool_name = os.environ.get("TOOL_NAME") or "buckbot"
 
-    return f'https://{tool_name}.toolforge.org/oauth-callback'
+    return f"https://{tool_name}.toolforge.org/oauth-callback"
 
 
 def _rollback_api_actor():
-
-    username = session.get('username')
+    username = session.get("username")
 
     if username:
         return username
 
-    status_token = request.headers.get('X-Status-Token')
-    expected_token = os.environ.get('STATUS_API_TOKEN')
+    status_token = request.headers.get("X-Status-Token")
+    expected_token = os.environ.get("STATUS_API_TOKEN")
 
     if status_token and expected_token and secrets.compare_digest(status_token, expected_token):
-
-        return os.environ.get('STATUS_API_USER', 'status-site')
+        return os.environ.get("STATUS_API_USER", "status-site")
 
     return None
 
@@ -188,12 +182,11 @@ def _parse_bool(value, default=False):
 
 @app.route("/goto")
 def goto():
-
     username = session.get("username")
     tab = request.args.get("tab")
 
     if not username:
-        return redirect(url_for('login', referrer='/goto?tab=' + str(tab)))
+        return redirect(url_for("login", referrer="/goto?tab=" + str(tab)))
 
     if tab == "rollback-queue":
         return redirect("/rollback-queue")
@@ -209,20 +202,13 @@ def goto():
         return redirect("/rollback-queue/all-jobs")
 
     if tab == "documentation":
-        return redirect(
-            "https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot"
-        )
+        return redirect("https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot")
 
     return redirect("/rollback-queue")
 
 
-
-
-
-
 @app.route("/api/v1/rollback/worker")
 def worker_status():
-
     hb = r.get("rollback:worker:heartbeat")
 
     if not hb:
@@ -232,15 +218,14 @@ def worker_status():
 
     return jsonify({
         "status": "online",
-        "last_seen": age
+        "last_seen": age,
     })
 
 
 @app.route("/api/v1/rollback/jobs/progress")
 def batch_job_progress():
-
-    if session.get('username') is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
+    if session.get("username") is None:
+        return jsonify({"detail": "Not authenticated"}), 401
 
     ids = request.args.get("ids", "")
 
@@ -252,60 +237,54 @@ def batch_job_progress():
     jobs = []
 
     for jid in job_ids:
-
         p = get_progress(jid)
 
         if p:
             jobs.append({
                 "id": jid,
-                **p
+                **p,
             })
 
     return jsonify({"jobs": jobs})
 
 
-@app.route('/rollback-queue')
+@app.route("/rollback-queue")
 def rollback_queue_ui():
-
-    username = session.get('username')
+    username = session.get("username")
 
     jobs = []
 
     if username:
-
         with get_conn() as conn:
-
             with conn.cursor() as cursor:
-
                 cursor.execute(
-                    '''
+                    """
                     SELECT id, requested_by, status, dry_run, created_at
                     FROM rollback_jobs
-                                        WHERE requested_by=%s
-                                            AND (
-                                                status NOT IN ('completed', 'failed', 'canceled')
-                                                OR (status='failed' AND created_at >= (NOW() - INTERVAL 24 HOUR))
-                                            )
+                    WHERE requested_by=%s
+                      AND (
+                        status NOT IN ('completed', 'failed', 'canceled')
+                        OR (status='failed' AND created_at >= (NOW() - INTERVAL 24 HOUR))
+                      )
                     ORDER BY id DESC
                     LIMIT 100
-                    ''',
-                    (username,)
+                    """,
+                    (username,),
                 )
 
                 jobs = cursor.fetchall()
 
     return render_template(
-        'rollback_queue.html',
+        "rollback_queue.html",
         jobs=jobs,
         username=username,
-        type='rollback-queue'
+        type="rollback-queue",
     )
 
 
-@app.route('/rollback-queue/all-jobs')
+@app.route("/rollback-queue/all-jobs")
 def rollback_queue_all_jobs_ui():
-
-    username = session.get('username')
+    username = session.get("username")
 
     if not username:
         abort(401)
@@ -314,11 +293,9 @@ def rollback_queue_all_jobs_ui():
         abort(403)
 
     with get_conn() as conn:
-
         with conn.cursor() as cursor:
-
             cursor.execute(
-                '''
+                """
                 SELECT
                     j.id,
                     j.requested_by,
@@ -332,22 +309,21 @@ def rollback_queue_all_jobs_ui():
                 LEFT JOIN rollback_job_items i ON i.job_id = j.id
                 GROUP BY j.id, j.requested_by, j.status, j.dry_run, j.created_at
                 ORDER BY j.id DESC
-                '''
+                """
             )
 
             jobs = cursor.fetchall()
 
     return render_template(
-        'rollback_queue_all_jobs.html',
+        "rollback_queue_all_jobs.html",
         jobs=jobs,
         username=username,
-        type='rollback-all-jobs'
+        type="rollback-all-jobs",
     )
 
 
 @app.route("/rollback_batch")
 def rollback_batch():
-
     username = session.get("username")
 
     if not username:
@@ -359,61 +335,59 @@ def rollback_batch():
     return render_template(
         "batch_rollback.html",
         username=username,
-        type="batch-rollback"
+        type="batch-rollback",
     )
 
 
-@app.route('/api/v1/rollback/jobs', methods=['GET'])
+@app.route("/api/v1/rollback/jobs", methods=["GET"])
 def list_rollback_jobs():
- if not username or not is_authorized(username):
-        return jsonify({"error": "Unauthorized"}), 403
- if session.get('username') is None:
-    return jsonify({'detail': 'Not authenticated'}), 401
+    username = session.get("username")
+    if username is None:
+        return jsonify({"detail": "Not authenticated"}), 401
 
-with get_conn() as conn:
-
+    with get_conn() as conn:
         with conn.cursor() as cursor:
-
             cursor.execute(
-                '''
+                """
                 SELECT id, requested_by, status, dry_run, created_at
                 FROM rollback_jobs
                 WHERE requested_by=%s
                 ORDER BY id DESC
                 LIMIT 100
-                ''',
-                (session['username'],),
+                """,
+                (username,),
             )
 
             jobs = cursor.fetchall()
 
-    return jsonify({'jobs': [
-        {
-            'id': row[0],
-            'requested_by': row[1],
-            'status': row[2],
-            'dry_run': bool(row[3]),
-            'created_at': str(row[4]),
-        }
-        for row in jobs
-    ]})
+    return jsonify({
+        "jobs": [
+            {
+                "id": row[0],
+                "requested_by": row[1],
+                "status": row[2],
+                "dry_run": bool(row[3]),
+                "created_at": str(row[4]),
+            }
+            for row in jobs
+        ]
+    })
 
 
-@app.route('/api/v1/rollback/jobs', methods=['POST'])
+@app.route("/api/v1/rollback/jobs", methods=["POST"])
 def create_rollback_job():
-
     actor = _rollback_api_actor()
 
     if actor is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
+        return jsonify({"detail": "Not authenticated"}), 401
 
     payload = request.get_json(silent=True) or {}
 
-    requested_by = payload.get('requested_by') or actor
-    items = payload.get('items') or payload.get('files') or []
-    dry_run = _parse_bool(payload.get('dry_run', False), default=False)
+    requested_by = payload.get("requested_by") or actor
+    items = payload.get("items") or payload.get("files") or []
+    dry_run = _parse_bool(payload.get("dry_run", False), default=False)
 
-    raw_batch_id = payload.get('batch_id')
+    raw_batch_id = payload.get("batch_id")
 
     if raw_batch_id in (None, ""):
         batch_id = int(time.time() * 1000)
@@ -421,114 +395,107 @@ def create_rollback_job():
         try:
             batch_id = int(raw_batch_id)
         except (TypeError, ValueError):
-            return jsonify({'detail': 'batch_id must be an integer'}), 400
+            return jsonify({"detail": "batch_id must be an integer"}), 400
 
         if batch_id <= 0:
-            return jsonify({'detail': 'batch_id must be a positive integer'}), 400
+            return jsonify({"detail": "batch_id must be a positive integer"}), 400
 
     if requested_by != actor:
-        return jsonify({'detail': 'requested_by must match authenticated user'}), 403
+        return jsonify({"detail": "requested_by must match authenticated user"}), 403
 
     if not isinstance(items, list) or len(items) == 0:
-        return jsonify({'detail': 'items must be a non-empty list'}), 400
+        return jsonify({"detail": "items must be a non-empty list"}), 400
 
     if len(items) > 1000:
-        return jsonify({'detail': 'Too many rollback items'}), 400
+        return jsonify({"detail": "Too many rollback items"}), 400
 
     job_ids = []
 
     with get_conn() as conn:
-
         with conn.cursor() as cursor:
-
             for i in range(0, len(items), MAX_JOB_ITEMS):
-
-                chunk = items[i:i + MAX_JOB_ITEMS]
+                chunk = items[i : i + MAX_JOB_ITEMS]
 
                 cursor.execute(
-                    '''
+                    """
                     INSERT INTO rollback_jobs
                     (requested_by, status, dry_run, batch_id)
                     VALUES (%s, %s, %s, %s)
-                    ''',
-                    (requested_by, 'queued', 1 if dry_run else 0, batch_id)
+                    """,
+                    (requested_by, "queued", 1 if dry_run else 0, batch_id),
                 )
 
                 job_id = cursor.lastrowid
                 job_ids.append(job_id)
 
                 for item in chunk:
-
-                    title = (item.get('title') or item.get('file') or '').strip()
-                    user = (item.get('user') or '').strip()
-                    summary = item.get('summary')
+                    title = (item.get("title") or item.get("file") or "").strip()
+                    user = (item.get("user") or "").strip()
+                    summary = item.get("summary")
 
                     if not title or not user:
                         continue
 
                     cursor.execute(
-                        '''
+                        """
                         INSERT INTO rollback_job_items
                         (job_id, file_title, target_user, summary, status)
                         VALUES (%s, %s, %s, %s, %s)
-                        ''',
-                        (job_id, title, user, summary, 'queued')
+                        """,
+                        (job_id, title, user, summary, "queued"),
                     )
 
         conn.commit()
 
     if not job_ids:
-        return jsonify({'detail': 'No valid items to process'}), 400
+        return jsonify({"detail": "No valid items to process"}), 400
 
     for jid in job_ids:
         process_rollback_job.delay(jid)
 
     return jsonify({
-        'job_id': job_ids[0],
-        'status': 'queued',
-        'batch_id': batch_id,
-        'job_ids': job_ids,
-        'chunks': len(job_ids)
+        "job_id": job_ids[0],
+        "status": "queued",
+        "batch_id": batch_id,
+        "job_ids": job_ids,
+        "chunks": len(job_ids),
     })
 
 
-@app.route('/api/v1/rollback/jobs/<int:job_id>/retry', methods=['POST'])
+@app.route("/api/v1/rollback/jobs/<int:job_id>/retry", methods=["POST"])
 def retry_job(job_id):
-
     actor = _rollback_api_actor()
 
     if actor is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
+        return jsonify({"detail": "Not authenticated"}), 401
 
     with get_conn() as conn:
-
         with conn.cursor() as cursor:
-
             cursor.execute(
                 "SELECT requested_by FROM rollback_jobs WHERE id=%s",
-                (job_id,)
+                (job_id,),
             )
 
             job = cursor.fetchone()
 
             if not job:
-                return jsonify({'detail': 'Job not found'}), 404
+                return jsonify({"detail": "Job not found"}), 404
 
             if job[0] != actor:
-                return jsonify({'detail': 'Forbidden'}), 403
+                return jsonify({"detail": "Forbidden"}), 403
 
             cursor.execute(
                 "UPDATE rollback_jobs SET status='queued' WHERE id=%s",
-                (job_id,)
+                (job_id,),
             )
 
             cursor.execute(
-                '''
+                """
                 UPDATE rollback_job_items
                 SET status='queued', error=NULL
                 WHERE job_id=%s
-                ''',
-                (job_id,)
+                """,
+                (job_id,),
             )
 
         conn.commit()
@@ -538,141 +505,134 @@ def retry_job(job_id):
     return jsonify({"job_id": job_id, "status": "queued"})
 
 
-@app.route('/api/v1/rollback/jobs/<int:job_id>', methods=['DELETE'])
+@app.route("/api/v1/rollback/jobs/<int:job_id>", methods=["DELETE"])
 def cancel_rollback_job(job_id):
-
     actor = _rollback_api_actor()
 
     if actor is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
+        return jsonify({"detail": "Not authenticated"}), 401
 
     with get_conn() as conn:
-
         with conn.cursor() as cursor:
-
             cursor.execute(
-                '''
+                """
                 SELECT id, requested_by, status
                 FROM rollback_jobs
                 WHERE id=%s
-                ''',
-                (job_id,)
+                """,
+                (job_id,),
             )
 
             job = cursor.fetchone()
 
             if not job:
-                return jsonify({'detail': 'Job not found'}), 404
+                return jsonify({"detail": "Job not found"}), 404
 
             if job[1] != actor:
-                return jsonify({'detail': 'Forbidden'}), 403
+                return jsonify({"detail": "Forbidden"}), 403
 
-            if job[2] in {'completed', 'failed', 'canceled'}:
-                return jsonify({'job_id': job_id, 'status': job[2]})
+            if job[2] in {"completed", "failed", "canceled"}:
+                return jsonify({"job_id": job_id, "status": job[2]})
 
             cursor.execute(
-                'UPDATE rollback_jobs SET status=%s WHERE id=%s',
-                ('canceled', job_id)
+                "UPDATE rollback_jobs SET status=%s WHERE id=%s",
+                ("canceled", job_id),
             )
 
             cursor.execute(
-                '''
+                """
                 UPDATE rollback_job_items
                 SET status=%s, error=%s
                 WHERE job_id=%s AND status IN (%s, %s)
-                ''',
-                ('canceled', 'Canceled by requester', job_id, 'queued', 'running')
+                """,
+                ("canceled", "Canceled by requester", job_id, "queued", "running"),
             )
 
         conn.commit()
 
-    return jsonify({'job_id': job_id, 'status': 'canceled'})
+    return jsonify({"job_id": job_id, "status": "canceled"})
 
 
-@app.route('/api/v1/rollback/jobs/<int:job_id>')
+@app.route("/api/v1/rollback/jobs/<int:job_id>")
 def get_rollback_job(job_id):
-
-    if session.get('username') is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
+    if session.get("username") is None:
+        return jsonify({"detail": "Not authenticated"}), 401
 
     with get_conn() as conn:
-
         with conn.cursor() as cursor:
-
             cursor.execute(
-                '''
+                """
                 SELECT id, requested_by, status, dry_run, created_at
                 FROM rollback_jobs
                 WHERE id=%s
-                ''',
-                (job_id,)
+                """,
+                (job_id,),
             )
 
             job = cursor.fetchone()
 
             if not job:
-                return jsonify({'detail': 'Job not found'}), 404
+                return jsonify({"detail": "Job not found"}), 404
 
-            if job[1] != session['username']:
-                return jsonify({'detail': 'Forbidden'}), 403
+            if job[1] != session["username"]:
+                return jsonify({"detail": "Forbidden"}), 403
 
             cursor.execute(
-                '''
+                """
                 SELECT id, file_title, target_user, summary, status, error
                 FROM rollback_job_items
                 WHERE job_id=%s
                 ORDER BY id ASC
-                ''',
-                (job_id,)
+                """,
+                (job_id,),
             )
 
             items = cursor.fetchall()
 
     return jsonify({
-        'id': job[0],
-        'requested_by': job[1],
-        'status': job[2],
-        'dry_run': bool(job[3]),
-        'created_at': str(job[4]),
-        'total': len(items),
-        'completed': len([x for x in items if x[4] == 'completed']),
-        'failed': len([x for x in items if x[4] == 'failed']),
-        'items': [
+        "id": job[0],
+        "requested_by": job[1],
+        "status": job[2],
+        "dry_run": bool(job[3]),
+        "created_at": str(job[4]),
+        "total": len(items),
+        "completed": len([x for x in items if x[4] == "completed"]),
+        "failed": len([x for x in items if x[4] == "failed"]),
+        "items": [
             {
-                'id': x[0],
-                'title': x[1],
-                'user': x[2],
-                'summary': x[3],
-                'status': x[4],
-                'error': x[5],
+                "id": x[0],
+                "title": x[1],
+                "user": x[2],
+                "summary": x[3],
+                "status": x[4],
+                "error": x[5],
             }
             for x in items
         ],
     })
 
 
-@app.route('/')
+@app.route("/")
 def index():
     return render_template(
-        'index.html',
-        username=session.get('username'),
-        type='index'
+        "index.html",
+        username=session.get("username"),
+        type="index",
     )
 
 
-@app.route('/login')
+@app.route("/login")
 def login():
-
     _ensure_secret_key()
 
-    if request.args.get('referrer'):
-        session['referrer'] = request.args.get('referrer')
+    if request.args.get("referrer"):
+        session["referrer"] = request.args.get("referrer")
 
     consumer_token = _user_consumer_token()
 
     if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
+        app.logger.error("Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET")
+        return redirect(url_for("index"))
 
     try:
         redirect_loc, request_token = mwoauth.initiate(
@@ -681,1382 +641,74 @@ def login():
             callback=_oauth_callback_url(),
         )
     except Exception:
-        app.logger.exception('mwoauth.initiate failed')
-        return redirect(url_for('index'))
+        app.logger.exception("mwoauth.initiate failed")
+        return redirect(url_for("index"))
 
     try:
-        session['request_token'] = _serialize_request_token(request_token)
+        session["request_token"] = _serialize_request_token(request_token)
     except Exception:
-        app.logger.exception('Unable to serialize OAuth request token')
-        return redirect(url_for('index'))
+        app.logger.exception("Unable to serialize OAuth request token")
+        return redirect(url_for("index"))
 
     return redirect(redirect_loc)
 
 
-@app.route('/mas-oauth-callback')
-@app.route('/oauth-callback')
-@app.route('/mwoauth-callback')
-@app.route('/buckbot-oauth-callback')
+@app.route("/mas-oauth-callback")
+@app.route("/oauth-callback")
+@app.route("/mwoauth-callback")
+@app.route("/buckbot-oauth-callback")
 def oauth_callback():
-
     _ensure_secret_key()
 
-    if 'request_token' not in session:
-        return redirect(url_for('index'))
+    if "request_token" not in session:
+        return redirect(url_for("index"))
 
     consumer_token = _user_consumer_token()
 
     if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
+        app.logger.error("Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET")
+        return redirect(url_for("index"))
 
     authenticated = False
 
     try:
         access_token = mwoauth.complete(
-            'https://meta.wikimedia.org/w/index.php',
+            "https://meta.wikimedia.org/w/index.php",
             consumer_token,
-            _deserialize_request_token(session['request_token']),
+            _deserialize_request_token(session["request_token"]),
             request.query_string,
         )
         identity = mwoauth.identify(
-            'https://meta.wikimedia.org/w/index.php',
+            "https://meta.wikimedia.org/w/index.php",
             consumer_token,
             access_token,
         )
     except Exception:
-        app.logger.exception('OAuth authentication failed')
+        app.logger.exception("OAuth authentication failed")
     else:
-        session['access_token'] = dict(zip(access_token._fields, access_token))
-        session['username'] = identity['username']
+        username = identity["username"]
+
+        if not is_authorized(username):
+            session.clear()
+            return "This tool is restricted to Commons admins and maintainers.", 403
+
+        session["access_token"] = dict(zip(access_token._fields, access_token))
+        session["username"] = username
+        session["authorized"] = True
+        session["is_maintainer"] = bool(is_maintainer(username))
+        session["is_admin"] = "sysop" in get_user_groups(username)
         authenticated = True
 
-    referrer = session.get('referrer')
-    session['referrer'] = None
+    referrer = session.get("referrer")
+    session["referrer"] = None
 
     if authenticated:
-        return redirect(referrer or '/')
+        return redirect(referrer or "/")
 
-    return redirect(url_for('index'))
+    return redirect(url_for("index"))
 
 
-@app.route('/logout')
+@app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for('index'))
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != actor:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            if job[2] in {'completed', 'failed', 'canceled'}:
-                return jsonify({'job_id': job_id, 'status': job[2]})
-
-            cursor.execute(
-                'UPDATE rollback_jobs SET status=%s WHERE id=%s',
-                ('canceled', job_id)
-            )
-
-            cursor.execute(
-                '''
-                UPDATE rollback_job_items
-                SET status=%s, error=%s
-                WHERE job_id=%s AND status IN (%s, %s)
-                ''',
-                ('canceled', 'Canceled by requester', job_id, 'queued', 'running')
-            )
-
-        conn.commit()
-
-    return jsonify({'job_id': job_id, 'status': 'canceled'})
-
-
-@app.route('/api/v1/rollback/jobs/<int:job_id>')
-def get_rollback_job(job_id):
-
-    if session.get('username') is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
-
-    with get_conn() as conn:
-
-        with conn.cursor() as cursor:
-
-            cursor.execute(
-                '''
-                SELECT id, requested_by, status, dry_run, created_at
-                FROM rollback_jobs
-                WHERE id=%s
-                ''',
-                (job_id,)
-            )
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != session['username']:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            cursor.execute(
-                '''
-                SELECT id, file_title, target_user, summary, status, error
-                FROM rollback_job_items
-                WHERE job_id=%s
-                ORDER BY id ASC
-                ''',
-                (job_id,)
-            )
-
-            items = cursor.fetchall()
-
-    return jsonify({
-        'id': job[0],
-        'requested_by': job[1],
-        'status': job[2],
-        'dry_run': bool(job[3]),
-        'created_at': str(job[4]),
-        'total': len(items),
-        'completed': len([x for x in items if x[4] == 'completed']),
-        'failed': len([x for x in items if x[4] == 'failed']),
-        'items': [
-            {
-                'id': x[0],
-                'title': x[1],
-                'user': x[2],
-                'summary': x[3],
-                'status': x[4],
-                'error': x[5],
-            }
-            for x in items
-        ],
-    })
-
-
-@app.route('/')
-def index():
-    return render_template(
-        'index.html',
-        username=session.get('username'),
-        type='index'
-    )
-
-
-@app.route('/login')
-def login():
-
-    _ensure_secret_key()
-
-    if request.args.get('referrer'):
-        session['referrer'] = request.args.get('referrer')
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    try:
-        redirect_loc, request_token = mwoauth.initiate(
-            "https://meta.wikimedia.org",
-            consumer_token,
-            callback=_oauth_callback_url(),
-        )
-    except Exception:
-        app.logger.exception('mwoauth.initiate failed')
-        return redirect(url_for('index'))
-
-    try:
-        session['request_token'] = _serialize_request_token(request_token)
-    except Exception:
-        app.logger.exception('Unable to serialize OAuth request token')
-        return redirect(url_for('index'))
-
-    return redirect(redirect_loc)
-
-
-@app.route('/mas-oauth-callback')
-@app.route('/oauth-callback')
-@app.route('/mwoauth-callback')
-@app.route('/buckbot-oauth-callback')
-def oauth_callback():
-
-    _ensure_secret_key()
-
-    if 'request_token' not in session:
-        return redirect(url_for('index'))
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    authenticated = False
-
-    try:
-        access_token = mwoauth.complete(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            _deserialize_request_token(session['request_token']),
-            request.query_string,
-        )
-        identity = mwoauth.identify(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            access_token,
-        )
-    except Exception:
-        app.logger.exception('OAuth authentication failed')
-    else:
-        session['access_token'] = dict(zip(access_token._fields, access_token))
-        session['username'] = identity['username']
-        authenticated = True
-
-    referrer = session.get('referrer')
-    session['referrer'] = None
-
-    if authenticated:
-        return redirect(referrer or '/')
-
-    return redirect(url_for('index'))
-
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('index'))
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != actor:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            if job[2] in {'completed', 'failed', 'canceled'}:
-                return jsonify({'job_id': job_id, 'status': job[2]})
-
-            cursor.execute(
-                'UPDATE rollback_jobs SET status=%s WHERE id=%s',
-                ('canceled', job_id)
-            )
-
-            cursor.execute(
-                '''
-                UPDATE rollback_job_items
-                SET status=%s, error=%s
-                WHERE job_id=%s AND status IN (%s, %s)
-                ''',
-                ('canceled', 'Canceled by requester', job_id, 'queued', 'running')
-            )
-
-        conn.commit()
-
-    return jsonify({'job_id': job_id, 'status': 'canceled'})
-
-
-@app.route('/api/v1/rollback/jobs/<int:job_id>')
-def get_rollback_job(job_id):
-
-    if session.get('username') is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
-
-    with get_conn() as conn:
-
-        with conn.cursor() as cursor:
-
-            cursor.execute(
-                '''
-                SELECT id, requested_by, status, dry_run, created_at
-                FROM rollback_jobs
-                WHERE id=%s
-                ''',
-                (job_id,)
-            )
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != session['username']:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            cursor.execute(
-                '''
-                SELECT id, file_title, target_user, summary, status, error
-                FROM rollback_job_items
-                WHERE job_id=%s
-                ORDER BY id ASC
-                ''',
-                (job_id,)
-            )
-
-            items = cursor.fetchall()
-
-    return jsonify({
-        'id': job[0],
-        'requested_by': job[1],
-        'status': job[2],
-        'dry_run': bool(job[3]),
-        'created_at': str(job[4]),
-        'total': len(items),
-        'completed': len([x for x in items if x[4] == 'completed']),
-        'failed': len([x for x in items if x[4] == 'failed']),
-        'items': [
-            {
-                'id': x[0],
-                'title': x[1],
-                'user': x[2],
-                'summary': x[3],
-                'status': x[4],
-                'error': x[5],
-            }
-            for x in items
-        ],
-    })
-
-
-@app.route('/')
-def index():
-    return render_template(
-        'index.html',
-        username=session.get('username'),
-        type='index'
-    )
-
-
-@app.route('/login')
-def login():
-
-    _ensure_secret_key()
-
-    if request.args.get('referrer'):
-        session['referrer'] = request.args.get('referrer')
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    try:
-        redirect_loc, request_token = mwoauth.initiate(
-            "https://meta.wikimedia.org",
-            consumer_token,
-            callback=_oauth_callback_url(),
-        )
-    except Exception:
-        app.logger.exception('mwoauth.initiate failed')
-        return redirect(url_for('index'))
-
-    try:
-        session['request_token'] = _serialize_request_token(request_token)
-    except Exception:
-        app.logger.exception('Unable to serialize OAuth request token')
-        return redirect(url_for('index'))
-
-    return redirect(redirect_loc)
-
-
-@app.route('/mas-oauth-callback')
-@app.route('/oauth-callback')
-@app.route('/mwoauth-callback')
-@app.route('/buckbot-oauth-callback')
-def oauth_callback():
-
-    _ensure_secret_key()
-
-    if 'request_token' not in session:
-        return redirect(url_for('index'))
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    authenticated = False
-
-    try:
-        access_token = mwoauth.complete(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            _deserialize_request_token(session['request_token']),
-            request.query_string,
-        )
-        identity = mwoauth.identify(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            access_token,
-        )
-    except Exception:
-        app.logger.exception('OAuth authentication failed')
-    else:
-        session['access_token'] = dict(zip(access_token._fields, access_token))
-        session['username'] = identity['username']
-        authenticated = True
-
-    referrer = session.get('referrer')
-    session['referrer'] = None
-
-    if authenticated:
-        return redirect(referrer or '/')
-
-    return redirect(url_for('index'))
-
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('index'))
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != actor:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            if job[2] in {'completed', 'failed', 'canceled'}:
-                return jsonify({'job_id': job_id, 'status': job[2]})
-
-            cursor.execute(
-                'UPDATE rollback_jobs SET status=%s WHERE id=%s',
-                ('canceled', job_id)
-            )
-
-            cursor.execute(
-                '''
-                UPDATE rollback_job_items
-                SET status=%s, error=%s
-                WHERE job_id=%s AND status IN (%s, %s)
-                ''',
-                ('canceled', 'Canceled by requester', job_id, 'queued', 'running')
-            )
-
-        conn.commit()
-
-    return jsonify({'job_id': job_id, 'status': 'canceled'})
-
-
-@app.route('/api/v1/rollback/jobs/<int:job_id>')
-def get_rollback_job(job_id):
-
-    if session.get('username') is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
-
-    with get_conn() as conn:
-
-        with conn.cursor() as cursor:
-
-            cursor.execute(
-                '''
-                SELECT id, requested_by, status, dry_run, created_at
-                FROM rollback_jobs
-                WHERE id=%s
-                ''',
-                (job_id,)
-            )
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != session['username']:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            cursor.execute(
-                '''
-                SELECT id, file_title, target_user, summary, status, error
-                FROM rollback_job_items
-                WHERE job_id=%s
-                ORDER BY id ASC
-                ''',
-                (job_id,)
-            )
-
-            items = cursor.fetchall()
-
-    return jsonify({
-        'id': job[0],
-        'requested_by': job[1],
-        'status': job[2],
-        'dry_run': bool(job[3]),
-        'created_at': str(job[4]),
-        'total': len(items),
-        'completed': len([x for x in items if x[4] == 'completed']),
-        'failed': len([x for x in items if x[4] == 'failed']),
-        'items': [
-            {
-                'id': x[0],
-                'title': x[1],
-                'user': x[2],
-                'summary': x[3],
-                'status': x[4],
-                'error': x[5],
-            }
-            for x in items
-        ],
-    })
-
-
-@app.route('/')
-def index():
-    return render_template(
-        'index.html',
-        username=session.get('username'),
-        type='index'
-    )
-
-
-@app.route('/login')
-def login():
-
-    _ensure_secret_key()
-
-    if request.args.get('referrer'):
-        session['referrer'] = request.args.get('referrer')
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    try:
-        redirect_loc, request_token = mwoauth.initiate(
-            "https://meta.wikimedia.org",
-            consumer_token,
-            callback=_oauth_callback_url(),
-        )
-    except Exception:
-        app.logger.exception('mwoauth.initiate failed')
-        return redirect(url_for('index'))
-
-    try:
-        session['request_token'] = _serialize_request_token(request_token)
-    except Exception:
-        app.logger.exception('Unable to serialize OAuth request token')
-        return redirect(url_for('index'))
-
-    return redirect(redirect_loc)
-
-
-@app.route('/mas-oauth-callback')
-@app.route('/oauth-callback')
-@app.route('/mwoauth-callback')
-@app.route('/buckbot-oauth-callback')
-def oauth_callback():
-
-    _ensure_secret_key()
-
-    if 'request_token' not in session:
-        return redirect(url_for('index'))
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    authenticated = False
-
-    try:
-        access_token = mwoauth.complete(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            _deserialize_request_token(session['request_token']),
-            request.query_string,
-        )
-        identity = mwoauth.identify(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            access_token,
-        )
-    except Exception:
-        app.logger.exception('OAuth authentication failed')
-    else:
-        session['access_token'] = dict(zip(access_token._fields, access_token))
-        session['username'] = identity['username']
-        authenticated = True
-
-    referrer = session.get('referrer')
-    session['referrer'] = None
-
-    if authenticated:
-        return redirect(referrer or '/')
-
-    return redirect(url_for('index'))
-
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('index'))
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != actor:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            if job[2] in {'completed', 'failed', 'canceled'}:
-                return jsonify({'job_id': job_id, 'status': job[2]})
-
-            cursor.execute(
-                'UPDATE rollback_jobs SET status=%s WHERE id=%s',
-                ('canceled', job_id)
-            )
-
-            cursor.execute(
-                '''
-                UPDATE rollback_job_items
-                SET status=%s, error=%s
-                WHERE job_id=%s AND status IN (%s, %s)
-                ''',
-                ('canceled', 'Canceled by requester', job_id, 'queued', 'running')
-            )
-
-        conn.commit()
-
-    return jsonify({'job_id': job_id, 'status': 'canceled'})
-
-
-@app.route('/api/v1/rollback/jobs/<int:job_id>')
-def get_rollback_job(job_id):
-
-    if session.get('username') is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
-
-    with get_conn() as conn:
-
-        with conn.cursor() as cursor:
-
-            cursor.execute(
-                '''
-                SELECT id, requested_by, status, dry_run, created_at
-                FROM rollback_jobs
-                WHERE id=%s
-                ''',
-                (job_id,)
-            )
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != session['username']:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            cursor.execute(
-                '''
-                SELECT id, file_title, target_user, summary, status, error
-                FROM rollback_job_items
-                WHERE job_id=%s
-                ORDER BY id ASC
-                ''',
-                (job_id,)
-            )
-
-            items = cursor.fetchall()
-
-    return jsonify({
-        'id': job[0],
-        'requested_by': job[1],
-        'status': job[2],
-        'dry_run': bool(job[3]),
-        'created_at': str(job[4]),
-        'total': len(items),
-        'completed': len([x for x in items if x[4] == 'completed']),
-        'failed': len([x for x in items if x[4] == 'failed']),
-        'items': [
-            {
-                'id': x[0],
-                'title': x[1],
-                'user': x[2],
-                'summary': x[3],
-                'status': x[4],
-                'error': x[5],
-            }
-            for x in items
-        ],
-    })
-
-
-@app.route('/')
-def index():
-    return render_template(
-        'index.html',
-        username=session.get('username'),
-        type='index'
-    )
-
-
-@app.route('/login')
-def login():
-
-    _ensure_secret_key()
-
-    if request.args.get('referrer'):
-        session['referrer'] = request.args.get('referrer')
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    try:
-        redirect_loc, request_token = mwoauth.initiate(
-            "https://meta.wikimedia.org",
-            consumer_token,
-            callback=_oauth_callback_url(),
-        )
-    except Exception:
-        app.logger.exception('mwoauth.initiate failed')
-        return redirect(url_for('index'))
-
-    try:
-        session['request_token'] = _serialize_request_token(request_token)
-    except Exception:
-        app.logger.exception('Unable to serialize OAuth request token')
-        return redirect(url_for('index'))
-
-    return redirect(redirect_loc)
-
-
-@app.route('/mas-oauth-callback')
-@app.route('/oauth-callback')
-@app.route('/mwoauth-callback')
-@app.route('/buckbot-oauth-callback')
-def oauth_callback():
-
-    _ensure_secret_key()
-
-    if 'request_token' not in session:
-        return redirect(url_for('index'))
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    authenticated = False
-
-    try:
-        access_token = mwoauth.complete(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            _deserialize_request_token(session['request_token']),
-            request.query_string,
-        )
-        identity = mwoauth.identify(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            access_token,
-        )
-    except Exception:
-        app.logger.exception('OAuth authentication failed')
-    else:
-        session['access_token'] = dict(zip(access_token._fields, access_token))
-        session['username'] = identity['username']
-        authenticated = True
-
-    referrer = session.get('referrer')
-    session['referrer'] = None
-
-    if authenticated:
-        return redirect(referrer or '/')
-
-    return redirect(url_for('index'))
-
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('index'))
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != actor:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            if job[2] in {'completed', 'failed', 'canceled'}:
-                return jsonify({'job_id': job_id, 'status': job[2]})
-
-            cursor.execute(
-                'UPDATE rollback_jobs SET status=%s WHERE id=%s',
-                ('canceled', job_id)
-            )
-
-            cursor.execute(
-                '''
-                UPDATE rollback_job_items
-                SET status=%s, error=%s
-                WHERE job_id=%s AND status IN (%s, %s)
-                ''',
-                ('canceled', 'Canceled by requester', job_id, 'queued', 'running')
-            )
-
-        conn.commit()
-
-    return jsonify({'job_id': job_id, 'status': 'canceled'})
-
-
-@app.route('/api/v1/rollback/jobs/<int:job_id>')
-def get_rollback_job(job_id):
-
-    if session.get('username') is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
-
-    with get_conn() as conn:
-
-        with conn.cursor() as cursor:
-
-            cursor.execute(
-                '''
-                SELECT id, requested_by, status, dry_run, created_at
-                FROM rollback_jobs
-                WHERE id=%s
-                ''',
-                (job_id,)
-            )
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != session['username']:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            cursor.execute(
-                '''
-                SELECT id, file_title, target_user, summary, status, error
-                FROM rollback_job_items
-                WHERE job_id=%s
-                ORDER BY id ASC
-                ''',
-                (job_id,)
-            )
-
-            items = cursor.fetchall()
-
-    return jsonify({
-        'id': job[0],
-        'requested_by': job[1],
-        'status': job[2],
-        'dry_run': bool(job[3]),
-        'created_at': str(job[4]),
-        'total': len(items),
-        'completed': len([x for x in items if x[4] == 'completed']),
-        'failed': len([x for x in items if x[4] == 'failed']),
-        'items': [
-            {
-                'id': x[0],
-                'title': x[1],
-                'user': x[2],
-                'summary': x[3],
-                'status': x[4],
-                'error': x[5],
-            }
-            for x in items
-        ],
-    })
-
-
-@app.route('/')
-def index():
-    return render_template(
-        'index.html',
-        username=session.get('username'),
-        type='index'
-    )
-
-
-@app.route('/login')
-def login():
-
-    _ensure_secret_key()
-
-    if request.args.get('referrer'):
-        session['referrer'] = request.args.get('referrer')
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    try:
-        redirect_loc, request_token = mwoauth.initiate(
-            "https://meta.wikimedia.org",
-            consumer_token,
-            callback=_oauth_callback_url(),
-        )
-    except Exception:
-        app.logger.exception('mwoauth.initiate failed')
-        return redirect(url_for('index'))
-
-    try:
-        session['request_token'] = _serialize_request_token(request_token)
-    except Exception:
-        app.logger.exception('Unable to serialize OAuth request token')
-        return redirect(url_for('index'))
-
-    return redirect(redirect_loc)
-
-
-@app.route('/mas-oauth-callback')
-@app.route('/oauth-callback')
-@app.route('/mwoauth-callback')
-@app.route('/buckbot-oauth-callback')
-def oauth_callback():
-
-    _ensure_secret_key()
-
-    if 'request_token' not in session:
-        return redirect(url_for('index'))
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    authenticated = False
-
-    try:
-        access_token = mwoauth.complete(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            _deserialize_request_token(session['request_token']),
-            request.query_string,
-        )
-        identity = mwoauth.identify(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            access_token,
-        )
-    except Exception:
-        app.logger.exception('OAuth authentication failed')
-    else:
-        session['access_token'] = dict(zip(access_token._fields, access_token))
-        session['username'] = identity['username']
-        authenticated = True
-
-    referrer = session.get('referrer')
-    session['referrer'] = None
-
-    if authenticated:
-        return redirect(referrer or '/')
-
-    return redirect(url_for('index'))
-
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('index'))
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != actor:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            if job[2] in {'completed', 'failed', 'canceled'}:
-                return jsonify({'job_id': job_id, 'status': job[2]})
-
-            cursor.execute(
-                'UPDATE rollback_jobs SET status=%s WHERE id=%s',
-                ('canceled', job_id)
-            )
-
-            cursor.execute(
-                '''
-                UPDATE rollback_job_items
-                SET status=%s, error=%s
-                WHERE job_id=%s AND status IN (%s, %s)
-                ''',
-                ('canceled', 'Canceled by requester', job_id, 'queued', 'running')
-            )
-
-        conn.commit()
-
-    return jsonify({'job_id': job_id, 'status': 'canceled'})
-
-
-@app.route('/api/v1/rollback/jobs/<int:job_id>')
-def get_rollback_job(job_id):
-
-    if session.get('username') is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
-
-    with get_conn() as conn:
-
-        with conn.cursor() as cursor:
-
-            cursor.execute(
-                '''
-                SELECT id, requested_by, status, dry_run, created_at
-                FROM rollback_jobs
-                WHERE id=%s
-                ''',
-                (job_id,)
-            )
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != session['username']:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            cursor.execute(
-                '''
-                SELECT id, file_title, target_user, summary, status, error
-                FROM rollback_job_items
-                WHERE job_id=%s
-                ORDER BY id ASC
-                ''',
-                (job_id,)
-            )
-
-            items = cursor.fetchall()
-
-    return jsonify({
-        'id': job[0],
-        'requested_by': job[1],
-        'status': job[2],
-        'dry_run': bool(job[3]),
-        'created_at': str(job[4]),
-        'total': len(items),
-        'completed': len([x for x in items if x[4] == 'completed']),
-        'failed': len([x for x in items if x[4] == 'failed']),
-        'items': [
-            {
-                'id': x[0],
-                'title': x[1],
-                'user': x[2],
-                'summary': x[3],
-                'status': x[4],
-                'error': x[5],
-            }
-            for x in items
-        ],
-    })
-
-
-@app.route('/')
-def index():
-    return render_template(
-        'index.html',
-        username=session.get('username'),
-        type='index'
-    )
-
-
-@app.route('/login')
-def login():
-
-    _ensure_secret_key()
-
-    if request.args.get('referrer'):
-        session['referrer'] = request.args.get('referrer')
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    try:
-        redirect_loc, request_token = mwoauth.initiate(
-            "https://meta.wikimedia.org",
-            consumer_token,
-            callback=_oauth_callback_url(),
-        )
-    except Exception:
-        app.logger.exception('mwoauth.initiate failed')
-        return redirect(url_for('index'))
-
-    try:
-        session['request_token'] = _serialize_request_token(request_token)
-    except Exception:
-        app.logger.exception('Unable to serialize OAuth request token')
-        return redirect(url_for('index'))
-
-    return redirect(redirect_loc)
-
-
-@app.route('/mas-oauth-callback')
-@app.route('/oauth-callback')
-@app.route('/mwoauth-callback')
-@app.route('/buckbot-oauth-callback')
-def oauth_callback():
-
-    _ensure_secret_key()
-
-    if 'request_token' not in session:
-        return redirect(url_for('index'))
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    authenticated = False
-
-    try:
-        access_token = mwoauth.complete(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            _deserialize_request_token(session['request_token']),
-            request.query_string,
-        )
-        identity = mwoauth.identify(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            access_token,
-        )
-    except Exception:
-        app.logger.exception('OAuth authentication failed')
-    else:
-        username = identity['username']
-
-#  AUTH CHECK
-    if not is_authorized(username):
-        session.clear()
-        return (
-        "This tool is restricted to Commons admins and maintainers.",
-        403
-    )
-
-session['access_token'] = dict(zip(access_token._fields, access_token))
-session['username'] = username
-session['authorized'] = True
-session['is_maintainer'] = bool(is_maintainer(username))
-session['is_admin'] = "sysop" in get_user_groups(username)
-
-authenticated = True
-
-    referrer = session.get('referrer')
-    session['referrer'] = None
-
-    if authenticated:
-        return redirect(referrer or '/')
-
-    return redirect(url_for('index'))
-
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('index'))
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != actor:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            if job[2] in {'completed', 'failed', 'canceled'}:
-                return jsonify({'job_id': job_id, 'status': job[2]})
-
-            cursor.execute(
-                'UPDATE rollback_jobs SET status=%s WHERE id=%s',
-                ('canceled', job_id)
-            )
-
-            cursor.execute(
-                '''
-                UPDATE rollback_job_items
-                SET status=%s, error=%s
-                WHERE job_id=%s AND status IN (%s, %s)
-                ''',
-                ('canceled', 'Canceled by requester', job_id, 'queued', 'running')
-            )
-
-        conn.commit()
-
-    return jsonify({'job_id': job_id, 'status': 'canceled'})
-
-
-@app.route('/api/v1/rollback/jobs/<int:job_id>')
-def get_rollback_job(job_id):
-
-    if session.get('username') is None:
-        return jsonify({'detail': 'Not authenticated'}), 401
-
-    with get_conn() as conn:
-
-        with conn.cursor() as cursor:
-
-            cursor.execute(
-                '''
-                SELECT id, requested_by, status, dry_run, created_at
-                FROM rollback_jobs
-                WHERE id=%s
-                ''',
-                (job_id,)
-            )
-
-            job = cursor.fetchone()
-
-            if not job:
-                return jsonify({'detail': 'Job not found'}), 404
-
-            if job[1] != session['username']:
-                return jsonify({'detail': 'Forbidden'}), 403
-
-            cursor.execute(
-                '''
-                SELECT id, file_title, target_user, summary, status, error
-                FROM rollback_job_items
-                WHERE job_id=%s
-                ORDER BY id ASC
-                ''',
-                (job_id,)
-            )
-
-            items = cursor.fetchall()
-
-    return jsonify({
-        'id': job[0],
-        'requested_by': job[1],
-        'status': job[2],
-        'dry_run': bool(job[3]),
-        'created_at': str(job[4]),
-        'total': len(items),
-        'completed': len([x for x in items if x[4] == 'completed']),
-        'failed': len([x for x in items if x[4] == 'failed']),
-        'items': [
-            {
-                'id': x[0],
-                'title': x[1],
-                'user': x[2],
-                'summary': x[3],
-                'status': x[4],
-                'error': x[5],
-            }
-            for x in items
-        ],
-    })
-
-
-@app.route('/')
-def index():
-    return render_template(
-        'index.html',
-        username=session.get('username'),
-        type='index'
-    )
-
-
-@app.route('/login')
-def login():
-
-    _ensure_secret_key()
-
-    if request.args.get('referrer'):
-        session['referrer'] = request.args.get('referrer')
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    try:
-        redirect_loc, request_token = mwoauth.initiate(
-            "https://meta.wikimedia.org",
-            consumer_token,
-            callback=_oauth_callback_url(),
-        )
-    except Exception:
-        app.logger.exception('mwoauth.initiate failed')
-        return redirect(url_for('index'))
-
-    try:
-        session['request_token'] = _serialize_request_token(request_token)
-    except Exception:
-        app.logger.exception('Unable to serialize OAuth request token')
-        return redirect(url_for('index'))
-
-    return redirect(redirect_loc)
-
-
-@app.route('/mas-oauth-callback')
-@app.route('/oauth-callback')
-@app.route('/mwoauth-callback')
-@app.route('/buckbot-oauth-callback')
-def oauth_callback():
-
-    _ensure_secret_key()
-
-    if 'request_token' not in session:
-        return redirect(url_for('index'))
-
-    consumer_token = _user_consumer_token()
-
-    if consumer_token is None:
-        app.logger.error('Missing USER_OAUTH_CONSUMER_KEY/USER_OAUTH_CONSUMER_SECRET')
-        return redirect(url_for('index'))
-
-    authenticated = False
-
-    try:
-        access_token = mwoauth.complete(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            _deserialize_request_token(session['request_token']),
-            request.query_string,
-        )
-        identity = mwoauth.identify(
-            'https://meta.wikimedia.org/w/index.php',
-            consumer_token,
-            access_token,
-        )
-    except Exception:
-        app.logger.exception('OAuth authentication failed')
-    else:
-        session['access_token'] = dict(zip(access_token._fields, access_token))
-        session['username'] = identity['username']
-        authenticated = True
-
-    referrer = session.get('referrer')
-    session['referrer'] = None
-
-    if authenticated:
-        return redirect(referrer or '/')
-
-    return redirect(url_for('index'))
-
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('index'))
+    return redirect(url_for("index"))
