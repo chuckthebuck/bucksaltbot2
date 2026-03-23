@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 
 interface AllJobsRow {
   id: number;
@@ -42,15 +42,24 @@ function normalizeAllJobsRow(row: unknown): AllJobsRow | null {
   };
 }
 
-const props = JSON.parse(
-  document.getElementById("all-jobs-props")!.textContent || "{}"
-) as { jobs?: unknown[] };
+const jobs = ref<AllJobsRow[]>([]);
 
-const jobs = ref<AllJobsRow[]>(
-  ((props.jobs as unknown[]) || [])
-    .map((j) => normalizeAllJobsRow(j))
-    .filter((j): j is AllJobsRow => j !== null)
-);
+onMounted(() => {
+  const el = document.getElementById("all-jobs-props");
+  if (!el?.textContent) {
+    console.warn("all-jobs-props element not found");
+    return;
+  }
+
+  try {
+    const props = JSON.parse(el.textContent) as { jobs?: unknown[] };
+    jobs.value = ((props.jobs as unknown[]) || [])
+      .map((j) => normalizeAllJobsRow(j))
+      .filter((j): j is AllJobsRow => j !== null);
+  } catch (e) {
+    console.error("Failed to parse all-jobs-props:", e);
+  }
+});
 
 function progressText(job: AllJobsRow): string {
   const done = (job.completed || 0) + (job.failed || 0);
