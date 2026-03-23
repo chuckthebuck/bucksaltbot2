@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { fetchAllJobs, type AllJobsRow as ApiAllJobsRow } from "./api";
+import { fetchJobDetails } from "./api";
 
 interface AllJobsRow {
   id: number;
@@ -47,6 +48,8 @@ function normalizeAllJobsRow(row: unknown): AllJobsRow | null {
 const jobs = ref<AllJobsRow[]>([]);
 const loading = ref(true);
 const error = ref("");
+const details = ref<Record<number, string>>({});
+const openRows = ref<Record<number, boolean>>({});
 
 onMounted(async () => {
   try {
@@ -76,6 +79,34 @@ function modeLabel(job: AllJobsRow): string {
   return job.dryRun ? "Dry run" : "Live";
 }
 
+function esc(s: unknown): string {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+async function toggle(id: number) {
+  if (openRows.value[id]) {
+    openRows.value[id] = false;
+    return;
+  }
+
+  const d = await fetchJobDetails(id);
+  const isDryRun = !!((d as { dry_run?: boolean; dryRun?: boolean }).dry_run ??
+    (d as { dry_run?: boolean; dryRun?: boolean }).dryRun);
+
+  details.value[id] = `
+    <b>Status:</b> ${esc(d.status)}<br>
+    <b>Mode:</b> ${isDryRun ? "Dry run" : "Live"}<br>
+    <b>Total:</b> ${d.total}<br>
+    <b>Completed:</b> ${d.completed}<br>
+    <b>Failed:</b> ${d.failed}<br>
+    <pre>${esc(JSON.stringify(d.items, null, 2))}</pre>
+  `;
+  openRows.value[id] = true;
+}
+
 const orderedJobs = computed(() => jobs.value);
 </script>
 
@@ -96,49 +127,56 @@ const orderedJobs = computed(() => jobs.value);
         </tr>
       </thead>
       <tbody>
-        <tr v-for="job in orderedJobs" :key="job.id">
-          <td class="all-jobs-table__id">{{ job.id }}</td>
-          <td>{{ job.requestedBy }}</td>
-          <td>
-            <span
-              class="cdx-tag"
-              :class="{
-                'cdx-tag--status-success': job.status === 'completed',
-                'cdx-tag--status-error': job.status === 'failed',
-                'cdx-tag--status-warning': job.status === 'queued' || job.status === 'running',
-                'cdx-tag--status-muted': job.status === 'canceled'
-              }"
-            >
-              {{ job.status }}
-            </span>
-          </td>
-          <td>
-            <span
-              class="cdx-tag"
-              :class="{
-                'cdx-tag--mode-dry-run': job.dryRun,
-                'cdx-tag--mode-live': !job.dryRun
-              }"
-            >
-              {{ modeLabel(job) }}
-            </span>
-          </td>
-          <td>
-            <div class="job-progress-track" :aria-label="`Job ${job.id} progress`">
-              <div class="job-progress-fill" :style="{ width: `${progressPct(job)}%` }"></div>
-            </div>
-            <div class="job-progress-text">
-              <span>{{ progressText(job) }}</span>
-              <span>{{ progressPct(job) }}%</span>
-            </div>
-          </td>
-          <td class="all-jobs-table__created">{{ job.created }}</td>
-          <td class="all-jobs-table__links">
-            <a :href="`/api/v1/rollback/jobs/${job.id}`" target="_blank" rel="noopener noreferrer">JSON</a>
-            <span aria-hidden="true"> | </span>
-            <a :href="`/api/v1/rollback/jobs/${job.id}?format=log`" target="_blank" rel="noopener noreferrer">Log</a>
-          </td>
-        </tr>
+        <template v-for="job in orderedJobs" :key="job.id">
+          <tr>
+            <td class="all-jobs-table__id"><a href="#" @click.prevent="toggle(job.id)">{{ job.id }}</a></td>
+            <td>{{ job.requestedBy }}</td>
+            <td>
+              <span
+                class="cdx-tag"
+                :class="{
+                  'cdx-tag--status-success': job.status === 'completed',
+                  'cdx-tag--status-error': job.status === 'failed',
+                  'cdx-tag--status-warning': job.status === 'queued' || job.status === 'running',
+                  'cdx-tag--status-muted': job.status === 'canceled'
+                }"
+              >
+                {{ job.status }}
+              </span>
+            </td>
+            <td>
+              <span
+                class="cdx-tag"
+                :class="{
+                  'cdx-tag--mode-dry-run': job.dryRun,
+                  'cdx-tag--mode-live': !job.dryRun
+                }"
+              >
+                {{ modeLabel(job) }}
+              </span>
+            </td>
+            <td>
+              <div class="job-progress-track" :aria-label="`Job ${job.id} progress`">
+                <div class="job-progress-fill" :style="{ width: `${progressPct(job)}%` }"></div>
+              </div>
+              <div class="job-progress-text">
+                <span>{{ progressText(job) }}</span>
+                <span>{{ progressPct(job) }}%</span>
+              </div>
+            </td>
+            <td class="all-jobs-table__created">{{ job.created }}</td>
+            <td class="all-jobs-table__links">
+              <a :href="`/api/v1/rollback/jobs/${job.id}`" target="_blank" rel="noopener noreferrer">JSON</a>
+              <span aria-hidden="true"> | </span>
+              <a :href="`/api/v1/rollback/jobs/${job.id}?format=log`" target="_blank" rel="noopener noreferrer">Log</a>
+            </td>
+          </tr>
+          <tr v-if="openRows[job.id]">
+            <td colspan="7">
+              <div class="job-details" style="display:block" v-html="details[job.id]"></div>
+            </td>
+          </tr>
+        </template>
         <tr v-if="!orderedJobs.length">
           <td colspan="7" class="all-jobs-table__empty">No jobs found.</td>
         </tr>
