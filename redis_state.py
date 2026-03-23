@@ -3,8 +3,7 @@ import json
 import redis
 
 REDIS_URL = os.environ.get(
-    "TOOL_REDIS_URI",
-    "redis://redis.svc.tools.eqiad1.wikimedia.cloud:6379"
+    "TOOL_REDIS_URI", "redis://redis.svc.tools.eqiad1.wikimedia.cloud:6379"
 )
 
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True)

@@ -1,4 +1,5 @@
 """Tests for utils.py – file I/O, hashing, and compression utilities."""
+
 import bz2
 import gzip
 import hashlib
@@ -10,6 +11,7 @@ import utils
 
 
 # ── read_file / write_file ────────────────────────────────────────────────────
+
 
 def test_read_file_returns_file_contents(tmp_path):
     f = tmp_path / "sample.txt"
@@ -29,6 +31,7 @@ def test_write_file_is_python2_legacy_and_raises_in_python3(tmp_path):
 
 # ── sha1 ──────────────────────────────────────────────────────────────────────
 
+
 def test_sha1_returns_correct_hex_digest(tmp_path):
     f = tmp_path / "data.bin"
     data = b"test data"
@@ -47,6 +50,7 @@ def test_sha1_returns_40_char_hex_string(tmp_path):
 
 # ── write_sha1 ────────────────────────────────────────────────────────────────
 
+
 def test_write_sha1_persists_hash_to_file(tmp_path):
     f = tmp_path / "hash.sha1"
     utils.write_sha1("abc123", str(f))
@@ -54,6 +58,7 @@ def test_write_sha1_persists_hash_to_file(tmp_path):
 
 
 # ── compress_file_data ────────────────────────────────────────────────────────
+
 
 def test_compress_file_data_bzip2(tmp_path):
     out = str(tmp_path / "data")
@@ -76,6 +81,7 @@ def test_compress_file_data_raises_for_unknown_scheme(tmp_path):
 
 
 # ── uncompress_file ───────────────────────────────────────────────────────────
+
 
 def test_uncompress_file_bzip2_round_trip(tmp_path):
     base = str(tmp_path / "data")
@@ -119,10 +125,11 @@ def test_uncompress_file_list_tries_all_schemes(tmp_path):
 
 # ── readline_backward ─────────────────────────────────────────────────────────
 
+
 def test_readline_backward_yields_lines_in_reverse(tmp_path):
     f = tmp_path / "lines.txt"
     f.write_text("line1\nline2\nline3\n", encoding="utf-8")
     lines = list(utils.readline_backward(str(f)))
     # Reverse order; trailing empty lines may vary
-    non_empty = [l for l in lines if l]
+    non_empty = [line for line in lines if line]
     assert non_empty == ["line3", "line2", "line1"]

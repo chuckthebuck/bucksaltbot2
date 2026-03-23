@@ -29,7 +29,10 @@ def get_toolhub_maintainers():
     global _toolhub_maintainers_cache, _toolhub_cache_expiry
 
     with _toolhub_cache_lock:
-        if _toolhub_maintainers_cache is not None and time.time() < _toolhub_cache_expiry:
+        if (
+            _toolhub_maintainers_cache is not None
+            and time.time() < _toolhub_cache_expiry
+        ):
             return _toolhub_maintainers_cache
 
         try:
@@ -37,10 +40,7 @@ def get_toolhub_maintainers():
             r.raise_for_status()
             data = r.json()
 
-            result = {
-                m["username"].lower()
-                for m in data.get("maintainers", [])
-            }
+            result = {m["username"].lower() for m in data.get("maintainers", [])}
 
             _toolhub_maintainers_cache = result
             _toolhub_cache_expiry = time.time() + _TOOLHUB_CACHE_TTL
@@ -75,27 +75,18 @@ flask_app = Flask(__name__)
 flask_app.register_blueprint(assets_blueprint)
 
 
-flask_app.config["SECRET_KEY"] = os.getenv(
-    "SECRET_KEY",
-    "dev-insecure-secret"
-)
+flask_app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-insecure-secret")
 
 
 CELERY_BROKER_URL = os.getenv(
-    "CELERY_BROKER_URL",
-    "redis://redis.svc.tools.eqiad1.wikimedia.cloud:6379/9"
+    "CELERY_BROKER_URL", "redis://redis.svc.tools.eqiad1.wikimedia.cloud:6379/9"
 )
 
-CELERY_RESULT_BACKEND = os.getenv(
-    "CELERY_RESULT_BACKEND",
-    CELERY_BROKER_URL
-)
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 
 
 celery = Celery(
-    flask_app.import_name,
-    broker=CELERY_BROKER_URL,
-    backend=CELERY_RESULT_BACKEND
+    flask_app.import_name, broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND
 )
 
 celery.conf.update(
@@ -122,10 +113,7 @@ def inject_user_permissions():
 
     username = session.get("username")
 
-    return {
-        "username": username,
-        "is_maintainer": is_maintainer(username)
-    }
+    return {"username": username, "is_maintainer": is_maintainer(username)}
 
 
-import router
+import router  # noqa: E402,F401

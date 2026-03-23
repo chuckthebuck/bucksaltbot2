@@ -1,10 +1,13 @@
 """Tests for blueprint.py – Vite manifest loading and asset URL resolution."""
+
 import blueprint as bp
 
 
 def test_prod_asset_resolves_from_manifest(monkeypatch):
     """prod_asset returns the hashed path when the manifest has an entry."""
-    monkeypatch.setattr(bp, "manifest", {"src/main.js": {"file": "assets/main.abc123.js"}})
+    monkeypatch.setattr(
+        bp, "manifest", {"src/main.js": {"file": "assets/main.abc123.js"}}
+    )
     monkeypatch.setattr(bp, "is_production", True)
     ctx = bp.add_context()
     assert ctx["asset"]("src/main.js") == "/assets/assets/main.abc123.js"

@@ -152,7 +152,11 @@ def _rollback_api_actor():
     status_token = request.headers.get("X-Status-Token")
     expected_token = os.environ.get("STATUS_API_TOKEN")
 
-    if status_token and expected_token and secrets.compare_digest(status_token, expected_token):
+    if (
+        status_token
+        and expected_token
+        and secrets.compare_digest(status_token, expected_token)
+    ):
         return os.environ.get("STATUS_API_USER", "status-site")
 
     return None
@@ -202,7 +206,9 @@ def goto():
         return redirect("/rollback-queue/all-jobs")
 
     if tab == "documentation":
-        return redirect("https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot")
+        return redirect(
+            "https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot"
+        )
 
     return redirect("/rollback-queue")
 
@@ -216,10 +222,12 @@ def worker_status():
 
     age = time.time() - float(hb)
 
-    return jsonify({
-        "status": "online",
-        "last_seen": age,
-    })
+    return jsonify(
+        {
+            "status": "online",
+            "last_seen": age,
+        }
+    )
 
 
 @app.route("/api/v1/rollback/jobs/progress")
@@ -240,10 +248,12 @@ def batch_job_progress():
         p = get_progress(jid)
 
         if p:
-            jobs.append({
-                "id": jid,
-                **p,
-            })
+            jobs.append(
+                {
+                    "id": jid,
+                    **p,
+                }
+            )
 
     return jsonify({"jobs": jobs})
 
@@ -360,18 +370,20 @@ def list_rollback_jobs():
 
             jobs = cursor.fetchall()
 
-    return jsonify({
-        "jobs": [
-            {
-                "id": row[0],
-                "requested_by": row[1],
-                "status": row[2],
-                "dry_run": bool(row[3]),
-                "created_at": str(row[4]),
-            }
-            for row in jobs
-        ]
-    })
+    return jsonify(
+        {
+            "jobs": [
+                {
+                    "id": row[0],
+                    "requested_by": row[1],
+                    "status": row[2],
+                    "dry_run": bool(row[3]),
+                    "created_at": str(row[4]),
+                }
+                for row in jobs
+            ]
+        }
+    )
 
 
 @app.route("/api/v1/rollback/jobs", methods=["POST"])
@@ -453,13 +465,15 @@ def create_rollback_job():
     for jid in job_ids:
         process_rollback_job.delay(jid)
 
-    return jsonify({
-        "job_id": job_ids[0],
-        "status": "queued",
-        "batch_id": batch_id,
-        "job_ids": job_ids,
-        "chunks": len(job_ids),
-    })
+    return jsonify(
+        {
+            "job_id": job_ids[0],
+            "status": "queued",
+            "batch_id": batch_id,
+            "job_ids": job_ids,
+            "chunks": len(job_ids),
+        }
+    )
 
 
 @app.route("/api/v1/rollback/jobs/<int:job_id>/retry", methods=["POST"])
@@ -589,27 +603,29 @@ def get_rollback_job(job_id):
 
             items = cursor.fetchall()
 
-    return jsonify({
-        "id": job[0],
-        "requested_by": job[1],
-        "status": job[2],
-        "dry_run": bool(job[3]),
-        "created_at": str(job[4]),
-        "total": len(items),
-        "completed": len([x for x in items if x[4] == "completed"]),
-        "failed": len([x for x in items if x[4] == "failed"]),
-        "items": [
-            {
-                "id": x[0],
-                "title": x[1],
-                "user": x[2],
-                "summary": x[3],
-                "status": x[4],
-                "error": x[5],
-            }
-            for x in items
-        ],
-    })
+    return jsonify(
+        {
+            "id": job[0],
+            "requested_by": job[1],
+            "status": job[2],
+            "dry_run": bool(job[3]),
+            "created_at": str(job[4]),
+            "total": len(items),
+            "completed": len([x for x in items if x[4] == "completed"]),
+            "failed": len([x for x in items if x[4] == "failed"]),
+            "items": [
+                {
+                    "id": x[0],
+                    "title": x[1],
+                    "user": x[2],
+                    "summary": x[3],
+                    "status": x[4],
+                    "error": x[5],
+                }
+                for x in items
+            ],
+        }
+    )
 
 
 @app.route("/")

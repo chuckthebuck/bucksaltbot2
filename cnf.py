@@ -3,11 +3,13 @@ import os
 
 CNF_PATH = os.path.expanduser("~/replica.my.cnf")
 
+
 def load_cnf():
     cnf = cfp.ConfigParser()
     if os.path.exists(CNF_PATH):
         cnf.read(CNF_PATH)
     return cnf
+
 
 cnf = load_cnf()
 

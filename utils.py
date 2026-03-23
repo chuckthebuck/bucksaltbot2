@@ -13,22 +13,25 @@ import sys
 import time
 import io
 
+
 def read_file(filename):
     fd = open(filename)
     if sys.version_info >= (3, 0):
         text = fd.read()
     else:
-        text = fd.read().decode('utf-8')
+        text = fd.read().decode("utf-8")
     fd.close()
     return text
 
+
 def write_file(filename, text):
-    fd = open(filename, 'w')
-    fd.write(text.encode('utf-8'))
+    fd = open(filename, "w")
+    fd.write(text.encode("utf-8"))
     fd.close()
 
+
 def sha1(filename):
-    fd = io.open(filename, 'rb')
+    fd = io.open(filename, "rb")
     h = hashlib.sha1()
     data = True
     while data:
@@ -39,21 +42,24 @@ def sha1(filename):
 
     return h.hexdigest()
 
+
 def write_sha1(sha1, filename):
-    fd = open(filename, 'w')
+    fd = open(filename, "w")
     fd.write(sha1)
     fd.close()
 
+
 def url_opener():
     opener = urllib_URLopener()
-    opener.addheaders = [('User-agent', 'MW_phetools')]
+    opener.addheaders = [("User-agent", "MW_phetools")]
     return opener
 
-def copy_file_from_url(url, out_file, expect_sha1 = None, max_retry = 4):
+
+def copy_file_from_url(url, out_file, expect_sha1=None, max_retry=4):
     retry = 0
     max_retry = min(max(1, max_retry), 5)
     ok = False
-    url = urllib_quote(url, safe=':/%')
+    url = urllib_quote(url, safe=":/%")
     while not ok and retry < max_retry:
         try:
             opener = url_opener()
@@ -70,16 +76,15 @@ def copy_file_from_url(url, out_file, expect_sha1 = None, max_retry = 4):
                 if sha1(out_file) != expect_sha1:
                     retry += 1
                     if retry < max_retry:
-                        time.sleep(60*(retry << 1))
+                        time.sleep(60 * (retry << 1))
                 else:
                     ok = True
             else:
                 ok = True
         except IOError as e:
-            if e.args[0] == 'http error' and e.args[1] == 302:
-                new_url = e.args[3]['Location']
-                return copy_file_from_url(new_url, out_file, expect_sha1,
-                                          max_retry - 1)
+            if e.args[0] == "http error" and e.args[1] == 302:
+                new_url = e.args[3]["Location"]
+                return copy_file_from_url(new_url, out_file, expect_sha1, max_retry - 1)
             raise
         except Exception:
             print_traceback("upload error:", url, out_file)
@@ -87,64 +92,72 @@ def copy_file_from_url(url, out_file, expect_sha1 = None, max_retry = 4):
                 os.remove(out_file)
             retry += 1
             if retry < max_retry:
-                time.sleep(60*(retry << 1))
+                time.sleep(60 * (retry << 1))
 
     if retry:
         if ok:
-            print("upload success after %d retry" % retry, url, out_file, file=sys.stderr)
+            print(
+                "upload success after %d retry" % retry, url, out_file, file=sys.stderr
+            )
         else:
-            print("upload failure after %d retry" % retry, url, out_file, file=sys.stderr)
+            print(
+                "upload failure after %d retry" % retry, url, out_file, file=sys.stderr
+            )
 
     return ok
 
+
 def compress_file_data(out_filename, data, compress_type):
-    if compress_type in ['bzip2', 'gzip']:
-        if compress_type == 'bzip2':
-            f_out = bz2.BZ2File(out_filename + '.bz2', 'wb')
-        elif compress_type == 'gzip':
-            f_out = gzip.open(out_filename + '.gz', 'wb')
+    if compress_type in ["bzip2", "gzip"]:
+        if compress_type == "bzip2":
+            f_out = bz2.BZ2File(out_filename + ".bz2", "wb")
+        elif compress_type == "gzip":
+            f_out = gzip.open(out_filename + ".gz", "wb")
         f_out.write(data)
         f_out.close()
     else:
-        raise ValueError('Unhandled compression scheme: ' + str(compress_type))
+        raise ValueError("Unhandled compression scheme: " + str(compress_type))
+
 
 def compress_file(out_filename, in_filename, compress_type):
     f_in = open(in_filename)
     compress_file_data(out_filename, f_in.read(), compress_type)
     f_in.close()
 
+
 # return None if the file doesn't exist, raise a ValueError if compress_type
 # is not supported or compress_type == []. Note than returning '' and None
 # are different, '' means the file exists and is empty, None means the file
 # doesn't exists.
 def uncompress_file(filename, compress_type):
-    if type(compress_type) == type([]):
+    if isinstance(compress_type, list):
         for compress in compress_type:
             data = uncompress_file(filename, compress)
-            if data != None:
+            if data is not None:
                 return data
         return None
     else:
         fd_in = None
-        if compress_type == 'bzip2':
-            if os.path.exists(filename + '.bz2'):
-                fd_in = bz2.BZ2File(filename + '.bz2')
-        elif compress_type == 'gzip':
-            if os.path.exists(filename + '.gz'):
-                fd_in = gzip.open(filename + '.gz')
-        elif compress_type == '':
+        if compress_type == "bzip2":
+            if os.path.exists(filename + ".bz2"):
+                fd_in = bz2.BZ2File(filename + ".bz2")
+        elif compress_type == "gzip":
+            if os.path.exists(filename + ".gz"):
+                fd_in = gzip.open(filename + ".gz")
+        elif compress_type == "":
             if os.path.exists(filename):
                 fd_in = open(filename)
         else:
-            raise ValueError('Unhandled compression scheme: ' + str(compress_type))
+            raise ValueError("Unhandled compression scheme: " + str(compress_type))
 
-        if fd_in == None:
+        if fd_in is None:
             return None
         data = fd_in.read()
         fd_in.close()
         return data
 
-    raise ValueError('Empty compression scheme: ' + str(compress_type))
+    raise ValueError("Empty compression scheme: " + str(compress_type))
+
 
 # Protect a call against EINTR.
 def _retry_on_eintr(func, *args):
@@ -152,21 +165,25 @@ def _retry_on_eintr(func, *args):
         try:
             return func(*args)
         except (IOError, OSError) as e:
-            #print "EINTR, retrying"
+            # print "EINTR, retrying"
             if e.errno != errno.EINTR:
                 raise
             continue
 
+
 def safe_read(fd):
     return _retry_on_eintr(fd.read)
 
+
 def safe_write(fd, text):
     return _retry_on_eintr(fd.write, text)
+
 
 def print_traceback(*kwargs):
     logger = kwargs[-1]
     kwargs = kwargs[:-1]
     import traceback
+
     try:
         traceback.print_exc(file=logger.get_file_handler())
         traceback.print_exc(file=sys.stderr)
@@ -174,13 +191,14 @@ def print_traceback(*kwargs):
             print("arguments:", file=logger.get_file_handler())
             print("arguments:", file=sys.stderr)
             for f in kwargs:
-                if type(f) == type(u''):
-                    f = f.encode('utf-8')
+                if isinstance(f, str):
+                    f = f.encode("utf-8")
                 print(f, file=logger.get_file_handler())
                 print(str(f), file=sys.stderr)
     except:
         print("ERROR: An exception occured during traceback", file=sys.stderr)
         raise
+
 
 # File can be written during reading but it's assumed write are line buffered
 # or caller must ignore the first line because it can be a partial line.
@@ -198,7 +216,7 @@ def readline_backward(filename, buf_size=8192):
             fh.seek(total_size - offset, os.SEEK_SET)
             buf = fh.read(min(left_size, block_size))
             left_size = max(0, left_size - block_size)
-            lines = buf.split('\n')
+            lines = buf.split("\n")
             if first:
                 # The first block can end with a \n, remove it else
                 # we will get an empty line at start of output.

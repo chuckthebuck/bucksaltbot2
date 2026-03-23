@@ -1,10 +1,12 @@
 """Tests for router.py – rollback API and UI routes."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
 
 def _make_mock_conn(cursor=None):
     """Return a (mock_conn, mock_cursor) suitable for patching get_conn()."""
@@ -24,9 +26,11 @@ def _set_session(client, username):
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture()
 def flask_app():
     import router
+
     router.app.config["TESTING"] = True
     router.app.config["SECRET_KEY"] = "test-secret"
     return router.app
@@ -39,20 +43,28 @@ def client(flask_app):
 
 # ── POST /api/v1/rollback/jobs ────────────────────────────────────────────────
 
+
 def test_create_job_returns_401_when_not_authenticated(client):
-    resp = client.post("/api/v1/rollback/jobs", json={"requested_by": "user", "items": []})
+    resp = client.post(
+        "/api/v1/rollback/jobs", json={"requested_by": "user", "items": []}
+    )
     assert resp.status_code == 401
 
 
 def test_create_job_returns_403_when_requester_mismatches_session(client):
     _set_session(client, "alice")
     mock_conn, _ = _make_mock_conn()
-    with patch("router.get_conn", return_value=mock_conn), \
-         patch("router.process_rollback_job") as mock_task:
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
+    ):
         mock_task.delay = MagicMock()
         resp = client.post(
             "/api/v1/rollback/jobs",
-            json={"requested_by": "bob", "items": [{"title": "File:T.jpg", "user": "V"}]},
+            json={
+                "requested_by": "bob",
+                "items": [{"title": "File:T.jpg", "user": "V"}],
+            },
         )
     assert resp.status_code == 403
 
@@ -72,8 +84,10 @@ def test_create_job_success_returns_job_id_and_queued_status(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 99
-    with patch("router.get_conn", return_value=mock_conn), \
-         patch("router.process_rollback_job") as mock_task:
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
+    ):
         mock_task.delay = MagicMock()
         resp = client.post(
             "/api/v1/rollback/jobs",
@@ -93,8 +107,10 @@ def test_create_job_enqueues_celery_task_with_job_id(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 7
-    with patch("router.get_conn", return_value=mock_conn), \
-         patch("router.process_rollback_job") as mock_task:
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
+    ):
         mock_task.delay = MagicMock()
         client.post(
             "/api/v1/rollback/jobs",
@@ -111,8 +127,10 @@ def test_create_job_dry_run_flag_persisted(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 5
-    with patch("router.get_conn", return_value=mock_conn), \
-         patch("router.process_rollback_job") as mock_task:
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
+    ):
         mock_task.delay = MagicMock()
         resp = client.post(
             "/api/v1/rollback/jobs",
@@ -133,8 +151,10 @@ def test_create_job_dry_run_string_false_persisted_as_zero(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 6
-    with patch("router.get_conn", return_value=mock_conn), \
-         patch("router.process_rollback_job") as mock_task:
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
+    ):
         mock_task.delay = MagicMock()
         resp = client.post(
             "/api/v1/rollback/jobs",
@@ -154,8 +174,10 @@ def test_create_job_dry_run_string_true_persisted_as_one(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 6
-    with patch("router.get_conn", return_value=mock_conn), \
-         patch("router.process_rollback_job") as mock_task:
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
+    ):
         mock_task.delay = MagicMock()
         resp = client.post(
             "/api/v1/rollback/jobs",
@@ -175,8 +197,10 @@ def test_create_job_uses_client_batch_id_when_provided(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 6
-    with patch("router.get_conn", return_value=mock_conn), \
-         patch("router.process_rollback_job") as mock_task:
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
+    ):
         mock_task.delay = MagicMock()
         resp = client.post(
             "/api/v1/rollback/jobs",
@@ -211,9 +235,15 @@ def test_create_job_rejects_invalid_batch_id(client):
 def test_create_job_allows_status_token_auth(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 13
-    with patch("router.get_conn", return_value=mock_conn), \
-         patch("router.process_rollback_job") as mock_task, \
-         patch.dict("router.os.environ", {"STATUS_API_TOKEN": "token123", "STATUS_API_USER": "statusbot"}, clear=False):
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
+        patch.dict(
+            "router.os.environ",
+            {"STATUS_API_TOKEN": "token123", "STATUS_API_USER": "statusbot"},
+            clear=False,
+        ),
+    ):
         mock_task.delay = MagicMock()
         resp = client.post(
             "/api/v1/rollback/jobs",
@@ -261,13 +291,22 @@ def test_cancel_job_marks_job_and_items_canceled(client):
 def test_cancel_job_allows_status_token_auth(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "statusbot", "queued")
-    with patch("router.get_conn", return_value=mock_conn), \
-         patch.dict("router.os.environ", {"STATUS_API_TOKEN": "token123", "STATUS_API_USER": "statusbot"}, clear=False):
-        resp = client.delete("/api/v1/rollback/jobs/1", headers={"X-Status-Token": "token123"})
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch.dict(
+            "router.os.environ",
+            {"STATUS_API_TOKEN": "token123", "STATUS_API_USER": "statusbot"},
+            clear=False,
+        ),
+    ):
+        resp = client.delete(
+            "/api/v1/rollback/jobs/1", headers={"X-Status-Token": "token123"}
+        )
     assert resp.status_code == 200
 
 
 # ── GET /api/v1/rollback/jobs/<id> ────────────────────────────────────────────
+
 
 def test_get_job_returns_401_when_not_authenticated(client):
     resp = client.get("/api/v1/rollback/jobs/1")
@@ -325,6 +364,7 @@ def test_get_job_exposes_dry_run_flag(client):
 
 # ── GET /api/v1/rollback/jobs ─────────────────────────────────────────────────
 
+
 def test_list_jobs_returns_401_when_not_authenticated(client):
     resp = client.get("/api/v1/rollback/jobs")
     assert resp.status_code == 401
@@ -357,6 +397,7 @@ def test_list_jobs_response_shape(client):
 
 
 # ── GET /rollback-queue (UI) ──────────────────────────────────────────────────
+
 
 def test_rollback_queue_ui_returns_200_for_unauthenticated_user(client):
     resp = client.get("/rollback-queue")
@@ -395,14 +436,17 @@ def test_all_jobs_ui_returns_200_for_maintainer(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchall.return_value = []
-    with patch("router.is_maintainer", return_value=True), \
-         patch("router.get_conn", return_value=mock_conn):
+    with (
+        patch("router.is_maintainer", return_value=True),
+        patch("router.get_conn", return_value=mock_conn),
+    ):
         resp = client.get("/rollback-queue/all-jobs")
     assert resp.status_code == 200
     assert "All rollback jobs" in resp.get_data(as_text=True)
 
 
 # ── GET / ─────────────────────────────────────────────────────────────────────
+
 
 def test_index_returns_200(client):
     resp = client.get("/")
@@ -411,30 +455,62 @@ def test_index_returns_200(client):
 
 def test_login_does_not_500_when_secret_key_missing(client):
     import router
+
     original = router.app.config.get("SECRET_KEY")
     router.app.config["SECRET_KEY"] = None
-    with patch.dict("router.os.environ", {"SECRET_KEY": "", "FALLBACK_SECRET_KEY": "fallback-secret", "USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False), \
-         patch("router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))):
+    with (
+        patch.dict(
+            "router.os.environ",
+            {
+                "SECRET_KEY": "",
+                "FALLBACK_SECRET_KEY": "fallback-secret",
+                "USER_OAUTH_CONSUMER_KEY": "k",
+                "USER_OAUTH_CONSUMER_SECRET": "s",
+            },
+            clear=False,
+        ),
+        patch(
+            "router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))
+        ),
+    ):
         resp = client.get("/login")
     router.app.config["SECRET_KEY"] = original
     assert resp.status_code == 302
 
 
-
 def test_login_redirects_to_index_when_consumer_creds_missing(client):
-    with patch.dict("router.os.environ", {"USER_OAUTH_CONSUMER_KEY": "", "USER_OAUTH_CONSUMER_SECRET": ""}, clear=False):
+    with patch.dict(
+        "router.os.environ",
+        {"USER_OAUTH_CONSUMER_KEY": "", "USER_OAUTH_CONSUMER_SECRET": ""},
+        clear=False,
+    ):
         resp = client.get("/login")
     assert resp.status_code == 302
     assert resp.headers["Location"].endswith("/")
 
 
 def test_login_uses_current_site_callback_url_by_default(client):
-    with patch.dict("router.os.environ", {"USER_OAUTH_CALLBACK_URL": "", "USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False), \
-         patch("router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))) as mock_initiate:
+    with (
+        patch.dict(
+            "router.os.environ",
+            {
+                "USER_OAUTH_CALLBACK_URL": "",
+                "USER_OAUTH_CONSUMER_KEY": "k",
+                "USER_OAUTH_CONSUMER_SECRET": "s",
+            },
+            clear=False,
+        ),
+        patch(
+            "router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))
+        ) as mock_initiate,
+    ):
         resp = client.get("/login")
 
     assert resp.status_code == 302
-    assert mock_initiate.call_args.kwargs["callback"] == "https://buckbot.toolforge.org/oauth-callback"
+    assert (
+        mock_initiate.call_args.kwargs["callback"]
+        == "https://buckbot.toolforge.org/oauth-callback"
+    )
 
 
 def test_oauth_callback_failure_redirects_index_not_referrer(client):
@@ -442,13 +518,18 @@ def test_oauth_callback_failure_redirects_index_not_referrer(client):
         sess["request_token"] = {"key": "rk", "secret": "rs"}
         sess["referrer"] = "/rollback-queue"
 
-    with patch.dict("router.os.environ", {"USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"}, clear=False), \
-         patch("router.mwoauth.complete", side_effect=RuntimeError("bad oauth")):
+    with (
+        patch.dict(
+            "router.os.environ",
+            {"USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"},
+            clear=False,
+        ),
+        patch("router.mwoauth.complete", side_effect=RuntimeError("bad oauth")),
+    ):
         resp = client.get("/oauth-callback")
 
     assert resp.status_code == 302
     assert resp.headers["Location"].endswith("/")
-
 
 
 def test_oauth_callback_alias_routes_exist(client):
@@ -462,6 +543,7 @@ def test_oauth_callback_alias_routes_exist(client):
 
 # ── GET /logout ────────────────────────────────────────────────────────────────
 
+
 def test_logout_clears_session_and_redirects(client):
     _set_session(client, "alice")
     resp = client.get("/logout")
@@ -471,6 +553,7 @@ def test_logout_clears_session_and_redirects(client):
 
 
 # ── GET /goto ────────────────────────────────────────────���────────────────────
+
 
 def test_goto_redirects_unauthenticated_user_to_login(client):
     resp = client.get("/goto?tab=rollback-queue")

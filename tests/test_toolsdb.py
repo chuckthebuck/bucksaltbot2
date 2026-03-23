@@ -1,7 +1,6 @@
 """Tests for toolsdb.py – database initialisation and connection helper."""
-from unittest.mock import MagicMock, patch
 
-import pytest
+from unittest.mock import MagicMock, patch
 
 
 def _make_mock_conn():
@@ -18,6 +17,7 @@ def test_init_db_creates_rollback_jobs_table():
     mock_conn, mock_cursor = _make_mock_conn()
     with patch("pymysql.connections.Connection", return_value=mock_conn):
         import toolsdb
+
         toolsdb.init_db()
     executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
     assert "rollback_jobs" in executed
@@ -28,6 +28,7 @@ def test_init_db_creates_rollback_job_items_table():
     mock_conn, mock_cursor = _make_mock_conn()
     with patch("pymysql.connections.Connection", return_value=mock_conn):
         import toolsdb
+
         toolsdb.init_db()
     executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
     assert "rollback_job_items" in executed
@@ -38,6 +39,7 @@ def test_init_db_selects_correct_database():
     mock_conn, mock_cursor = _make_mock_conn()
     with patch("pymysql.connections.Connection", return_value=mock_conn):
         import toolsdb
+
         toolsdb.init_db()
     executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
     assert "testuser__match_and_split" in executed
@@ -48,6 +50,7 @@ def test_get_conn_returns_a_connection():
     mock_conn, mock_cursor = _make_mock_conn()
     with patch("pymysql.connections.Connection", return_value=mock_conn):
         import toolsdb
+
         conn = toolsdb.get_conn()
     assert conn is mock_conn
 
@@ -57,6 +60,7 @@ def test_get_conn_passes_database_name():
     mock_conn, mock_cursor = _make_mock_conn()
     with patch("pymysql.connections.Connection", return_value=mock_conn) as MockConn:
         import toolsdb
+
         toolsdb.get_conn()
     # The last Connection() call (from get_conn itself) must carry 'database'.
     last_call_kwargs = MockConn.call_args_list[-1].kwargs

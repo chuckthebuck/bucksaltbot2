@@ -16,6 +16,7 @@ assets_blueprint = Blueprint(
     __name__,
 )
 
+
 # ✅ FIXED manifest path
 @lru_cache()
 def load_manifest():
@@ -25,6 +26,7 @@ def load_manifest():
             return json.load(f)
     except OSError:
         return {}
+
 
 # ✅ Context helpers
 @assets_blueprint.app_context_processor
@@ -47,10 +49,7 @@ def add_context():
         entry = manifest.get(file_path)
 
         if entry and entry.get("css"):
-            return [
-                url_for("static", filename=f"dist/{css}")
-                for css in entry["css"]
-            ]
+            return [url_for("static", filename=f"dist/{css}") for css in entry["css"]]
 
         return []
 

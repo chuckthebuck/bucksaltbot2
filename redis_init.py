@@ -6,10 +6,6 @@ REDIS_DB = 9
 
 redis_url = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
 
-rediscl = redis.Redis(
-    host=REDIS_HOST,
-    port=REDIS_PORT,
-    db=REDIS_DB
-)
+rediscl = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
 
 REDIS_KEY_PREFIX = "mw-toolforge-buckbot"

@@ -4,6 +4,7 @@ Heavy / unavailable dependencies (cnf, pywikibot, redis, mwoauth) are mocked
 at the ``sys.modules`` level so that test modules can import the production
 code without needing live services or configuration files.
 """
+
 import os
 import pathlib
 import sys
