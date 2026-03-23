@@ -370,7 +370,8 @@ def rollback_from_diff():
     try:
         items = fetch_contribs_after_diff(target_user, start_diff)
     except ValueError as e:
-        return jsonify({"detail": str(e)}), 400
+        app.logger.warning("Invalid request while fetching contributions: %s", e)
+        return jsonify({"detail": "Invalid request parameters"}), 400
     except Exception:
         app.logger.exception("Failed to fetch contributions")
         return jsonify({"detail": "Failed to fetch contributions"}), 500
