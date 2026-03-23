@@ -10,7 +10,7 @@ def test_prod_asset_resolves_from_manifest(monkeypatch):
     )
     monkeypatch.setattr(bp, "is_production", True)
     ctx = bp.add_context()
-    assert ctx["asset"]("src/main.js") == "/assets/assets/main.abc123.js"
+    assert ctx["asset"]("src/main.js") == "/static/dist/assets/main.abc123.js"
 
 
 def test_prod_asset_falls_back_when_entry_missing(monkeypatch):
@@ -18,7 +18,7 @@ def test_prod_asset_falls_back_when_entry_missing(monkeypatch):
     monkeypatch.setattr(bp, "manifest", {})
     monkeypatch.setattr(bp, "is_production", True)
     ctx = bp.add_context()
-    assert ctx["asset"]("src/unknown.js") == "/assets/src/unknown.js"
+    assert ctx["asset"]("src/unknown.js") == "/static/dist/src/unknown.js"
 
 
 def test_prod_asset_falls_back_when_manifest_entry_has_no_file_key(monkeypatch):
@@ -26,7 +26,7 @@ def test_prod_asset_falls_back_when_manifest_entry_has_no_file_key(monkeypatch):
     monkeypatch.setattr(bp, "manifest", {"src/main.js": {"name": "main"}})
     monkeypatch.setattr(bp, "is_production", True)
     ctx = bp.add_context()
-    assert ctx["asset"]("src/main.js") == "/assets/src/main.js"
+    assert ctx["asset"]("src/main.js") == "/static/dist/src/main.js"
 
 
 def test_dev_asset_returns_vite_origin_url(monkeypatch):
@@ -34,7 +34,7 @@ def test_dev_asset_returns_vite_origin_url(monkeypatch):
     monkeypatch.setattr(bp, "is_production", False)
     monkeypatch.setattr(bp, "VITE_ORIGIN", "http://localhost:5173")
     ctx = bp.add_context()
-    assert ctx["asset"]("src/main.js") == "http://localhost:5173/assets/src/main.js"
+    assert ctx["asset"]("src/main.js") == "http://localhost:5173/src/main.js"
 
 
 def test_is_production_exposed_in_context(monkeypatch):
@@ -51,4 +51,4 @@ def test_manifest_empty_when_file_missing(monkeypatch):
     assert callable(ctx["asset"])
     # Any unknown file should not raise and should return a valid path.
     result = ctx["asset"]("not_there.js")
-    assert result.startswith("/assets/")
+    assert result.startswith("/static/dist/")

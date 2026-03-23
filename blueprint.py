@@ -36,21 +36,21 @@ manifest = load_manifest()
 def add_context():
 
     def dev_asset(file_path):
-        return f"{VITE_ORIGIN}/assets/{file_path}"
+        return f"{VITE_ORIGIN}/{file_path}"
 
     def prod_asset(file_path):
         entry = manifest.get(file_path)
 
         if entry and entry.get("file"):
-            return f"/assets/{entry['file']}"
+            return f"/static/dist/{entry['file']}"
 
-        return f"/assets/{file_path}"
+        return f"/static/dist/{file_path}"
 
     def prod_css(file_path):
         entry = manifest.get(file_path)
 
         if entry and entry.get("css"):
-            return [f"/assets/{css}" for css in entry["css"]]
+            return [f"/static/dist/{css}" for css in entry["css"]]
 
         return []
 
