@@ -275,6 +275,7 @@ def rollback_queue_ui():
                       AND (
                         status NOT IN ('completed', 'failed', 'canceled')
                         OR (status='failed' AND created_at >= (NOW() - INTERVAL 24 HOUR))
+                                                OR (status='completed' AND created_at >= (NOW() - INTERVAL 2 HOUR))
                       )
                     ORDER BY id DESC
                     LIMIT 100
@@ -288,6 +289,7 @@ def rollback_queue_ui():
         "rollback_queue.html",
         jobs=jobs,
         username=username,
+        is_maintainer=bool(username and is_maintainer(username)),
         type="rollback-queue",
     )
 
@@ -362,6 +364,11 @@ def list_rollback_jobs():
                 SELECT id, requested_by, status, dry_run, created_at
                 FROM rollback_jobs
                 WHERE requested_by=%s
+                                    AND (
+                                        status NOT IN ('completed', 'failed', 'canceled')
+                                        OR (status='failed' AND created_at >= (NOW() - INTERVAL 24 HOUR))
+                                        OR (status='completed' AND created_at >= (NOW() - INTERVAL 2 HOUR))
+                                    )
                 ORDER BY id DESC
                 LIMIT 100
                 """,

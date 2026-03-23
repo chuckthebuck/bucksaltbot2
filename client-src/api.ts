@@ -175,6 +175,15 @@ export async function fetchJobDetails(id: number): Promise<JobRow> {
   return r.json();
 }
 
+export async function fetchUserJobs(): Promise<JobRow[]> {
+  const r = await fetch("/api/v1/rollback/jobs");
+
+  if (!r.ok) throw new Error(`Failed to fetch jobs: ${r.status}`);
+
+  const data = await r.json();
+  return Array.isArray(data?.jobs) ? data.jobs : [];
+}
+
 export async function fetchProgress(ids: number[]): Promise<Record<number, any>> {
   const r = await fetch(`/api/v1/rollback/jobs/progress?ids=${ids.join(",")}`);
 

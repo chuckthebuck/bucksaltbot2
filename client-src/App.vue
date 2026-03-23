@@ -3,7 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { CdxButton, CdxCheckbox, CdxMessage } from "@wikimedia/codex";
 import JobItemRow from "./components/JobItemRow.vue";
 import JobsTable, { type UiJob } from "./components/JobsTable.vue";
-import { createJob, fetchProgress, getInitialProps, loadNamespaces, type CreateJobItem } from "./api";
+import {
+  createJob,
+  fetchProgress,
+  fetchUserJobs,
+  getInitialProps,
+  loadNamespaces,
+  type CreateJobItem
+} from "./api";
 
 const props = getInitialProps();
 
@@ -82,30 +89,45 @@ const activeJobIds = computed(() =>
 );
 
 function createdTimeMs(created: string): number | null {
-  const parsed = Date.parse(created);
-  if (!Number.isNaN(parsed)) return parsed;
+  const trimmed = created.trim();
+  if (!trimmed) return null;
 
-  if (created.includes(" ") && !created.includes("T")) {
-    const sqlLike = Date.parse(created.replace(" ", "T"));
-    if (!Number.isNaN(sqlLike)) return sqlLike;
-  }
+  const withT = trimmed.includes(" ") && !trimmed.includes("T")
+    ? trimmed.replace(" ", "T")
+    : trimmed;
 
-  return null;
+  // Some DB timestamps include microseconds; JS Date handles milliseconds.
+  const normalized = withT.replace(/(\.\d{3})\d+/, "$1");
+
+  const parsed = Date.parse(normalized);
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 function shouldShowInUserJobs(job: UiJob): boolean {
   if (!terminalStatuses.has(job.status)) return true;
-
-  if (job.status !== "failed") return false;
+  if (job.status !== "failed" && job.status !== "completed") return false;
 
   const createdAt = createdTimeMs(job.created);
   if (createdAt === null) return false;
 
   const ageMs = Date.now() - createdAt;
-  return ageMs <= 24 * 60 * 60 * 1000;
+
+  if (job.status === "failed") {
+    return ageMs <= 24 * 60 * 60 * 1000;
+  }
+
+  return ageMs <= 2 * 60 * 60 * 1000;
 }
 
 const visibleJobs = computed(() => jobs.value.filter(shouldShowInUserJobs));
+
+async function loadJobs() {
+  const rows = await fetchUserJobs();
+
+  jobs.value = rows
+    .map((j) => normalizeJob(j))
+    .filter((j): j is UiJob => j !== null);
+}
 
 function addItem() {
   items.value.push({ key: Date.now() + Math.floor(Math.random() * 1000), data: null });
@@ -209,6 +231,12 @@ function onVisibilityChange() {
 }
 
 onMounted(async () => {
+  try {
+    await loadJobs();
+  } catch (e) {
+    console.error("Failed to load jobs; using embedded props.", e);
+  }
+
   namespaces.value = await loadNamespaces();
 
   if (!props.is_maintainer) {
@@ -288,7 +316,7 @@ onBeforeUnmount(() => {
     <pre id="create-result">{{ createResult }}</pre>
 
     <h3>Your jobs</h3>
-    <p>Showing active jobs and failures from the last 24 hours.</p>
+    <p>Showing active jobs, failed jobs from the last 24 hours, and completed jobs from the last 2 hours.</p>
     <p>To cancel a queued or running job, use the <em>Cancel rollback job</em> button in the Actions column.</p>
 
     <JobsTable :jobs="visibleJobs" :token="statusToken" />
