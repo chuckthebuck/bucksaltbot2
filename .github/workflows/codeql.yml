@@ -14,6 +14,9 @@ permissions:
 
 jobs:
   analyze:
+    # Advanced CodeQL and GitHub Code Scanning Default setup are mutually exclusive.
+    # Leave this disabled unless default setup is turned off.
+    if: ${{ vars.CODEQL_ADVANCED_ENABLED == 'true' }}
     name: Analyze
     runs-on: ubuntu-latest
     strategy:
