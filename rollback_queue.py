@@ -50,11 +50,7 @@ def _update_item(item_id: int, status: str, error: str | None = None):
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                """
-                UPDATE rollback_job_items
-                SET status=%s, error=%s
-                WHERE id=%s
-                """,
+                "UPDATE rollback_job_items SET status=%s, error=%s WHERE id=%s",
                 (status, error, item_id),
             )
         conn.commit()

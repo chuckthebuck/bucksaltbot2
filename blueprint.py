@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from flask import Blueprint, url_for
+from flask import Blueprint
 from functools import lru_cache
 
 FLASK_DEBUG = os.getenv("FLASK_DEBUG", "0")
@@ -28,28 +28,29 @@ def load_manifest():
         return {}
 
 
+manifest = load_manifest()
+
+
 # ✅ Context helpers
 @assets_blueprint.app_context_processor
 def add_context():
 
     def dev_asset(file_path):
-        return f"{VITE_ORIGIN}/{file_path}"
+        return f"{VITE_ORIGIN}/assets/{file_path}"
 
     def prod_asset(file_path):
-        manifest = load_manifest()
         entry = manifest.get(file_path)
 
-        if entry:
-            return url_for("static", filename=f"dist/{entry['file']}")
+        if entry and entry.get("file"):
+            return f"/assets/{entry['file']}"
 
-        return url_for("static", filename=f"dist/{file_path}")
+        return f"/assets/{file_path}"
 
     def prod_css(file_path):
-        manifest = load_manifest()
         entry = manifest.get(file_path)
 
         if entry and entry.get("css"):
-            return [url_for("static", filename=f"dist/{css}") for css in entry["css"]]
+            return [f"/assets/{css}" for css in entry["css"]]
 
         return []
 

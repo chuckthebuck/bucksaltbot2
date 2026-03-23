@@ -26,13 +26,16 @@ def get_progress(job_id):
 
 def update_progress(job_id, field):
     key = job_key(job_id)
+    try:
+        val = r.get(key)
+        if not val or not isinstance(val, (str, bytes, bytearray)):
+            return
 
-    val = r.get(key)
-    if not val:
+        data = json.loads(val)
+
+        data[field] = data.get(field, 0) + 1
+
+        r.set(key, json.dumps(data), ex=86400)
+    except (TypeError, ValueError, redis.RedisError):
+        # Progress updates are best-effort and should never crash job execution.
         return
-
-    data = json.loads(val)
-
-    data[field] = data.get(field, 0) + 1
-
-    r.set(key, json.dumps(data), ex=86400)
