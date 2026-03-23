@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { fetchAllJobs, type AllJobsRow as ApiAllJobsRow } from "./api";
 
 interface AllJobsRow {
   id: number;
@@ -25,39 +26,39 @@ function asBoolean(value: unknown): boolean {
 }
 
 function normalizeAllJobsRow(row: unknown): AllJobsRow | null {
-  if (!Array.isArray(row)) return null;
+  if (!row || typeof row !== "object") return null;
 
-  const id = Number(row[0]);
+  const obj = row as Record<string, unknown>;
+  const id = Number(obj.id);
   if (!Number.isFinite(id) || id <= 0) return null;
 
   return {
     id,
-    requestedBy: String(row[1] ?? ""),
-    status: String(row[2] ?? "queued"),
-    dryRun: asBoolean(row[3]),
-    created: String(row[4] ?? ""),
-    total: Number(row[5] ?? 0),
-    completed: Number(row[6] ?? 0),
-    failed: Number(row[7] ?? 0)
+    requestedBy: String(obj.requested_by ?? ""),
+    status: String(obj.status ?? "queued"),
+    dryRun: asBoolean(obj.dry_run),
+    created: String(obj.created_at ?? ""),
+    total: Number(obj.total ?? 0),
+    completed: Number(obj.completed ?? 0),
+    failed: Number(obj.failed ?? 0)
   };
 }
 
 const jobs = ref<AllJobsRow[]>([]);
+const loading = ref(true);
+const error = ref("");
 
-onMounted(() => {
-  const el = document.getElementById("all-jobs-props");
-  if (!el?.textContent) {
-    console.warn("all-jobs-props element not found");
-    return;
-  }
-
+onMounted(async () => {
   try {
-    const props = JSON.parse(el.textContent) as { jobs?: unknown[] };
-    jobs.value = ((props.jobs as unknown[]) || [])
+    const rows = await fetchAllJobs();
+    jobs.value = (rows as ApiAllJobsRow[])
       .map((j) => normalizeAllJobsRow(j))
       .filter((j): j is AllJobsRow => j !== null);
   } catch (e) {
-    console.error("Failed to parse all-jobs-props:", e);
+    console.error("Failed to load all jobs:", e);
+    error.value = "Failed to load all jobs.";
+  } finally {
+    loading.value = false;
   }
 });
 
@@ -80,7 +81,9 @@ const orderedJobs = computed(() => jobs.value);
 
 <template>
   <div class="all-jobs-table-wrap">
-    <table class="wikitable all-jobs-table">
+    <div v-if="loading" class="all-jobs-table__empty">Loading jobs...</div>
+    <div v-else-if="error" class="all-jobs-table__empty">{{ error }}</div>
+    <table v-else class="all-jobs-table">
       <thead>
         <tr>
           <th>ID</th>

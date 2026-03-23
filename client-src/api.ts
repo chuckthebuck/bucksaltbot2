@@ -27,6 +27,17 @@ export interface QueueProps {
   jobs: JobRow[];
 }
 
+export interface AllJobsRow {
+  id: number;
+  requested_by: string;
+  status: string;
+  dry_run: boolean;
+  created_at: string;
+  total: number;
+  completed: number;
+  failed: number;
+}
+
 // ------------------------
 // INITIAL PROPS
 // ------------------------
@@ -179,6 +190,15 @@ export async function fetchUserJobs(): Promise<JobRow[]> {
   const r = await fetch("/api/v1/rollback/jobs");
 
   if (!r.ok) throw new Error(`Failed to fetch jobs: ${r.status}`);
+
+  const data = await r.json();
+  return Array.isArray(data?.jobs) ? data.jobs : [];
+}
+
+export async function fetchAllJobs(): Promise<AllJobsRow[]> {
+  const r = await fetch("/rollback-queue/all-jobs?format=json");
+
+  if (!r.ok) throw new Error(`Failed to fetch all jobs: ${r.status}`);
 
   const data = await r.json();
   return Array.isArray(data?.jobs) ? data.jobs : [];

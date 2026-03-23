@@ -326,6 +326,25 @@ def rollback_queue_all_jobs_ui():
 
             jobs = cursor.fetchall()
 
+    if request.args.get("format") == "json":
+        return jsonify(
+            {
+                "jobs": [
+                    {
+                        "id": row[0],
+                        "requested_by": row[1],
+                        "status": row[2],
+                        "dry_run": bool(row[3]),
+                        "created_at": str(row[4]),
+                        "total": int(row[5] or 0),
+                        "completed": int(row[6] or 0),
+                        "failed": int(row[7] or 0),
+                    }
+                    for row in jobs
+                ]
+            }
+        )
+
     return render_template(
         "rollback_queue_all_jobs.html",
         jobs=jobs,
