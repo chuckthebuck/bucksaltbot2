@@ -72,7 +72,10 @@ def is_maintainer(username):
 
 
 flask_app = Flask(__name__)
-
+flask_app.config.update(
+    SESSION_COOKIE_SAMESITE="None",
+    SESSION_COOKIE_SECURE=True
+)
 flask_app.register_blueprint(assets_blueprint)
 
 
