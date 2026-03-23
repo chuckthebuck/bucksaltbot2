@@ -327,9 +327,48 @@ def test_get_job_returns_403_when_owned_by_different_user(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "bob", "completed", 0, "2024-01-01")
     mock_cursor.fetchall.return_value = []
-    with patch("router.get_conn", return_value=mock_conn):
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+    ):
         resp = client.get("/api/v1/rollback/jobs/1")
     assert resp.status_code == 403
+
+
+def test_get_job_allows_maintainer_for_other_user(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "bob", "completed", 0, "2024-01-01")
+    mock_cursor.fetchall.return_value = [
+        (10, "File:Test.jpg", "Vandal", None, "completed", None),
+    ]
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+    ):
+        resp = client.get("/api/v1/rollback/jobs/1")
+    assert resp.status_code == 200
+    assert resp.get_json()["requested_by"] == "bob"
+
+
+def test_get_job_log_format_returns_plain_text(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "bob", "failed", 0, "2024-01-01")
+    mock_cursor.fetchall.return_value = [
+        (10, "File:Test.jpg", "Vandal", None, "failed", "Rollback failed"),
+    ]
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+    ):
+        resp = client.get("/api/v1/rollback/jobs/1?format=log")
+    assert resp.status_code == 200
+    assert "text/plain" in resp.headers.get("Content-Type", "")
+    body = resp.get_data(as_text=True)
+    assert "item_id=10" in body
+    assert "status=failed" in body
+    assert "Rollback failed" in body
 
 
 def test_get_job_returns_full_detail_for_owner(client):

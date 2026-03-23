@@ -92,6 +92,7 @@ const orderedJobs = computed(() => jobs.value);
           <th>Mode</th>
           <th>Progress</th>
           <th>Created</th>
+          <th>Links</th>
         </tr>
       </thead>
       <tbody>
@@ -132,9 +133,14 @@ const orderedJobs = computed(() => jobs.value);
             </div>
           </td>
           <td class="all-jobs-table__created">{{ job.created }}</td>
+          <td class="all-jobs-table__links">
+            <a :href="`/api/v1/rollback/jobs/${job.id}`" target="_blank" rel="noopener noreferrer">JSON</a>
+            <span aria-hidden="true"> | </span>
+            <a :href="`/api/v1/rollback/jobs/${job.id}?format=log`" target="_blank" rel="noopener noreferrer">Log</a>
+          </td>
         </tr>
         <tr v-if="!orderedJobs.length">
-          <td colspan="6" class="all-jobs-table__empty">No jobs found.</td>
+          <td colspan="7" class="all-jobs-table__empty">No jobs found.</td>
         </tr>
       </tbody>
     </table>
@@ -189,6 +195,10 @@ const orderedJobs = computed(() => jobs.value);
 .all-jobs-table__created {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+.all-jobs-table__links {
+  white-space: nowrap;
 }
 
 .all-jobs-table__empty {

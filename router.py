@@ -7,6 +7,7 @@ import mwoauth.flask
 import requests
 
 from flask import (
+    Response,
     abort,
     jsonify,
     redirect,
@@ -595,7 +596,9 @@ def cancel_rollback_job(job_id):
 
 @app.route("/api/v1/rollback/jobs/<int:job_id>")
 def get_rollback_job(job_id):
-    if session.get("username") is None:
+    username = session.get("username")
+
+    if username is None:
         return jsonify({"detail": "Not authenticated"}), 401
 
     with get_conn() as conn:
@@ -614,7 +617,7 @@ def get_rollback_job(job_id):
             if not job:
                 return jsonify({"detail": "Job not found"}), 404
 
-            if job[1] != session["username"]:
+            if job[1] != username and not is_maintainer(username):
                 return jsonify({"detail": "Forbidden"}), 403
 
             cursor.execute(
@@ -628,6 +631,23 @@ def get_rollback_job(job_id):
             )
 
             items = cursor.fetchall()
+
+    if request.args.get("format") == "log":
+        lines = []
+
+        for item in items:
+            item_id, title, target_user, _summary, status, error = item
+            line = (
+                f"item_id={item_id} status={status} title={title} user={target_user}"
+            )
+
+            if error:
+                line += f" error={error}"
+
+            lines.append(line)
+
+        body = "\n".join(lines) + ("\n" if lines else "")
+        return Response(body, mimetype="text/plain")
 
     return jsonify(
         {
