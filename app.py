@@ -25,11 +25,7 @@ _toolhub_maintainers_cache = None
 _toolhub_cache_expiry = 0.0
 _toolhub_cache_lock = threading.Lock()
 
-CORS(app, resources={
-    r"/api/*": {
-        "origins": ["https://commons.wikimedia.org"]
-    }
-})
+
 def get_toolhub_maintainers():
     global _toolhub_maintainers_cache, _toolhub_cache_expiry
 
@@ -122,3 +118,8 @@ def inject_user_permissions():
 
 
 import router  # noqa: E402,F401
+CORS(flask_app, resources={
+    r"/api/*": {
+        "origins": ["https://commons.wikimedia.org"]
+    }
+})
