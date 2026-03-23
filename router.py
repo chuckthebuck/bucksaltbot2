@@ -344,92 +344,39 @@ def rollback_queue_ui():
     )
 
 @app.route("/api/v1/rollback/from-diff", methods=["POST"])
-def rollback_from_diff():
-    actor = _rollback_api_actor()
+def rollback_from_diff_page():
+    user = request.args.get("user")
+    diff = request.args.get("diff")
+    summary = request.args.get("summary", "")
+    dry_run = request.args.get("dry_run") == "1"
 
-    if actor is None:
-        return jsonify({"detail": "Not authenticated"}), 401
+    # 🔒 Require login
+    if "username" not in session:
+        return redirect(url_for("login", next=request.url))
 
-    payload = request.get_json(silent=True) or {}
+    username = session["username"]
 
-    target_user = (payload.get("user") or "").strip()
-    start_diff = payload.get("start_diff")
-    summary = payload.get("summary")
-    dry_run = _parse_bool(payload.get("dry_run", False), default=False)
+    # Validate
+    if not user or not diff:
+        return "Missing parameters", 400
 
-    if not target_user:
-        return jsonify({"detail": "user is required"}), 400
+    # 👉 Call your existing backend logic
+    result = create_rollback_jobs_from_diff(
+        target_user=user,
+        start_diff=int(diff),
+        summary=summary,
+        requested_by=username,
+        dry_run=dry_run
+    )
 
-    try:
-        start_diff = int(start_diff)
-    except (TypeError, ValueError):
-        return jsonify({"detail": "start_diff must be an integer"}), 400
+    return f"""
+    <h2>Rollback job created</h2>
+    <p>User: {user}</p>
+    <p>Edits: {result['total_items']}</p>
+    <p>Chunks: {result['chunks']}</p>
+    <a href="/jobs">View progress</a>
+    """
 
-    batch_id = int(time.time() * 1000)
-
-    try:
-        items = fetch_contribs_after_diff(target_user, start_diff)
-    except ValueError as e:
-        app.logger.warning("Invalid request while fetching contributions: %s", e)
-        return jsonify({"detail": "Invalid request parameters"}), 400
-    except Exception:
-        app.logger.exception("Failed to fetch contributions")
-        return jsonify({"detail": "Failed to fetch contributions"}), 500
-
-    if not items:
-        return jsonify({"detail": "No edits found after diff"}), 400
-
-    if len(items) > 10000:
-        items = items[:10000]
-
-    job_ids = []
-
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-
-            for i in range(0, len(items), MAX_JOB_ITEMS):
-                chunk = items[i : i + MAX_JOB_ITEMS]
-
-                cursor.execute(
-                    """
-                    INSERT INTO rollback_jobs
-                    (requested_by, status, dry_run, batch_id)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (actor, "queued", 1 if dry_run else 0, batch_id),
-                )
-
-                job_id = cursor.lastrowid
-                job_ids.append(job_id)
-
-                for item in chunk:
-                    cursor.execute(
-                        """
-                        INSERT INTO rollback_job_items
-                        (job_id, file_title, target_user, summary, status)
-                        VALUES (%s, %s, %s, %s, %s)
-                        """,
-                        (
-                            job_id,
-                            item["title"],
-                            item["user"],
-                            summary,
-                            "queued",
-                        ),
-                    )
-
-        conn.commit()
-
-    for jid in job_ids:
-        process_rollback_job.delay(jid)
-
-    return jsonify({
-        "batch_id": batch_id,
-        "job_ids": job_ids,
-        "total_items": len(items),
-        "chunks": len(job_ids),
-        "status": "queued",
-    })
 @app.route("/rollback-queue/all-jobs")
 def rollback_queue_all_jobs_ui():
     username = session.get("username")
