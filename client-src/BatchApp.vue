@@ -47,6 +47,18 @@ function parseInput() {
     .map(l => l.trim())
     .filter(Boolean);
 
+  // Don't clobber imported/uploaded preview data when there is no text input.
+  if (!lines.length) {
+    return;
+  }
+
+  const existingSelection = new Map(
+    parsed.value.map(i => [
+      `${i.title}|${i.user}|${i.summary ?? ""}`,
+      Boolean(i.selected)
+    ])
+  );
+
   const items = [];
 
   for (let i = 0; i < lines.length; i++) {
@@ -65,11 +77,16 @@ function parseInput() {
       continue;
     }
 
+    const normalizedTitle = title.trim();
+    const normalizedUser = user.trim();
+    const normalizedSummary = summary?.trim() || null;
+    const key = `${normalizedTitle}|${normalizedUser}|${normalizedSummary ?? ""}`;
+
     items.push({
-      title: title.trim(),
-      user: user.trim(),
-      summary: summary?.trim() || null,
-      selected: true
+      title: normalizedTitle,
+      user: normalizedUser,
+      summary: normalizedSummary,
+      selected: existingSelection.get(key) ?? true
     });
   }
 
