@@ -67,6 +67,15 @@
           >
             All Jobs
           </a>
+
+          <a
+            class="cdx-tabs__list__item"
+            role="tab"
+            aria-selected="{% if type == 'rollback-from-diff' %}true{% else %}false{% endif %}"
+            href="/goto?tab=rollback-from-diff"
+          >
+            From Diff
+          </a>
           {% endif %}
 
           <a
