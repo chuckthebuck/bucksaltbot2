@@ -79,57 +79,121 @@ const orderedJobs = computed(() => jobs.value);
 </script>
 
 <template>
-  <table class="wikitable">
-    <tr>
-      <th>ID</th>
-      <th>Requested by</th>
-      <th>Status</th>
-      <th>Mode</th>
-      <th>Progress</th>
-      <th>Created</th>
-    </tr>
-
-    <tr v-for="job in orderedJobs" :key="job.id">
-      <td>{{ job.id }}</td>
-      <td>{{ job.requestedBy }}</td>
-      <td>
-        <span
-          class="cdx-tag"
-          :class="{
-            'cdx-tag--status-success': job.status === 'completed',
-            'cdx-tag--status-error': job.status === 'failed',
-            'cdx-tag--status-warning': job.status === 'queued'
-          }"
-        >
-          {{ job.status }}
-        </span>
-      </td>
-      <td>
-        <span
-          class="cdx-tag"
-          :class="{
-            'cdx-tag--mode-dry-run': job.dryRun,
-            'cdx-tag--mode-live': !job.dryRun
-          }"
-        >
-          {{ modeLabel(job) }}
-        </span>
-      </td>
-      <td>
-        <div class="job-progress-track" :aria-label="`Job ${job.id} progress`">
-          <div class="job-progress-fill" :style="{ width: `${progressPct(job)}%` }"></div>
-        </div>
-        <div class="job-progress-text">
-          <span>{{ progressText(job) }}</span>
-          <span>{{ progressPct(job) }}%</span>
-        </div>
-      </td>
-      <td>{{ job.created }}</td>
-    </tr>
-  </table>
+  <div class="all-jobs-table-wrap">
+    <table class="wikitable all-jobs-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Requested by</th>
+          <th>Status</th>
+          <th>Mode</th>
+          <th>Progress</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="job in orderedJobs" :key="job.id">
+          <td class="all-jobs-table__id">{{ job.id }}</td>
+          <td>{{ job.requestedBy }}</td>
+          <td>
+            <span
+              class="cdx-tag"
+              :class="{
+                'cdx-tag--status-success': job.status === 'completed',
+                'cdx-tag--status-error': job.status === 'failed',
+                'cdx-tag--status-warning': job.status === 'queued' || job.status === 'running',
+                'cdx-tag--status-muted': job.status === 'canceled'
+              }"
+            >
+              {{ job.status }}
+            </span>
+          </td>
+          <td>
+            <span
+              class="cdx-tag"
+              :class="{
+                'cdx-tag--mode-dry-run': job.dryRun,
+                'cdx-tag--mode-live': !job.dryRun
+              }"
+            >
+              {{ modeLabel(job) }}
+            </span>
+          </td>
+          <td>
+            <div class="job-progress-track" :aria-label="`Job ${job.id} progress`">
+              <div class="job-progress-fill" :style="{ width: `${progressPct(job)}%` }"></div>
+            </div>
+            <div class="job-progress-text">
+              <span>{{ progressText(job) }}</span>
+              <span>{{ progressPct(job) }}%</span>
+            </div>
+          </td>
+          <td class="all-jobs-table__created">{{ job.created }}</td>
+        </tr>
+        <tr v-if="!orderedJobs.length">
+          <td colspan="6" class="all-jobs-table__empty">No jobs found.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 </template>
 
 <style scoped>
+.all-jobs-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.all-jobs-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.all-jobs-table th,
+.all-jobs-table td {
+  padding: 8px 10px;
+  vertical-align: middle;
+}
+
+.all-jobs-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background-color: var(--background-color-neutral, #eaecf0);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.all-jobs-table tbody tr:nth-child(odd) {
+  background-color: var(--background-color-base, #fff);
+}
+
+.all-jobs-table tbody tr:nth-child(even) {
+  background-color: var(--background-color-neutral-subtle, #f8f9fa);
+}
+
+.all-jobs-table tbody tr:hover {
+  background-color: #f1f4fd;
+}
+
+.all-jobs-table__id {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.all-jobs-table__created {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.all-jobs-table__empty {
+  text-align: center;
+  color: var(--color-subtle, #54595d);
+  padding: 20px;
+}
+
 .cdx-tag {
   display: inline-flex;
   align-items: center;
@@ -161,6 +225,12 @@ const orderedJobs = computed(() => jobs.value);
   color: var(--color-warning, #7a4b00);
 }
 
+.cdx-tag--status-muted {
+  background-color: var(--background-color-disabled-subtle, #f0f0f0);
+  border-color: var(--border-color-subtle, #c8ccd1);
+  color: var(--color-subtle, #54595d);
+}
+
 .cdx-tag--mode-dry-run {
   background-color: var(--background-color-warning-subtle, #fef6e7);
   border-color: var(--color-warning, #edab00);
@@ -174,10 +244,11 @@ const orderedJobs = computed(() => jobs.value);
 }
 
 .job-progress-track {
-  width: 160px;
-  height: 8px;
+  width: 180px;
+  height: 10px;
   border-radius: 9999px;
-  background: #eaecf0;
+  background: var(--background-color-neutral, #eaecf0);
+  border: 1px solid var(--border-color-subtle, #c8ccd1);
   overflow: hidden;
 }
 
