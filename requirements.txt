@@ -22,7 +22,7 @@ mwparserfromhell==0.6.6
 oauthlib==3.3.1
 packaging==24.0
 pytest==8.3.3
-prompt-toolkit==3.0.43
+prompt-toolkit==3.0.52
 PyJWT==2.8.0
 PyMySQL==1.1.1
 pypdf==4.2.0
