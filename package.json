@@ -28,7 +28,7 @@
   "dependencies": {
     "vue": "3.3.9",
     "@wikimedia/codex": "^2.4.0",
-    "@wikimedia/codex-design-tokens": "^1.6.0",
+    "@wikimedia/codex-design-tokens": "^2.4.0",
     "@wikimedia/codex-icons": "^1.6.0",
     "less": "^4.2.0",
     "less-loader": "^12.2.0"
