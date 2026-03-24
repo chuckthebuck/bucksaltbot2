@@ -1,10 +1,12 @@
 import os
 import secrets
 import time
+from urllib.parse import parse_qs, urlparse
 
 import mwoauth
 import mwoauth.flask
 import requests
+import logging
 
 from flask import (
     Response,
@@ -27,20 +29,84 @@ ALLOWED_GROUPS = {"sysop"}
 GROUP_CACHE_TTL = 300
 _group_cache = {}
 
-def fetch_contribs_after_diff(target_user, start_diff):
+
+def _extract_oldid(diff_value):
+    if diff_value is None:
+        raise ValueError("Missing diff parameter")
+
+    raw = str(diff_value).strip()
+
+    if not raw:
+        raise ValueError("Missing diff parameter")
+
+    if raw.isdigit():
+        return int(raw)
+
+    parsed = urlparse(raw)
+    oldid = parse_qs(parsed.query).get("oldid", [None])[0]
+
+    if oldid and str(oldid).strip().isdigit():
+        return int(str(oldid).strip())
+
+    raise ValueError("diff must be a revision id or URL containing oldid")
+
+
+def fetch_diff_author_and_timestamp(oldid):
+    url = "https://commons.wikimedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "prop": "revisions",
+        "revids": str(oldid),
+        "rvprop": "ids|user|timestamp",
+        "format": "json",
+    }
+
+    resp = requests.get(url, params=params, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+
+    pages = data.get("query", {}).get("pages", {})
+
+    for page in pages.values():
+        revisions = page.get("revisions") or []
+
+        if revisions:
+            revision = revisions[0]
+            user = revision.get("user")
+            timestamp = revision.get("timestamp")
+
+            if user and timestamp:
+                return {
+                    "user": user,
+                    "timestamp": timestamp,
+                }
+
+    raise ValueError("Revision not found for provided diff")
+
+
+def fetch_contribs_after_timestamp(target_user, start_timestamp, limit=None):
     url = "https://commons.wikimedia.org/w/api.php"
 
     uccontinue = None
-    found = False
     results = []
 
     while True:
+        remaining = None
+
+        if limit is not None:
+            remaining = max(limit - len(results), 0)
+
+            if remaining == 0:
+                break
+
         params = {
             "action": "query",
             "list": "usercontribs",
             "ucuser": target_user,
-            "uclimit": "max",
+            "uclimit": str(min(500, remaining)) if remaining is not None else "500",
             "ucprop": "ids|title",
+            "ucstart": start_timestamp,
+            "ucdir": "newer",
             "format": "json",
         }
 
@@ -54,14 +120,15 @@ def fetch_contribs_after_diff(target_user, start_diff):
         contribs = data.get("query", {}).get("usercontribs", [])
 
         for edit in contribs:
-            if not found and int(edit["revid"]) == start_diff:
-                found = True
+            # Strictly after the diff timestamp.
+            if edit.get("timestamp") and edit["timestamp"] > start_timestamp:
+                results.append({"title": edit["title"], "user": target_user})
 
-            if found:
-                results.append({
-                    "title": edit["title"],
-                    "user": target_user
-                })
+                if limit is not None and len(results) >= limit:
+                    break
+
+        if limit is not None and len(results) >= limit:
+            break
 
         if not data.get("continue"):
             break
@@ -73,10 +140,85 @@ def fetch_contribs_after_diff(target_user, start_diff):
         if len(results) >= 10000:
             break
 
-    if not found:
-        raise ValueError("Starting diff not found in user contributions")
-
     return results
+
+
+def create_rollback_jobs_from_diff(
+    diff,
+    summary,
+    requested_by,
+    dry_run=False,
+    limit=None,
+):
+    oldid = _extract_oldid(diff)
+    diff_metadata = fetch_diff_author_and_timestamp(oldid)
+
+    target_user = diff_metadata["user"]
+    start_timestamp = diff_metadata["timestamp"]
+
+    items = fetch_contribs_after_timestamp(
+        target_user,
+        start_timestamp,
+        limit=limit,
+    )
+
+    if not items:
+        raise ValueError("No contributions found after the provided diff timestamp")
+
+    batch_id = int(time.time() * 1000)
+    job_ids = []
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            for i in range(0, len(items), MAX_JOB_ITEMS):
+                chunk = items[i : i + MAX_JOB_ITEMS]
+
+                cursor.execute(
+                    """
+                    INSERT INTO rollback_jobs
+                    (requested_by, status, dry_run, batch_id)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (requested_by, "queued", 1 if dry_run else 0, batch_id),
+                )
+
+                job_id = cursor.lastrowid
+                job_ids.append(job_id)
+
+                for item in chunk:
+                    cursor.execute(
+                        """
+                        INSERT INTO rollback_job_items
+                        (job_id, file_title, target_user, summary, status)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (
+                            job_id,
+                            item["title"],
+                            item["user"],
+                            summary or None,
+                            "queued",
+                        ),
+                    )
+
+        conn.commit()
+
+    for job_id in job_ids:
+        process_rollback_job.delay(job_id)
+
+    return {
+        "job_id": job_ids[0],
+        "job_ids": job_ids,
+        "chunks": len(job_ids),
+        "batch_id": batch_id,
+        "total_items": len(items),
+        "status": "queued",
+        "resolved_user": target_user,
+        "resolved_timestamp": start_timestamp,
+        "oldid": oldid,
+    }
+
+
 if not os.environ.get("NOTDEV"):
     from dotenv import load_dotenv
 
@@ -256,6 +398,11 @@ def goto():
             abort(403)
         return redirect("/rollback-queue/all-jobs")
 
+    if tab == "rollback-from-diff":
+        if not is_maintainer(username):
+            abort(403)
+        return redirect("/rollback-from-diff")
+
     if tab == "documentation":
         return redirect(
             "https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot"
@@ -344,39 +491,96 @@ def rollback_queue_ui():
         type="rollback-queue",
     )
 
+
 @app.route("/api/v1/rollback/from-diff", methods=["POST"])
-def rollback_from_diff_page():
-    user = request.args.get("user")
-    diff = request.args.get("diff")
-    summary = request.args.get("summary", "")
-    dry_run = request.args.get("dry_run") == "1"
+def rollback_from_diff_api():
+    username = session.get("username")
 
-    # 🔒 Require login
-    if "username" not in session:
-        return redirect(url_for("login", next=request.url))
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
 
-    username = session["username"]
+    if not is_maintainer(username):
+        return jsonify({"detail": "Forbidden"}), 403
 
-    # Validate
-    if not user or not diff:
-        return "Missing parameters", 400
+    payload = request.get_json(silent=True) or {}
 
-    # 👉 Call your existing backend logic
-    result = create_rollback_jobs_from_diff(
-        target_user=user,
-        start_diff=int(diff),
-        summary=summary,
-        requested_by=username,
-        dry_run=dry_run
+    diff = request.args.get("diff") or payload.get("diff") or request.form.get("diff")
+    summary = (
+        request.args.get("summary")
+        or payload.get("summary")
+        or request.form.get("summary")
+        or ""
+    )
+    dry_run_raw = (
+        request.args.get("dry_run")
+        if request.args.get("dry_run") is not None
+        else payload.get("dry_run", request.form.get("dry_run"))
+    )
+    limit_raw = (
+        request.args.get("limit")
+        if request.args.get("limit") is not None
+        else payload.get("limit", request.form.get("limit"))
     )
 
-    return f"""
-    <h2>Rollback job created</h2>
-    <p>User: {escape(user)}</p>
-    <p>Edits: {result['total_items']}</p>
-    <p>Chunks: {result['chunks']}</p>
-    <a href="/jobs">View progress</a>
-    """
+    if diff in (None, ""):
+        return jsonify({"detail": "Missing required parameter: diff"}), 400
+
+    limit = None
+
+    if limit_raw not in (None, ""):
+        try:
+            limit = int(limit_raw)
+        except (TypeError, ValueError):
+            return jsonify({"detail": "limit must be an integer"}), 400
+
+        if limit <= 0:
+            return jsonify({"detail": "limit must be a positive integer"}), 400
+
+        if limit > 10000:
+            return jsonify({"detail": "limit must be <= 10000"}), 400
+
+    dry_run = _parse_bool(dry_run_raw, default=False)
+
+    try:
+        result = create_rollback_jobs_from_diff(
+            diff=diff,
+            summary=summary,
+            requested_by=username,
+            dry_run=dry_run,
+            limit=limit,
+        )
+    except ValueError:
+        logging.exception("Invalid parameters in rollback_from_diff_api")
+        return jsonify({"detail": "Invalid parameters"}), 400
+
+    return jsonify(
+        {
+            **result,
+            "diff": diff,
+            "dry_run": dry_run,
+            "limit": limit,
+        }
+    )
+
+
+@app.route("/rollback-from-diff")
+def rollback_from_diff_page():
+    username = session.get("username")
+
+    if not username:
+        abort(401)
+
+    if not is_maintainer(username):
+        abort(403)
+
+    return render_template(
+        "rollback_from_diff.html",
+        username=username,
+        max_limit=10000,
+        default_limit=100,
+        type="rollback-from-diff",
+    )
+
 
 @app.route("/rollback-queue/all-jobs")
 def rollback_queue_all_jobs_ui():

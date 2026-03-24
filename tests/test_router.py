@@ -255,6 +255,95 @@ def test_create_job_allows_status_token_auth(client):
     assert resp.status_code == 200
 
 
+def test_from_diff_api_returns_401_when_not_authenticated(client):
+    resp = client.post("/api/v1/rollback/from-diff", json={"diff": 1})
+    assert resp.status_code == 401
+
+
+def test_from_diff_api_returns_403_for_non_maintainer(client):
+    _set_session(client, "alice")
+    with patch("router.is_maintainer", return_value=False):
+        resp = client.post("/api/v1/rollback/from-diff", json={"diff": 1})
+    assert resp.status_code == 403
+
+
+def test_from_diff_api_rejects_invalid_limit(client):
+    _set_session(client, "alice")
+    with patch("router.is_maintainer", return_value=True):
+        resp = client.post(
+            "/api/v1/rollback/from-diff",
+            json={"diff": 10, "limit": "bad"},
+        )
+    assert resp.status_code == 400
+    assert "limit" in resp.get_json().get("detail", "")
+
+
+def test_from_diff_api_passes_limit_to_creation_helper(client):
+    _set_session(client, "alice")
+    expected = {
+        "job_id": 11,
+        "job_ids": [11],
+        "chunks": 1,
+        "batch_id": 123,
+        "total_items": 5,
+        "status": "queued",
+    }
+
+    with (
+        patch("router.is_maintainer", return_value=True),
+        patch(
+            "router.create_rollback_jobs_from_diff", return_value=expected
+        ) as mock_create,
+    ):
+        resp = client.post(
+            "/api/v1/rollback/from-diff",
+            json={"diff": 999, "limit": 25, "dry_run": True},
+        )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["limit"] == 25
+    assert data["dry_run"] is True
+    assert data["diff"] == 999
+    mock_create.assert_called_once_with(
+        diff=999,
+        summary="",
+        requested_by="alice",
+        dry_run=True,
+        limit=25,
+    )
+
+
+def test_from_diff_api_accepts_diff_url(client):
+    _set_session(client, "alice")
+    expected = {
+        "job_id": 11,
+        "job_ids": [11],
+        "chunks": 1,
+        "batch_id": 123,
+        "total_items": 5,
+        "status": "queued",
+    }
+
+    with (
+        patch("router.is_maintainer", return_value=True),
+        patch(
+            "router.create_rollback_jobs_from_diff", return_value=expected
+        ) as mock_create,
+    ):
+        resp = client.post(
+            "/api/v1/rollback/from-diff",
+            json={
+                "diff": "https://commons.wikimedia.org/w/index.php?title=File:Example.jpg&oldid=123456",
+                "limit": 20,
+            },
+        )
+
+    assert resp.status_code == 200
+    mock_create.assert_called_once()
+    assert "oldid=123456" in mock_create.call_args.kwargs["diff"]
+
+
 def test_cancel_job_returns_401_when_not_authenticated(client):
     resp = client.delete("/api/v1/rollback/jobs/1")
     assert resp.status_code == 401
@@ -619,4 +708,19 @@ def test_goto_all_jobs_tab_returns_403_for_non_maintainer(client):
     _set_session(client, "alice")
     with patch("router.is_maintainer", return_value=False):
         resp = client.get("/goto?tab=rollback-all-jobs")
+    assert resp.status_code == 403
+
+
+def test_goto_from_diff_tab_redirects_for_maintainer(client):
+    _set_session(client, "alice")
+    with patch("router.is_maintainer", return_value=True):
+        resp = client.get("/goto?tab=rollback-from-diff")
+    assert resp.status_code == 302
+    assert "/rollback-from-diff" in resp.headers["Location"]
+
+
+def test_goto_from_diff_tab_returns_403_for_non_maintainer(client):
+    _set_session(client, "alice")
+    with patch("router.is_maintainer", return_value=False):
+        resp = client.get("/goto?tab=rollback-from-diff")
     assert resp.status_code == 403

@@ -5,9 +5,9 @@ import requests
 
 from flask_cors import CORS
 from flask import Flask, session
-from celery import Celery
 
 from blueprint import assets_blueprint
+from celery_init import celery_init_app
 
 
 BOT_ADMIN_ACCOUNTS = {
@@ -79,11 +79,10 @@ flask_app.config.update(
     SESSION_COOKIE_SAMESITE="None",
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_PATH="/",
-    SESSION_COOKIE_DOMAIN=None
+    SESSION_COOKIE_DOMAIN=None,
 )
 
 flask_app.register_blueprint(assets_blueprint)
-
 
 
 CELERY_BROKER_URL = os.getenv(
@@ -92,28 +91,18 @@ CELERY_BROKER_URL = os.getenv(
 
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 
+flask_app.config["CELERY"] = {
+    "broker_url": CELERY_BROKER_URL,
+    "result_backend": CELERY_RESULT_BACKEND,
+    "task_serializer": "json",
+    "accept_content": ["json"],
+    "result_serializer": "json",
+    "worker_prefetch_multiplier": 1,
+    "task_acks_late": True,
+    "task_reject_on_worker_lost": True,
+}
 
-celery = Celery(
-    flask_app.import_name, broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND
-)
-
-celery.conf.update(
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    worker_prefetch_multiplier=1,
-    task_acks_late=True,
-    task_reject_on_worker_lost=True,
-)
-
-
-class ContextTask(celery.Task):
-    def __call__(self, *args, **kwargs):
-        with flask_app.app_context():
-            return self.run(*args, **kwargs)
-
-
-celery.Task = ContextTask
+celery = celery_init_app(flask_app)
 
 
 @flask_app.context_processor
@@ -125,9 +114,13 @@ def inject_user_permissions():
 
 
 import router  # noqa: E402,F401
-CORS(flask_app, resources={
-    r"/api/*": {
-        "origins": ["https://commons.wikimedia.org"],
-        "supports_credentials": True
-    }
-})
+
+CORS(
+    flask_app,
+    resources={
+        r"/api/*": {
+            "origins": ["https://commons.wikimedia.org"],
+            "supports_credentials": True,
+        }
+    },
+)
