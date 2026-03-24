@@ -3,9 +3,22 @@ from pathlib import Path
 from celery import shared_task
 
 
+def _resolve_pywikibot_dir() -> Path:
+    """Return a writable directory for Pywikibot config files."""
+    env_dir = os.environ.get("PYWIKIBOT_DIR")
+    if env_dir:
+        return Path(env_dir)
+
+    home = os.environ.get("HOME")
+    if home and home != "/":
+        return Path(home) / ".pywikibot"
+
+    return Path("/tmp") / f".pywikibot-{os.getuid()}"
+
+
 def _bootstrap_pywikibot_env() -> None:
     """Set PYWIKIBOT_DIR before importing pywikibot."""
-    pywikibot_home = Path.home() / ".pywikibot"
+    pywikibot_home = _resolve_pywikibot_dir()
     pywikibot_home.mkdir(parents=True, exist_ok=True)
     os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
 
@@ -91,7 +104,7 @@ def _update_item(item_id: int, status: str, error: str | None = None):
 
 def _setup_pywikibot_dir() -> None:
     """Configure Pywikibot to use ~/.pywikibot for config files."""
-    pywikibot_home = Path.home() / ".pywikibot"
+    pywikibot_home = _resolve_pywikibot_dir()
     pywikibot_home.mkdir(parents=True, exist_ok=True)
     os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
     

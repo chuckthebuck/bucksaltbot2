@@ -13,13 +13,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def _resolve_pywikibot_dir() -> Path:
+    """Return a writable directory for Pywikibot config files."""
+    env_dir = os.environ.get("PYWIKIBOT_DIR")
+    if env_dir:
+        return Path(env_dir)
+
+    home = os.environ.get("HOME")
+    if home and home != "/":
+        return Path(home) / ".pywikibot"
+
+    return Path("/tmp") / f".pywikibot-{os.getuid()}"
+
+
 def _bootstrap_pywikibot_env() -> None:
     """Set PYWIKIBOT_DIR before importing pywikibot.
 
     Pywikibot reads config paths during import. On Toolforge, defaulting to
     /workspace can trigger ownership warnings, so force a safe home path first.
     """
-    pywikibot_home = Path.home() / ".pywikibot"
+    pywikibot_home = _resolve_pywikibot_dir()
     pywikibot_home.mkdir(parents=True, exist_ok=True)
     os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
 
@@ -58,7 +71,7 @@ def _setup_pywikibot_dir() -> None:
     This ensures Pywikibot uses the home directory instead of /workspace,
     which avoids file ownership issues on Toolforge.
     """
-    pywikibot_home = Path.home() / ".pywikibot"
+    pywikibot_home = _resolve_pywikibot_dir()
     pywikibot_home.mkdir(parents=True, exist_ok=True)
     os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
     
