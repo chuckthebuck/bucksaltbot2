@@ -127,7 +127,7 @@ def process_rollback_job(job_id: int):
         if large:
             user_links = ", ".join(f"[[User:{u}|{u}]]" for u in notify_users)
             warning_text = (
-                "⚠️ Large batch job in progress. "
+                "Large batch job in progress. "
                 + (
                     f"If issues occur, please contact: {user_links}"
                     if user_links
@@ -136,7 +136,7 @@ def process_rollback_job(job_id: int):
             )
 
         status_updater.update_wiki_status(
-            editing="🟢 Actively editing",
+            editing="Actively editing",
             current_job=f"Processing batch {batch_id} (job {job_id})",
             details=f"{len(items)} items queued",
             warning=warning_text,
@@ -210,7 +210,7 @@ def process_rollback_job(job_id: int):
         _update_job_status(job_id, final_status)
 
         status_updater.update_wiki_status(
-            editing="🟡 Idle",
+            editing="Idle",
             last_job=f"{'Failed' if failed else 'Completed'} batch {batch_id} (job {job_id})",
             details=f"{len(items) - failed}/{len(items)} items completed",
         )
@@ -226,7 +226,7 @@ def process_rollback_job(job_id: int):
         _update_job_status(job_id, "failed")
 
         status_updater.update_wiki_status(
-            editing="🔴 Error",
+            editing="Error",
             details=str(exc)[:200],
         )
 

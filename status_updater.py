@@ -91,7 +91,7 @@ def is_flagged_bot(site: pywikibot.Site, username: str) -> bool:
 
 def update_wiki_status(
     editing: str,
-    web: str = "🟢 Online",
+    web: str = "Online",
     *,
     last_edit: str | None = None,
     current_job: str | None = None,

@@ -165,7 +165,7 @@ def test_update_wiki_status_noop_when_not_live(monkeypatch):
 
     mock_site_cls = MagicMock()
     with patch("status_updater.pywikibot.Site", mock_site_cls):
-        status_updater.update_wiki_status("🟢 Actively editing")
+        status_updater.update_wiki_status("Actively editing")
 
     mock_site_cls.assert_not_called()
 
@@ -183,7 +183,7 @@ def test_update_wiki_status_saves_page_when_live(monkeypatch):
         patch("status_updater.pywikibot.Page", return_value=mock_page),
     ):
         status_updater.update_wiki_status(
-            editing="🟢 Actively editing",
+            editing="Actively editing",
             current_job="Processing batch 12345 (job 1)",
             details="50 items queued",
         )
@@ -206,12 +206,12 @@ def test_update_wiki_status_includes_warning_when_provided(monkeypatch):
         patch("status_updater.pywikibot.Page", return_value=mock_page),
     ):
         status_updater.update_wiki_status(
-            editing="🟢 Actively editing",
-            warning="⚠️ Large batch job in progress.",
+            editing="Actively editing",
+            warning="Large batch job in progress.",
         )
 
     assigned_text = mock_page.text
-    assert "| warning = ⚠️ Large batch job in progress." in assigned_text
+    assert "| warning = Large batch job in progress." in assigned_text
 
 
 def test_update_wiki_status_omits_warning_field_when_none(monkeypatch):
@@ -225,7 +225,7 @@ def test_update_wiki_status_omits_warning_field_when_none(monkeypatch):
         patch("status_updater.pywikibot.Site"),
         patch("status_updater.pywikibot.Page", return_value=mock_page),
     ):
-        status_updater.update_wiki_status("🟡 Idle")
+        status_updater.update_wiki_status("Idle")
 
     assert "| warning" not in mock_page.text
 
@@ -237,7 +237,7 @@ def test_update_wiki_status_swallows_exceptions(monkeypatch):
 
     with patch("status_updater.pywikibot.Site", side_effect=RuntimeError("oops")):
         # Should not raise
-        status_updater.update_wiki_status("🟡 Idle")
+        status_updater.update_wiki_status("Idle")
 
 
 # ── notify_maintainers ────────────────────────────────────────────────────────
