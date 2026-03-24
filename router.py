@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlparse
 import mwoauth
 import mwoauth.flask
 import requests
+import logging
 
 from flask import (
     Response,
@@ -547,8 +548,9 @@ def rollback_from_diff_api():
             dry_run=dry_run,
             limit=limit,
         )
-    except ValueError as exc:
-        return jsonify({"detail": str(exc)}), 400
+    except ValueError:
+        logging.exception("Invalid parameters in rollback_from_diff_api")
+        return jsonify({"detail": "Invalid parameters"}), 400
 
     return jsonify(
         {
