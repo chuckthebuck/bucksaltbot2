@@ -2,6 +2,8 @@
 
 BuckSaltBot2 (tool name: **buckbot**) is a Wikimedia Commons administration tool that provides a web interface for submitting and processing automated rollback jobs. Authenticated Commons sysops and maintainers can queue rollback operations, which are then executed asynchronously by a background bot worker against Wikimedia Commons.
 
+> **Built on [Match and Split](https://gitlab.wikimedia.org/toolforge-repos/matchandsplit/)** — BuckSaltBot2 uses the Celery task-queue infrastructure from the Match and Split tool as its foundation. The Celery worker architecture has been significantly overhauled and repurposed to drive rollback job processing rather than the original match/split functionality.
+
 ## Features
 
 - **OAuth login** via Wikimedia account (sysops and registered maintainers only)
