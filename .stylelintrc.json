@@ -1,0 +1,9 @@
+{
+  "customSyntax": "postcss-less",
+  "rules": {
+    "indentation": null,
+    "no-empty-source": null,
+    "block-no-empty": null,
+    "no-descending-specificity": null
+  }
+}
