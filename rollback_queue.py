@@ -126,13 +126,10 @@ def process_rollback_job(job_id: int):
         warning_text: str | None = None
         if large:
             user_links = ", ".join(f"[[User:{u}|{u}]]" for u in notify_users)
-            warning_text = (
-                "Large batch job in progress. "
-                + (
-                    f"If issues occur, please contact: {user_links}"
-                    if user_links
-                    else "If issues occur, please contact [[User:Alachuckthebuck]]."
-                )
+            warning_text = "Large batch job in progress. " + (
+                f"If issues occur, please contact: {user_links}"
+                if user_links
+                else "If issues occur, please contact [[User:Alachuckthebuck]]."
             )
 
         status_updater.update_wiki_status(
@@ -193,7 +190,9 @@ def process_rollback_job(job_id: int):
         # Notify each flagged-bot account that was rolled back (once per job).
         if site:
             for bot_user, count in notified_bots.items():
-                status_updater.notify_bot_user(site, bot_user, batch_id, edit_count=count)
+                status_updater.notify_bot_user(
+                    site, bot_user, batch_id, edit_count=count
+                )
 
         # AFTER the loop finishes
         final_status = "failed" if failed else "completed"

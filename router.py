@@ -17,7 +17,6 @@ from flask import (
     request,
     session,
     url_for,
-    
 )
 from app import MAX_JOB_ITEMS, flask_app as app, is_maintainer
 from redis_state import get_progress, r
