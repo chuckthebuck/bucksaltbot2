@@ -89,6 +89,26 @@ def is_flagged_bot(site: pywikibot.Site, username: str) -> bool:
         return False
 
 
+def get_last_bot_edit(
+    site: pywikibot.Site | None = None,
+    username: str | None = None,
+) -> str:
+    """Return the timestamp of the bot's most recent edit, or ``'Unknown'``."""
+    try:
+        if site is None:
+            site = pywikibot.Site("commons", "commons")
+        if username is None:
+            username = site.username() or "Chuckbot"
+        user = pywikibot.User(site, username)
+        contrib = next(user.contributions(total=1), None)
+        if not contrib:
+            return "Unknown"
+        ts = contrib[2]
+        return ts.strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:  # noqa: BLE001
+        return "Unknown"
+
+
 def update_wiki_status(
     editing: str,
     web: str = "Online",
@@ -107,12 +127,13 @@ def update_wiki_status(
         site = pywikibot.Site("commons", "commons")
         page = pywikibot.Page(site, STATUS_PAGE)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        resolved_last_edit = last_edit or get_last_bot_edit(site)
 
         lines = [
             "{{Chuckbot status",
             f"| editing = {editing}",
             f"| web = {web}",
-            f"| last_edit = {last_edit or 'Unknown'}",
+            f"| last_edit = {resolved_last_edit}",
             f"| current_job = {current_job or 'None'}",
             f"| last_job = {last_job or 'None'}",
             f"| details = {details}",

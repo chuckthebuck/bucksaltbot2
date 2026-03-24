@@ -1,8 +1,6 @@
 """Tests for status_updater.py."""
 
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 
 # ── is_large_job ──────────────────────────────────────────────────────────────
