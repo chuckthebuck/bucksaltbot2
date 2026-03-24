@@ -3,6 +3,7 @@ import time
 import threading
 import requests
 
+from flask_cors import CORS
 from flask import Flask, session
 from celery import Celery
 
@@ -72,10 +73,17 @@ def is_maintainer(username):
 
 flask_app = Flask(__name__)
 
+flask_app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-insecure-secret")
+
+flask_app.config.update(
+    SESSION_COOKIE_SAMESITE="None",
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_PATH="/",
+    SESSION_COOKIE_DOMAIN=None
+)
+
 flask_app.register_blueprint(assets_blueprint)
 
-
-flask_app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-insecure-secret")
 
 
 CELERY_BROKER_URL = os.getenv(
@@ -117,3 +125,9 @@ def inject_user_permissions():
 
 
 import router  # noqa: E402,F401
+CORS(flask_app, resources={
+    r"/api/*": {
+        "origins": ["https://commons.wikimedia.org"],
+        "supports_credentials": True
+    }
+})

@@ -491,6 +491,7 @@ def rollback_queue_ui():
     )
 
 @app.route("/api/v1/rollback/from-diff", methods=["POST"])
+<<<<<<< HEAD
 def rollback_from_diff_api():
     username = session.get("username")
 
@@ -578,6 +579,41 @@ def rollback_from_diff_page():
         type="rollback-from-diff",
     )
 
+=======
+def rollback_from_diff_page():
+    user = request.args.get("user")
+    diff = request.args.get("diff")
+    summary = request.args.get("summary", "")
+    dry_run = request.args.get("dry_run") == "1"
+
+    # 🔒 Require login
+    if "username" not in session:
+        return redirect(url_for("login", next=request.url))
+
+    username = session["username"]
+
+    # Validate
+    if not user or not diff:
+        return "Missing parameters", 400
+
+    # 👉 Call your existing backend logic
+    result = create_rollback_jobs_from_diff(
+        target_user=user,
+        start_diff=int(diff),
+        summary=summary,
+        requested_by=username,
+        dry_run=dry_run
+    )
+
+    return f"""
+    <h2>Rollback job created</h2>
+    <p>User: {user}</p>
+    <p>Edits: {result['total_items']}</p>
+    <p>Chunks: {result['chunks']}</p>
+    <a href="/jobs">View progress</a>
+    """
+
+>>>>>>> 720a984b9a47dce3c5489377a4852e6d9bab7059
 @app.route("/rollback-queue/all-jobs")
 def rollback_queue_all_jobs_ui():
     username = session.get("username")
