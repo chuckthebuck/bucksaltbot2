@@ -96,12 +96,23 @@ bucksaltbot2/
 
 ## Prerequisites
 
-- Python 3.13
+- Python 3.11 (limited by celery's worker) 
 - Node.js 22.x
 - Redis
 - MySQL / MariaDB
 - A Wikimedia OAuth consumer key/secret (for user login)
-- A Wikimedia bot account with OAuth credentials (for executing edits)
+- A Wikimedia bot account with OAuth credentials and the following grants (for executing edits)
+
+    -Perform high volume activity
+
+      -High-volume (bot) access
+  
+    -Interact with pages
+
+       -Edit existing pages; Create, edit, and move pages; Patrol changes to pages
+    -Perform administrative actions
+
+      -Rollback changes to pages
 
 ## Setup & Installation
 
