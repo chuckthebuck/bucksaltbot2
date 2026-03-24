@@ -333,7 +333,7 @@ def _oauth_callback_url():
 
     tool_name = os.environ.get("TOOL_NAME") or "buckbot"
 
-    return f"https://{tool_name}.toolforge.org/oauth-callback"
+    return f"https://{tool_name}.toolforge.org/mas-oauth-callback"
 
 
 def _rollback_api_actor():

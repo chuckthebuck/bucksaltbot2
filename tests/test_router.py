@@ -637,7 +637,7 @@ def test_login_uses_current_site_callback_url_by_default(client):
     assert resp.status_code == 302
     assert (
         mock_initiate.call_args.kwargs["callback"]
-        == "https://buckbot.toolforge.org/oauth-callback"
+        == "https://buckbot.toolforge.org/mas-oauth-callback"
     )
 
 
