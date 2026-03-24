@@ -15,9 +15,9 @@ from flask import (
     request,
     session,
     url_for,
-    escape,
+    
 )
-
+from markupsafe import escape
 from app import MAX_JOB_ITEMS, flask_app as app, is_maintainer
 from redis_state import get_progress, r
 from rollback_queue import process_rollback_job
