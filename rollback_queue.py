@@ -1,6 +1,25 @@
 import os
 from pathlib import Path
 from celery import shared_task
+
+
+def _bootstrap_pywikibot_env() -> None:
+    """Set PYWIKIBOT_DIR before importing pywikibot."""
+    pywikibot_home = Path.home() / ".pywikibot"
+    pywikibot_home.mkdir(parents=True, exist_ok=True)
+    os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
+
+    config_file = pywikibot_home / "user-config.py"
+    if not config_file.exists():
+        config_file.write_text(
+            "family = 'commons'\n"
+            "mylang = 'commons'\n"
+            "usernames['commons']['commons'] = 'Chuckbot'\n"
+        )
+
+
+_bootstrap_pywikibot_env()
+
 import pywikibot
 from redis_state import set_progress, update_progress
 from toolsdb import get_conn
