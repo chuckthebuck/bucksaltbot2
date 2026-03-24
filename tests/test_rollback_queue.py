@@ -18,6 +18,26 @@ def _make_mock_conn():
     return mock_conn, mock_cursor
 
 
+def test_resolve_pywikibot_dir_falls_back_from_unwritable_home(monkeypatch):
+    import rollback_queue
+
+    monkeypatch.delenv("PYWIKIBOT_DIR", raising=False)
+    monkeypatch.setenv("HOME", "/data/project/buckbot")
+
+    attempted: list[str] = []
+
+    def fake_mkdir(path_obj, parents=False, exist_ok=False):
+        attempted.append(str(path_obj))
+        if str(path_obj).startswith("/data/project"):
+            raise PermissionError("denied")
+
+    with patch("rollback_queue.Path.mkdir", new=fake_mkdir):
+        resolved = rollback_queue._resolve_pywikibot_dir()
+
+    assert str(resolved) == "/workspace/.pywikibot"
+    assert attempted[0] == "/data/project/buckbot/.pywikibot"
+
+
 # ── _fetch_job ────────────────────────────────────────────────────────────────
 
 
@@ -333,5 +353,5 @@ def test_bot_site_logs_in_using_pywikibot_oauth(monkeypatch):
         returned = rollback_queue._bot_site()
 
     mock_site_cls.assert_called_once_with("commons", "commons")
-    mock_site.login.assert_called_once_with()
+    mock_site.login.assert_called_once_with(oauth_token=("ct", "cs", "at", "as"))
     assert returned is mock_site
