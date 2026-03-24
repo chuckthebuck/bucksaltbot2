@@ -1,32 +1,187 @@
-# Match and Split tool
+# BuckSaltBot2
 
-The match and split tool provides a GUI to initiate jobs on the server that takes existing text from Internet Archive (or other public domain sources) and automagically matches the text to split it into the correct `Page:` namespace pages.
+BuckSaltBot2 (tool name: **buckbot**) is a Wikimedia Commons administration tool that provides a web interface for submitting and processing automated rollback jobs. Authenticated Commons sysops and maintainers can queue rollback operations, which are then executed asynchronously by a background bot worker against Wikimedia Commons.
 
-# Local setup
+## Features
 
-> Note: Match/split edit automation is intentionally disabled in this deployment to avoid accidental buggy mass edits.
+- **OAuth login** via Wikimedia account (sysops and registered maintainers only)
+- **Rollback queue** — submit rollback jobs targeting a specific user's edits from a given timestamp
+- **Batch rollback** — submit multiple rollback items at once
+- **Rollback from diff** — derive rollback target from a diff/revision URL
+- **Job monitoring** — track the status and progress of submitted jobs in real time
+- **Admin view** — maintainers can see all queued jobs across all users
+
+## Repository Structure
+
+```
+bucksaltbot2/
+├── app.py                   # Flask app factory, Celery setup, maintainer auth
+├── router.py                # All HTTP routes (login, API endpoints, UI pages)
+├── blueprint.py             # Static asset blueprint
+├── celery_worker.py         # Celery worker entry point
+├── celery_init.py           # Celery initialization helper
+├── rollback_queue.py        # Background task: processes rollback jobs via pywikibot
+├── toolsdb.py               # MySQL connection management
+├── redis_state.py           # Redis-backed job progress state
+├── redis_init.py            # Redis client initialization
+├── pywikibot_utils.py       # pywikibot helper utilities
+├── editsummary.py           # Edit summary generation
+├── utils.py                 # General utilities
+├── cnf.py                   # Config file parser (.replica.my.cnf)
+├── copy_file.py             # File copy utility
+├── logger.py                # Logging configuration
+├── user-config.tmpl         # pywikibot authentication template
+│
+├── client-src/              # Vue 3 + TypeScript frontend source
+│   ├── App.vue              # Rollback queue UI
+│   ├── AllJobsApp.vue       # Admin all-jobs view
+│   ├── BatchApp.vue         # Batch rollback submission
+│   ├── FromDiffApp.vue      # Rollback-from-diff submission
+│   ├── api.ts               # API client (fetch wrappers)
+│   ├── draft.ts             # Draft/form utilities
+│   ├── script.ts            # Shared scripts
+│   ├── styles.less          # Global styles
+│   └── components/
+│       ├── JobsTable.vue    # Jobs table component
+│       └── JobItemRow.vue   # Individual job row component
+│
+├── templates/               # Jinja2 HTML templates
+│   ├── base.html
+│   ├── index.html
+│   ├── rollback_queue.html
+│   ├── rollback_queue_all_jobs.html
+│   ├── batch_rollback.html
+│   ├── rollback_from_diff.html
+│   ├── status.html
+│   ├── logs.html
+│   └── all_status.html
+│
+├── tests/                   # Python test suite (pytest)
+│   ├── conftest.py
+│   ├── test_router.py
+│   ├── test_blueprint.py
+│   ├── test_rollback_queue.py
+│   ├── test_toolsdb.py
+│   └── test_utils.py
+│
+├── scripts/                 # Startup and deployment scripts
+│   ├── run_dev_env.sh       # Start local dev environment
+│   ├── start_gunicorn.sh    # Start production web server
+│   ├── start_celery.sh      # Start Celery worker
+│   ├── ping_celery.sh       # Celery health check
+│   └── toolforge-deploy-new-version.sh
+│
+├── Dockerfile.web           # Docker image for the Flask web service
+├── Dockerfile.celery        # Docker image for the Celery worker
+├── docker-compose.yml       # Local Docker Compose configuration
+├── Procfile                 # Process definitions for Toolforge
+├── requirements.txt         # Python dependencies
+├── package.json             # Node.js dependencies and build scripts
+└── .python-version          # Pinned Python version (3.13)
+```
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.13, Flask 3.x, Gunicorn |
+| Task queue | Celery 5.x + Redis |
+| Database | MySQL / MariaDB (via PyMySQL) |
+| Bot API | pywikibot 11.x |
+| Authentication | OAuth 1.0 via mwoauth |
+| Frontend | Vue 3, TypeScript, Vite, Wikimedia Codex |
+| Containerisation | Docker, Docker Compose |
 
 ## Prerequisites
 
-- Python
-- NodeJS
+- Python 3.13
+- Node.js 22.x
 - Redis
-- MySQL (MariaDB)
+- MySQL / MariaDB
+- A Wikimedia OAuth consumer key/secret (for user login)
+- A Wikimedia bot account with OAuth credentials (for executing edits)
 
-## Get it running
+## Setup & Installation
+
+### With Docker (recommended for local development)
+
+Docker Compose automatically starts Redis, MariaDB, the Celery worker, and the Flask web server.
+
+```bash
+# Clone the repository
+git clone https://github.com/chuckthebuck/bucksaltbot2.git
+cd bucksaltbot2
+
+# Start all services (foreground)
+docker compose up
+
+# Or start in detached (background) mode
+docker compose up -d
+```
+
+> When using Docker, set `user = root` and `password = root` in `.replica.my.cnf` to match the MariaDB container credentials.
+
+The tool will be available at **http://0.0.0.0:8000**.
+
+To view logs from any container:
+
+```bash
+docker logs <container-name>   # e.g. docker logs web
+```
 
 ### Without Docker
 
-Follow these steps to get the tool running locally
-- Set environment variables by copying values from the `.env.tmpl` file into a `.env` file.
-- Set configuration variables by copying values from the `replica.my.cnf.tmpl` file into a `.replica.my.cnf` file. These will be used to access the database.
-- Install npm packages using `npm ci`.
-- Install python packages required for the project from the `requirements.txt` file by running the command `pip install -r requirements.txt`.
-  > It is recommended to create a python environment for this project before installing Python packages ([more details](https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/#create-and-use-virtual-environments))
-- Before running the project, ensure the following are already running in the background
-  - MySQL service
-  - Redis service
-- Then, run `./scripts/run_dev_env.sh` to see the tool on your browser at `http://0.0.0.0:8000/`.
+**1. Install system dependencies**
+
+Ensure Python 3.13, Node.js 22.x, MySQL/MariaDB, and Redis are installed and running.
+
+**2. Clone the repository**
+
+```bash
+git clone https://github.com/chuckthebuck/bucksaltbot2.git
+cd bucksaltbot2
+```
+
+**3. Create and activate a Python virtual environment**
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+> See the [Python packaging guide](https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/#create-and-use-virtual-environments) for more details.
+
+**4. Install dependencies**
+
+```bash
+pip install -r requirements.txt
+npm ci
+```
+
+**5. Configure the application**
+
+Copy and fill in the required configuration files:
+
+```bash
+# Environment variables (OAuth keys, secret key, Celery URL, etc.)
+cp .env.tmpl .env
+
+# Database credentials
+cp replica.my.cnf.tmpl .replica.my.cnf
+
+# pywikibot bot authentication
+cp user-config.tmpl user-config.py
+```
+
+See [Environment Variables](#environment-variables) below for a description of each setting.
+
+**6. Start the development server**
+
+```bash
+./scripts/run_dev_env.sh
+```
+
+The tool will be available at **http://0.0.0.0:8000**.
 
 ### On Toolforge
 
@@ -37,75 +192,86 @@ cd ..
 ./scripts/setup_all.sh --toolforge
 ```
 
-This triggers `toolforge build start .` from `bucksaltbot/`, then restarts webservice/jobs.
+This triggers `toolforge build start .` from the tool directory, then restarts the webservice and jobs.
 
-#### Buildpack channel selection during Toolforge rollouts
+#### Buildpack channel selection
 
-The deploy helper script supports choosing the Toolforge buildpack channel via the `BUILDPACK_CHANNEL` environment variable:
-
-- `latest` (implicit): use Toolforge latest buildpack versions.
-- `latest`: pass `--use-latest-versions` to test upcoming changes.
-- `deprecated`: pass `--use-deprecated-versions` temporarily while fixing breakages.
-
-Examples:
+The deploy script supports the `BUILDPACK_CHANNEL` environment variable:
 
 ```bash
-# Test upcoming buildpack versions
+# Use latest buildpack versions (default)
+./scripts/toolforge-deploy-new-version.sh
+
+# Test upcoming buildpack changes
 BUILDPACK_CHANNEL=latest ./scripts/toolforge-deploy-new-version.sh
 
 # Fall back temporarily while debugging
 BUILDPACK_CHANNEL=deprecated ./scripts/toolforge-deploy-new-version.sh
-
-# Use latest buildpack versions (default)
-./scripts/toolforge-deploy-new-version.sh
-
-# Explicitly use platform defaults
-BUILDPACK_CHANNEL=default ./scripts/toolforge-deploy-new-version.sh
 ```
 
 #### Troubleshooting Toolforge builds
 
-If you see warnings like the following during `toolforge build start`, they are usually harmless platform-level credential setup messages and **not** the root cause of a failed build:
+Warnings like the following are usually harmless and **not** the root cause of a failed build:
 
 ```text
 warning: unsuccessful cred copy: ".docker" ... permission denied
 ```
 
-The more important error is usually later in logs, e.g.:
+A more meaningful error appears later in the logs, e.g.:
 
 ```text
 ERROR: No buildpack groups passed detection.
 ```
 
-When this happens, verify that you started the build from the directory that contains your app source and buildpack marker files (`requirements.txt`, `package.json`, `package-lock.json`, `Procfile`).
-
-For this project, run from the repository root:
+When this happens, verify the build is started from the repository root (the directory containing `requirements.txt`, `package.json`, `package-lock.json`, and `Procfile`):
 
 ```bash
 toolforge build start .
 ```
 
-If building from GitHub URL, ensure the URL points at the repository root that contains those files (not a parent/child folder that omits them).
+## Environment Variables
 
-### With Docker
+| Variable | Description | Default |
+|---|---|---|
+| `SECRET_KEY` | Flask session secret key | `dev-insecure-secret` |
+| `USER_OAUTH_CONSUMER_KEY` | Wikimedia OAuth consumer key for user login | — |
+| `USER_OAUTH_CONSUMER_SECRET` | Wikimedia OAuth consumer secret for user login | — |
+| `CONSUMER_TOKEN` | Bot OAuth consumer token (pywikibot) | — |
+| `CONSUMER_SECRET` | Bot OAuth consumer secret (pywikibot) | — |
+| `ACCESS_TOKEN` | Bot OAuth access token (pywikibot) | — |
+| `ACCESS_SECRET` | Bot OAuth access secret (pywikibot) | — |
+| `CELERY_BROKER_URL` | Redis URL used as the Celery broker | `redis://redis.svc.tools.eqiad1.wikimedia.cloud:6379/9` |
+| `CELERY_RESULT_BACKEND` | Redis URL used as the Celery result backend | same as `CELERY_BROKER_URL` |
+| `BOT_ADMIN_ACCOUNTS` | Comma-separated list of extra admin usernames | — |
+| `MAX_JOB_ITEMS` | Maximum number of items allowed per job | `50` |
+| `FLASK_DEBUG` | Enable Flask debug mode (`1`/`0`) | `0` |
+| `DOCKER` | Set to `TRUE` inside Docker containers | — |
+| `NOTDEV` | If set, skips loading the `.env` file | — |
 
-The following points summarise the docker configuration of the project:
-- `Dockerfile.celery` sets up and starts the celery environment
-- `Dockerfile.web` sets up NodeJS and runs the `run_dev_env.sh` to start the dev environment
-- MariaDB docker image is pulled in and sets up the MySQL database
-  > Set the values in `replica.my.cnf` as `user = root` and `passwor = root`. Otherwise the database connection will not be set up properly
-- Redis docker image is pulled in and sets up the Redis instance
-  
-To run the tool, follow these steps:
-- Ensure docker and docker-compose are installed on your system
-- Running the containers:
-  - `docker compose up` to start the containers
-  - `docker compose up -d` to start the containers in detached mode (meaning they will run in the background)
-  > Run `docker logs <container-name>` to see the logs generated by any of the containers
-- You should be able to see the tool in your browser at `http://0.0.0.0:8000`
+Database credentials are read from `.replica.my.cnf` (MySQL option file format).
 
+## Running Tests
 
-# Contributing
+**Python (pytest):**
 
-- Feel free to test the tool out and create a [ticket on phabricator](https://phabricator.wikimedia.org/project/board/7238/) if you find a bug or want to request a feature.
-- If you make fixes to the project's codebase/documentation, feel free to raise a Merge Request on the [GitLab repository](https://gitlab.wikimedia.org/toolforge-repos/matchandsplit/) for the project.
+```bash
+python -m pytest tests/
+```
+
+**Frontend (vitest):**
+
+```bash
+npm run test
+```
+
+**Type checking and linting:**
+
+```bash
+npm run typecheck
+npm run lint
+```
+
+## Contributing
+
+- Found a bug or have a feature request? Open a [ticket on Phabricator](https://phabricator.wikimedia.org/project/board/7238/).
+- Code or documentation improvements are welcome as a Merge Request on the [GitLab repository](https://gitlab.wikimedia.org/toolforge-repos/matchandsplit/).
