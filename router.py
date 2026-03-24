@@ -120,10 +120,7 @@ def fetch_contribs_after_timestamp(target_user, start_timestamp, limit=None):
         for edit in contribs:
             # Strictly after the diff timestamp.
             if edit.get("timestamp") and edit["timestamp"] > start_timestamp:
-                results.append({
-                    "title": edit["title"],
-                    "user": target_user
-                })
+                results.append({"title": edit["title"], "user": target_user})
 
                 if limit is not None and len(results) >= limit:
                     break
@@ -218,6 +215,8 @@ def create_rollback_jobs_from_diff(
         "resolved_timestamp": start_timestamp,
         "oldid": oldid,
     }
+
+
 if not os.environ.get("NOTDEV"):
     from dotenv import load_dotenv
 
@@ -490,6 +489,7 @@ def rollback_queue_ui():
         type="rollback-queue",
     )
 
+
 @app.route("/api/v1/rollback/from-diff", methods=["POST"])
 def rollback_from_diff_api():
     username = session.get("username")
@@ -577,6 +577,7 @@ def rollback_from_diff_page():
         default_limit=100,
         type="rollback-from-diff",
     )
+
 
 @app.route("/rollback-queue/all-jobs")
 def rollback_queue_all_jobs_ui():

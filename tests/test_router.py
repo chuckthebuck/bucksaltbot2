@@ -291,7 +291,9 @@ def test_from_diff_api_passes_limit_to_creation_helper(client):
 
     with (
         patch("router.is_maintainer", return_value=True),
-        patch("router.create_rollback_jobs_from_diff", return_value=expected) as mock_create,
+        patch(
+            "router.create_rollback_jobs_from_diff", return_value=expected
+        ) as mock_create,
     ):
         resp = client.post(
             "/api/v1/rollback/from-diff",
@@ -325,7 +327,9 @@ def test_from_diff_api_accepts_diff_url(client):
 
     with (
         patch("router.is_maintainer", return_value=True),
-        patch("router.create_rollback_jobs_from_diff", return_value=expected) as mock_create,
+        patch(
+            "router.create_rollback_jobs_from_diff", return_value=expected
+        ) as mock_create,
     ):
         resp = client.post(
             "/api/v1/rollback/from-diff",
