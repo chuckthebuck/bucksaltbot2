@@ -25,13 +25,13 @@ def test_fetch_job_returns_job_and_items():
     import rollback_queue
 
     mock_conn, mock_cursor = _make_mock_conn()
-    mock_cursor.fetchone.return_value = (1, "alice", "queued", 0)
+    mock_cursor.fetchone.return_value = (1, "alice", "queued", 0, 12345)
     mock_cursor.fetchall.return_value = [(10, "File:A.jpg", "Vandal", None)]
 
     with patch("rollback_queue.get_conn", return_value=mock_conn):
         job, items = rollback_queue._fetch_job(1)
 
-    assert job == (1, "alice", "queued", 0)
+    assert job == (1, "alice", "queued", 0, 12345)
     assert items == [(10, "File:A.jpg", "Vandal", None)]
 
 
@@ -103,7 +103,7 @@ def test_process_rollback_job_dry_run_completes_without_bot_login():
     """Dry-run jobs must not call _bot_site and must mark all items completed."""
     import rollback_queue
 
-    job = (1, "alice", "queued", 1)  # dry_run=1
+    job = (1, "alice", "queued", 1, 12345)  # dry_run=1
     items = [(10, "File:A.jpg", "Vandal", None), (11, "File:B.jpg", "Vandal", None)]
 
     with (
@@ -111,6 +111,7 @@ def test_process_rollback_job_dry_run_completes_without_bot_login():
         patch("rollback_queue._update_job_status") as mock_update_job,
         patch("rollback_queue._update_item") as mock_update_item,
         patch("rollback_queue._bot_site") as mock_bot_site,
+        patch("rollback_queue._count_batch_jobs", return_value=1),
     ):
         rollback_queue.process_rollback_job.run(1)
 
@@ -128,7 +129,7 @@ def test_process_rollback_job_dry_run_sets_running_then_completed():
     """process_rollback_job transitions: queued → running → completed."""
     import rollback_queue
 
-    job = (1, "alice", "queued", 1)
+    job = (1, "alice", "queued", 1, 12345)
     items = [(10, "File:A.jpg", "Vandal", None)]
 
     with (
@@ -136,6 +137,7 @@ def test_process_rollback_job_dry_run_sets_running_then_completed():
         patch("rollback_queue._update_job_status") as mock_update_job,
         patch("rollback_queue._update_item"),
         patch("rollback_queue._bot_site"),
+        patch("rollback_queue._count_batch_jobs", return_value=1),
     ):
         rollback_queue.process_rollback_job.run(1)
 
@@ -152,7 +154,7 @@ def test_process_rollback_job_live_run_obtains_mw_rollback_token():
     site.tokens["rollback"] and pass it to site.simple_request."""
     import rollback_queue
 
-    job = (1, "alice", "queued", 0)  # dry_run=0
+    job = (1, "alice", "queued", 0, 12345)  # dry_run=0
     items = [(10, "File:A.jpg", "Vandal", "Custom summary")]
 
     mock_site = MagicMock()
@@ -165,6 +167,7 @@ def test_process_rollback_job_live_run_obtains_mw_rollback_token():
         patch("rollback_queue._update_job_status"),
         patch("rollback_queue._update_item"),
         patch("rollback_queue._bot_site", return_value=mock_site),
+        patch("rollback_queue._count_batch_jobs", return_value=1),
     ):
         rollback_queue.process_rollback_job.run(1)
 
@@ -184,7 +187,7 @@ def test_process_rollback_job_live_run_uses_default_summary_when_none():
     """When item.summary is None the default summary includes requested_by."""
     import rollback_queue
 
-    job = (1, "alice", "queued", 0)
+    job = (1, "alice", "queued", 0, 12345)
     items = [(10, "File:A.jpg", "Vandal", None)]
 
     mock_site = MagicMock()
@@ -196,6 +199,7 @@ def test_process_rollback_job_live_run_uses_default_summary_when_none():
         patch("rollback_queue._update_job_status"),
         patch("rollback_queue._update_item"),
         patch("rollback_queue._bot_site", return_value=mock_site),
+        patch("rollback_queue._count_batch_jobs", return_value=1),
     ):
         rollback_queue.process_rollback_job.run(1)
 
@@ -206,7 +210,7 @@ def test_process_rollback_job_live_run_uses_default_summary_when_none():
 def test_process_rollback_job_live_run_marks_item_completed_on_success():
     import rollback_queue
 
-    job = (1, "alice", "queued", 0)
+    job = (1, "alice", "queued", 0, 12345)
     items = [(10, "File:A.jpg", "Vandal", None)]
 
     mock_site = MagicMock()
@@ -218,6 +222,7 @@ def test_process_rollback_job_live_run_marks_item_completed_on_success():
         patch("rollback_queue._update_job_status"),
         patch("rollback_queue._update_item") as mock_update_item,
         patch("rollback_queue._bot_site", return_value=mock_site),
+        patch("rollback_queue._count_batch_jobs", return_value=1),
     ):
         rollback_queue.process_rollback_job.run(1)
 
@@ -228,7 +233,7 @@ def test_process_rollback_job_live_run_marks_item_failed_on_api_error():
     """When the MW API call raises an exception the item is marked failed."""
     import rollback_queue
 
-    job = (1, "alice", "queued", 0)
+    job = (1, "alice", "queued", 0, 12345)
     items = [(10, "File:A.jpg", "Vandal", None)]
 
     mock_site = MagicMock()
@@ -240,6 +245,7 @@ def test_process_rollback_job_live_run_marks_item_failed_on_api_error():
         patch("rollback_queue._update_job_status") as mock_update_job,
         patch("rollback_queue._update_item") as mock_update_item,
         patch("rollback_queue._bot_site", return_value=mock_site),
+        patch("rollback_queue._count_batch_jobs", return_value=1),
     ):
         rollback_queue.process_rollback_job.run(1)
 
@@ -265,7 +271,7 @@ def test_process_rollback_job_skips_processing_when_job_not_found():
 def test_process_rollback_job_returns_immediately_when_already_canceled():
     import rollback_queue
 
-    job = (1, "alice", "canceled", 1)
+    job = (1, "alice", "canceled", 1, 12345)
     with (
         patch("rollback_queue._fetch_job", return_value=(job, [])),
         patch("rollback_queue._update_job_status") as mock_update_job,
@@ -278,8 +284,8 @@ def test_process_rollback_job_returns_immediately_when_already_canceled():
 def test_process_rollback_job_marks_item_canceled_if_job_canceled_mid_run():
     import rollback_queue
 
-    queued_job = (1, "alice", "queued", 1)
-    canceled_job = (1, "alice", "canceled", 1)
+    queued_job = (1, "alice", "queued", 1, 12345)
+    canceled_job = (1, "alice", "canceled", 1, 12345)
     items = [(10, "File:A.jpg", "Vandal", None)]
 
     with (
@@ -290,6 +296,7 @@ def test_process_rollback_job_marks_item_canceled_if_job_canceled_mid_run():
         patch("rollback_queue._update_job_status"),
         patch("rollback_queue._update_item") as mock_update_item,
         patch("rollback_queue._bot_site"),
+        patch("rollback_queue._count_batch_jobs", return_value=1),
     ):
         rollback_queue.process_rollback_job.run(1)
 
