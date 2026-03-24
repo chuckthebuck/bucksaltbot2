@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pywikibot
 
@@ -23,6 +24,64 @@ NOTIFY_PAGE = "User:Alachuckthebuck/chuckbot/notify"
 # ── Redis key settings ────────────────────────────────────────────────────────
 
 _NOTIFIED_BATCH_TTL = 7 * 24 * 3600  # 7 days
+
+
+
+# ── Pywikibot OAuth configuration ─────────────────────────────────────────
+
+
+def _setup_pywikibot_dir() -> None:
+    """Configure Pywikibot to use ~/.pywikibot for config files.
+    
+    This ensures Pywikibot uses the home directory instead of /workspace,
+    which avoids file ownership issues on Toolforge.
+    """
+    from pathlib import Path
+    pywikibot_home = Path.home() / ".pywikibot"
+    pywikibot_home.mkdir(parents=True, exist_ok=True)
+    os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
+    
+    # Create minimal config if it doesn't exist
+    config_file = pywikibot_home / "user-config.py"
+    if not config_file.exists():
+        config_file.write_text(
+            "family = 'commons'\n"
+            "mylang = 'commons'\n"
+            "usernames['commons']['commons'] = 'Chuckbot'\n"
+        )
+
+
+def _get_authenticated_site() -> pywikibot.Site:
+    """Create and authenticate a Pywikibot Site using OAuth env vars.
+    
+    Returns:
+        An authenticated pywikibot.Site object for Commons.
+    """
+    # Ensure Pywikibot config is in the right place
+    _setup_pywikibot_dir()
+    
+    # Get OAuth credentials from environment
+    consumer_key = os.getenv("CONSUMER_TOKEN") or os.getenv("OAUTH_CONSUMER_KEY")
+    consumer_secret = os.getenv("CONSUMER_SECRET") or os.getenv("OAUTH_CONSUMER_SECRET")
+    access_token = os.getenv("ACCESS_TOKEN") or os.getenv("OAUTH_ACCESS_TOKEN")
+    access_secret = os.getenv("ACCESS_SECRET") or os.getenv("OAUTH_ACCESS_SECRET")
+    
+    # Create site object
+    site = pywikibot.Site("commons", "commons")
+    
+    # Attempt OAuth login if credentials are available
+    if all([consumer_key, consumer_secret, access_token, access_secret]):
+        try:
+            site.login(oauth_token=(consumer_key, consumer_secret, access_token, access_secret))
+        except Exception as e:
+            # Fall back to config-based auth if OAuth fails
+            try:
+                site.login()
+            except Exception:
+                # If all else fails, continue without authentication
+                pass
+    
+    return site
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -96,7 +155,7 @@ def get_last_bot_edit(
     """Return the timestamp of the bot's most recent edit, or ``'Unknown'``."""
     try:
         if site is None:
-            site = pywikibot.Site("commons", "commons")
+            site = _get_authenticated_site()
         if username is None:
             username = site.username() or "Chuckbot"
         user = pywikibot.User(site, username)
@@ -124,7 +183,7 @@ def update_wiki_status(
         return
 
     try:
-        site = pywikibot.Site("commons", "commons")
+        site = _get_authenticated_site()
         page = pywikibot.Page(site, STATUS_PAGE)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         resolved_last_edit = last_edit or get_last_bot_edit(site)
@@ -162,7 +221,7 @@ def notify_maintainers(
         return
 
     if site is None:
-        site = pywikibot.Site("commons", "commons")
+        site = _get_authenticated_site()
 
     for username in users:
         try:

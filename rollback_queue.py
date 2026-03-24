@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from celery import shared_task
 import pywikibot
 from redis_state import set_progress, update_progress
@@ -69,7 +70,26 @@ def _update_item(item_id: int, status: str, error: str | None = None):
         conn.commit()
 
 
+def _setup_pywikibot_dir() -> None:
+    """Configure Pywikibot to use ~/.pywikibot for config files."""
+    pywikibot_home = Path.home() / ".pywikibot"
+    pywikibot_home.mkdir(parents=True, exist_ok=True)
+    os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
+    
+    # Create minimal config if it doesn't exist
+    config_file = pywikibot_home / "user-config.py"
+    if not config_file.exists():
+        config_file.write_text(
+            "family = 'commons'\n"
+            "mylang = 'commons'\n"
+            "usernames['commons']['commons'] = 'Chuckbot'\n"
+        )
+
+
 def _bot_site() -> pywikibot.Site:
+    """Create and authenticate a Pywikibot Site using OAuth env vars."""
+    _setup_pywikibot_dir()
+    
     consumer_token = os.environ.get("CONSUMER_TOKEN")
     consumer_secret = os.environ.get("CONSUMER_SECRET")
     access_token = os.environ.get("ACCESS_TOKEN")
@@ -81,9 +101,14 @@ def _bot_site() -> pywikibot.Site:
         )
 
     site = pywikibot.Site("commons", "commons")
-    site.login()
-
-    print("Logged in as:", site.user())
+    
+    # Authenticate with OAuth
+    try:
+        site.login(oauth_token=(consumer_token, consumer_secret, access_token, access_secret))
+        print("Logged in as:", site.user())
+    except Exception as e:
+        print(f"OAuth login failed: {e}")
+        raise
 
     return site
 
@@ -119,6 +144,8 @@ def process_rollback_job(job_id: int):
         # for the actual talk-page notifications below.
         notify_users: list[str] = []
         if large:
+            if site is None:
+                _setup_pywikibot_dir()
             _notify_site = site or pywikibot.Site("commons", "commons")
             notify_users = status_updater.get_notify_list(_notify_site)
 
@@ -141,6 +168,8 @@ def process_rollback_job(job_id: int):
 
         # Notify maintainers once per large batch.
         if large and not status_updater.is_batch_already_notified(batch_id):
+            if site is None:
+                _setup_pywikibot_dir()
             _notify_site = site or pywikibot.Site("commons", "commons")
             status_updater.notify_maintainers(batch_id, notify_users, site=_notify_site)
             status_updater.mark_batch_notified(batch_id)

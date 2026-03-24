@@ -547,9 +547,12 @@ def rollback_from_diff_api():
             dry_run=dry_run,
             limit=limit,
         )
-    except ValueError:
+    except ValueError as e:
         logging.exception("Invalid parameters in rollback_from_diff_api")
-        return jsonify({"detail": "Invalid parameters"}), 400
+        return jsonify({"detail": str(e)}), 400
+    except Exception as e:
+        logging.exception("Error in rollback_from_diff_api")
+        return jsonify({"detail": "Failed to create rollback jobs: " + str(e)}), 500
 
     return jsonify(
         {

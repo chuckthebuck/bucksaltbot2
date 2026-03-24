@@ -31,11 +31,13 @@ const maxLimit = computed(() => Number(props.max_limit ?? 1000));
 function validate(): boolean {
   errors.value = [];
 
-  if (!diff.value.trim()) {
+  const trimmedDiff = String(diff.value ?? "").trim();
+
+  if (!trimmedDiff) {
     errors.value.push("Diff is required.");
   }
 
-  const trimmedLimit = limit.value.trim();
+  const trimmedLimit = String(limit.value ?? "").trim();
 
   if (trimmedLimit) {
     const parsedLimit = Number(trimmedLimit);
@@ -51,25 +53,27 @@ function validate(): boolean {
 }
 
 async function submit() {
-  if (!validate()) {
-    return;
-  }
-
-  loading.value = true;
-  errors.value = [];
-  result.value = null;
-
-  const trimmedLimit = limit.value.trim();
-
   try {
+    if (!validate()) {
+      return;
+    }
+
+    loading.value = true;
+    errors.value = [];
+    result.value = null;
+
+    const trimmedDiff = String(diff.value ?? "").trim();
+    const trimmedSummary = String(summary.value ?? "").trim();
+    const trimmedLimit = String(limit.value ?? "").trim();
+
     const response = await fetch("/api/v1/rollback/from-diff", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        diff: diff.value.trim(),
-        summary: summary.value.trim(),
+        diff: trimmedDiff,
+        summary: trimmedSummary,
         dry_run: dryRun.value,
         limit: trimmedLimit ? Number(trimmedLimit) : undefined
       })
@@ -84,7 +88,7 @@ async function submit() {
 
     result.value = data;
   } catch {
-    errors.value = ["Network error while creating rollback jobs"];
+    errors.value = ["Unable to queue rollback jobs. Check inputs and try again."];
   } finally {
     loading.value = false;
   }
