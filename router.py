@@ -15,6 +15,7 @@ from flask import (
     request,
     session,
     url_for,
+    escape,
 )
 
 from app import MAX_JOB_ITEMS, flask_app as app, is_maintainer
@@ -371,7 +372,7 @@ def rollback_from_diff_page():
 
     return f"""
     <h2>Rollback job created</h2>
-    <p>User: {user}</p>
+    <p>User: {escape(user)}</p>
     <p>Edits: {result['total_items']}</p>
     <p>Chunks: {result['chunks']}</p>
     <a href="/jobs">View progress</a>
