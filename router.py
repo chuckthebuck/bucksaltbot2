@@ -28,6 +28,16 @@ from toolsdb import get_conn
 ALLOWED_GROUPS = {"sysop"}
 GROUP_CACHE_TTL = 300
 _group_cache = {}
+
+# Comma-separated list of individual MediaWiki account names that are
+# authorised to use this tool.  Intended for adding test accounts without
+# granting full maintainer privileges.
+# Example: EXTRA_AUTHORIZED_USERS=Alice,TestUser42
+EXTRA_AUTHORIZED_USERS: set[str] = {
+    u.strip().lower()
+    for u in os.getenv("EXTRA_AUTHORIZED_USERS", "").split(",")
+    if u.strip()
+}
 _DIFF_PAYLOAD_TTL = 7 * 24 * 3600
 
 
@@ -440,6 +450,9 @@ def is_authorized(username):
         return False
 
     if is_maintainer(username):
+        return True
+
+    if username.lower() in EXTRA_AUTHORIZED_USERS:
         return True
 
     groups = get_user_groups(username)

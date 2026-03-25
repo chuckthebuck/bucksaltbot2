@@ -806,3 +806,49 @@ def test_goto_from_diff_tab_returns_403_for_non_maintainer(client):
     with patch("router.is_maintainer", return_value=False):
         resp = client.get("/goto?tab=rollback-from-diff")
     assert resp.status_code == 403
+
+
+# ── EXTRA_AUTHORIZED_USERS ────────────────────────────────────────────────────
+
+
+def test_is_authorized_returns_true_for_extra_authorized_user():
+    """A user listed in EXTRA_AUTHORIZED_USERS is authorized."""
+    import router
+
+    with patch.object(router, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
+        with patch("router.is_maintainer", return_value=False):
+            assert router.is_authorized("TestUser") is True
+
+
+def test_is_authorized_extra_authorized_user_is_case_insensitive():
+    """EXTRA_AUTHORIZED_USERS matching is case-insensitive."""
+    import router
+
+    with patch.object(router, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
+        with patch("router.is_maintainer", return_value=False):
+            assert router.is_authorized("TESTUSER") is True
+            assert router.is_authorized("testuser") is True
+            assert router.is_authorized("TestUser") is True
+
+
+def test_is_authorized_returns_false_for_unknown_user():
+    """A user not in any authorized list or group is denied."""
+    import router
+
+    with patch.object(router, "EXTRA_AUTHORIZED_USERS", set()):
+        with patch("router.is_maintainer", return_value=False):
+            with patch("router.get_user_groups", return_value=[]):
+                assert router.is_authorized("nobody") is False
+
+
+def test_extra_authorized_user_is_not_granted_maintainer_status():
+    """EXTRA_AUTHORIZED_USERS grants authorization only, not maintainer rights."""
+    import router
+    from app import is_maintainer
+
+    with patch.object(router, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
+        # The user is authorized …
+        with patch("router.is_maintainer", return_value=False):
+            assert router.is_authorized("testuser") is True
+        # … but is_maintainer is not affected by EXTRA_AUTHORIZED_USERS.
+        assert is_maintainer("testuser") is False
