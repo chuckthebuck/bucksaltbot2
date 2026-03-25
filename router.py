@@ -25,7 +25,7 @@ from redis_state import get_progress, r
 from rollback_queue import process_rollback_job
 from toolsdb import get_conn
 
-ALLOWED_GROUPS = {"sysop"}
+ALLOWED_GROUPS = {"sysop", "rollbacker"}
 GROUP_CACHE_TTL = 300
 _group_cache = {}
 
