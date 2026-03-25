@@ -275,6 +275,64 @@ def test_process_rollback_job_live_run_marks_item_failed_on_api_error():
     assert final_status == "failed"
 
 
+def test_process_rollback_job_noop_alreadyrolled_treated_as_completed():
+    """alreadyrolled API error must be treated as completed, not failed."""
+    import rollback_queue
+
+    job = (1, "alice", "queued", 0, 12345)
+    items = [(10, "File:A.jpg", "Vandal", None)]
+
+    mock_site = MagicMock()
+    mock_site.tokens = {"rollback": "TOKEN+\\"}
+    mock_site.simple_request.return_value.submit.side_effect = RuntimeError(
+        "alreadyrolled: The edit you tried to rollback has already been rolled back."
+    )
+
+    with (
+        patch("rollback_queue._fetch_job", return_value=(job, items)),
+        patch("rollback_queue._update_job_status") as mock_update_job,
+        patch("rollback_queue._update_item") as mock_update_item,
+        patch("rollback_queue._bot_site", return_value=mock_site),
+        patch("rollback_queue._count_batch_jobs", return_value=1),
+    ):
+        rollback_queue.process_rollback_job.run(1)
+
+    # Item must be completed (error string stored), not failed.
+    item_call = mock_update_item.call_args
+    assert item_call.args[1] == "completed"
+    # Job must finish completed because no item genuinely failed.
+    final_status = mock_update_job.call_args_list[-1].args[1]
+    assert final_status == "completed"
+
+
+def test_process_rollback_job_noop_onlyauthor_treated_as_completed():
+    """onlyauthor API error must be treated as completed, not failed."""
+    import rollback_queue
+
+    job = (1, "alice", "queued", 0, 12345)
+    items = [(10, "File:A.jpg", "SoleAuthor", None)]
+
+    mock_site = MagicMock()
+    mock_site.tokens = {"rollback": "TOKEN+\\"}
+    mock_site.simple_request.return_value.submit.side_effect = RuntimeError(
+        "onlyauthor: The only author of the page you tried to rollback is that user."
+    )
+
+    with (
+        patch("rollback_queue._fetch_job", return_value=(job, items)),
+        patch("rollback_queue._update_job_status") as mock_update_job,
+        patch("rollback_queue._update_item") as mock_update_item,
+        patch("rollback_queue._bot_site", return_value=mock_site),
+        patch("rollback_queue._count_batch_jobs", return_value=1),
+    ):
+        rollback_queue.process_rollback_job.run(1)
+
+    item_call = mock_update_item.call_args
+    assert item_call.args[1] == "completed"
+    final_status = mock_update_job.call_args_list[-1].args[1]
+    assert final_status == "completed"
+
+
 def test_process_rollback_job_skips_processing_when_job_not_found():
     """process_rollback_job must return early without touching DB if job is absent."""
     import rollback_queue

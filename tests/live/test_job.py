@@ -392,3 +392,42 @@ class TestLiveRollback:
             )
         finally:
             _cleanup(db_conn, job_id)
+
+    def test_no_op_rollback_treated_as_completed(
+        self,
+        admin_client,
+        db_conn,
+        live_redis,
+        noop_rollback_page,
+    ):
+        """A rollback job that returns a no-op API error must end as completed.
+
+        ``noop_rollback_page`` provides a page where the bot is the only author.
+        Rolling back the bot on that page returns the ``onlyauthor`` MediaWiki
+        API error.  Before the fix this counted as a failure; after the fix the
+        job must finish with ``status=completed`` and ``failed=0``.
+        """
+        _require_worker(live_redis)
+
+        client, _user = admin_client
+        page_title, bot_username = noop_rollback_page
+
+        resp = client.post(
+            "/api/v1/rollback/jobs",
+            json={"items": [{"title": page_title, "user": bot_username}]},
+        )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        job_id = resp.get_json()["job_id"]
+
+        try:
+            result = _poll_until_terminal(client, job_id, timeout=90)
+            assert result["status"] == "completed", (
+                f"Expected 'completed' for a no-op rollback; "
+                f"got '{result['status']}'; items: {result.get('items', [])}"
+            )
+            assert result["failed"] == 0, (
+                f"No-op rollback error must not be counted as a failure; "
+                f"items: {result.get('items', [])}"
+            )
+        finally:
+            _cleanup(db_conn, job_id)

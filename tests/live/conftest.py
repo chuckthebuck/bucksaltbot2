@@ -178,6 +178,7 @@ def bot_site():
 # ── Live wiki edit ────────────────────────────────────────────────────────────
 
 _ROLLBACK_TEST_PAGE = "User:Chuckbot/rollbacktest"
+_NOOP_ROLLBACK_TEST_PAGE = "User:Chuckbot/rollbacktest-noop"
 
 
 @pytest.fixture()
@@ -252,3 +253,46 @@ def live_wiki_edit(bot_site):
             minor=True,
             botflag=True,
         )
+
+
+# ── No-op rollback page ───────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def noop_rollback_page(bot_site):
+    """Yield ``(page_title, bot_username)`` for a page whose sole author is the bot.
+
+    ``User:Chuckbot/rollbacktest-noop`` is created by the bot on first use and
+    never edited by anyone else.  Because the bot is the **only** author,
+    rolling back the bot via the MediaWiki API always returns the ``onlyauthor``
+    no-op error, making this fixture ideal for testing that such errors are
+    treated as successful completions rather than failures.
+
+    The fixture requires ``LIVE_WIKI_EDITS=1`` only when the page does not yet
+    exist (the first run).  Subsequent runs reuse the existing page without
+    additional edits.
+    """
+    import pywikibot
+
+    bot_username = bot_site.username()
+    page = pywikibot.Page(bot_site, _NOOP_ROLLBACK_TEST_PAGE)
+
+    if not page.exists():
+        if not os.environ.get("LIVE_WIKI_EDITS"):
+            pytest.skip(
+                "LIVE_WIKI_EDITS env var not set and no-op test page does not yet "
+                "exist – set LIVE_WIKI_EDITS=1 to create it on first run"
+            )
+        page.text = (
+            f"This page is used by automated tests to verify that no-op rollback "
+            f"errors are handled gracefully.\n"
+            f"It is maintained by [[User:{bot_username}]] and should not be edited "
+            f"by anyone else.\n"
+        )
+        page.save(
+            summary="Chuckbot: create no-op rollback test page",
+            minor=True,
+            botflag=True,
+        )
+
+    yield _NOOP_ROLLBACK_TEST_PAGE, bot_username
