@@ -9,34 +9,21 @@ development environments never accidentally touch the live wiki.
 from __future__ import annotations
 
 import os
-import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 def _resolve_pywikibot_dir() -> Path:
     """Return a writable directory for Pywikibot config files."""
-    candidates: list[Path] = []
-
     env_dir = os.environ.get("PYWIKIBOT_DIR")
     if env_dir:
-        candidates.append(Path(env_dir))
+        return Path(env_dir)
 
     home = os.environ.get("HOME")
     if home and home != "/":
-        candidates.append(Path(home) / ".pywikibot")
+        return Path(home) / ".pywikibot"
 
-    candidates.append(Path("/workspace") / ".pywikibot")
-    candidates.append(Path("/tmp") / f".pywikibot-{os.getuid()}")
-
-    for candidate in candidates:
-        try:
-            candidate.mkdir(parents=True, exist_ok=True)
-            return candidate
-        except OSError:
-            continue
-
-    raise RuntimeError("No writable directory available for PYWIKIBOT_DIR")
+    return Path("/tmp") / f".pywikibot-{os.getuid()}"
 
 
 def _bootstrap_pywikibot_env() -> None:
@@ -46,6 +33,7 @@ def _bootstrap_pywikibot_env() -> None:
     /workspace can trigger ownership warnings, so force a safe home path first.
     """
     pywikibot_home = _resolve_pywikibot_dir()
+    pywikibot_home.mkdir(parents=True, exist_ok=True)
     os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
 
     config_file = pywikibot_home / "user-config.py"
@@ -65,20 +53,8 @@ from redis_state import r as _redis
 
 # ── Page titles ───────────────────────────────────────────────────────────────
 
-STATUS_PAGE = "User:Chuckbot/status"
-NOTIFY_PAGE = "User:Chuckbot/notify"
-
-# Subpages for each status field (these must be created manually on wiki)
-STATUS_SUBPAGES = {
-    "editing": "User:Chuckbot/status/editing",
-    "web": "User:Chuckbot/status/web",
-    "current_job": "User:Chuckbot/status/current_job",
-    "last_job": "User:Chuckbot/status/last_job",
-    "last_edit": "User:Chuckbot/status/last_edit",
-    "details": "User:Chuckbot/status/details",
-    "warning": "User:Chuckbot/status/warning",
-    "updated": "User:Chuckbot/status/updated",
-}
+STATUS_PAGE = "User:Alachuckthebuck/chuckbot/status"
+NOTIFY_PAGE = "User:Alachuckthebuck/chuckbot/notify"
 
 # ── Redis key settings ────────────────────────────────────────────────────────
 
@@ -96,6 +72,7 @@ def _setup_pywikibot_dir() -> None:
     which avoids file ownership issues on Toolforge.
     """
     pywikibot_home = _resolve_pywikibot_dir()
+    pywikibot_home.mkdir(parents=True, exist_ok=True)
     os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
     
     # Create minimal config if it doesn't exist
@@ -235,57 +212,32 @@ def update_wiki_status(
     details: str = "",
     warning: str | None = None,
 ) -> None:
-    """Update individual status subpages.  No-op in dev / test mode.
-    
-    Each field is written to its own subpage, avoiding race conditions
-    when multiple processes update status concurrently.
-    """
+    """Rewrite the on-wiki Chuckbot status page.  No-op in dev / test mode."""
     if not _is_live():
         return
 
     try:
         site = _get_authenticated_site()
+        page = pywikibot.Page(site, STATUS_PAGE)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         resolved_last_edit = last_edit or get_last_bot_edit(site)
 
-        # Update each status field independently
-        updates = {
-            "editing": editing,
-            "web": web,
-            "last_edit": resolved_last_edit,
-            "current_job": current_job or "None",
-            "last_job": last_job or "None",
-            "details": details,
-            "updated": now,
-        }
-
-        for field, value in updates.items():
-            try:
-                page = pywikibot.Page(site, STATUS_SUBPAGES[field])
-                page.text = value
-                page.save(summary=f"Updating {field}", minor=True, botflag=True)
-            except Exception as e:  # noqa: BLE001
-                logging.warning("Failed to update status field %s: %s", field, e)
-
-        # Update warning field only if provided
+        lines = [
+            "{{Chuckbot status",
+            f"| editing = {editing}",
+            f"| web = {web}",
+            f"| last_edit = {resolved_last_edit}",
+            f"| current_job = {current_job or 'None'}",
+            f"| last_job = {last_job or 'None'}",
+            f"| details = {details}",
+        ]
         if warning:
-            try:
-                page = pywikibot.Page(site, STATUS_SUBPAGES["warning"])
-                page.text = warning
-                page.save(summary="Updating warning", minor=True, botflag=True)
-            except Exception as e:  # noqa: BLE001
-                logging.warning("Failed to update warning field: %s", e)
-        else:
-            # Clear warning if not provided
-            try:
-                page = pywikibot.Page(site, STATUS_SUBPAGES["warning"])
-                page.text = ""
-                page.save(summary="Clearing warning", minor=True, botflag=True)
-            except Exception as e:  # noqa: BLE001
-                logging.warning("Failed to clear warning field: %s", e)
+            lines.append(f"| warning = {warning}")
+        lines.append(f"| updated = {now}")
+        lines.append("}}")
 
-    except Exception as e:  # noqa: BLE001
-        logging.error("Error updating wiki status: %s", e)
+        page.text = "\n".join(lines)
+        page.save(summary="Updating Chuckbot status", minor=True, botflag=True)
     except Exception:  # noqa: BLE001
         pass
 
