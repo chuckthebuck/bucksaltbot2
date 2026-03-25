@@ -65,19 +65,19 @@ from redis_state import r as _redis
 
 # ── Page titles ───────────────────────────────────────────────────────────────
 
-STATUS_PAGE = "User:Alachuckthebuck/chuckbot/status"
-NOTIFY_PAGE = "User:Alachuckthebuck/chuckbot/notify"
+STATUS_PAGE = "User:Chuckbot/status"
+NOTIFY_PAGE = "User:Chuckbot/notify"
 
 # Subpages for each status field (these must be created manually on wiki)
 STATUS_SUBPAGES = {
-    "editing": "User:Alachuckthebuck/chuckbot/status/editing",
-    "web": "User:Alachuckthebuck/chuckbot/status/web",
-    "current_job": "User:Alachuckthebuck/chuckbot/status/current_job",
-    "last_job": "User:Alachuckthebuck/chuckbot/status/last_job",
-    "last_edit": "User:Alachuckthebuck/chuckbot/status/last_edit",
-    "details": "User:Alachuckthebuck/chuckbot/status/details",
-    "warning": "User:Alachuckthebuck/chuckbot/status/warning",
-    "updated": "User:Alachuckthebuck/chuckbot/status/updated",
+    "editing": "User:Chuckbot/status/editing",
+    "web": "User:Chuckbot/status/web",
+    "current_job": "User:Chuckbot/status/current_job",
+    "last_job": "User:Chuckbot/status/last_job",
+    "last_edit": "User:Chuckbot/status/last_edit",
+    "details": "User:Chuckbot/status/details",
+    "warning": "User:Chuckbot/status/warning",
+    "updated": "User:Chuckbot/status/updated",
 }
 
 # ── Redis key settings ────────────────────────────────────────────────────────
