@@ -459,6 +459,53 @@ def test_get_job_includes_diff_query_debug_metadata(client):
     assert data["contribs_query"]["list"] == "usercontribs"
 
 
+def test_resolve_diff_rollback_job_propagates_query_payload_to_chunk_jobs():
+    import router
+
+    payload = {
+        "diff": "123456",
+        "summary": "test",
+        "requested_by": "alice",
+        "dry_run": True,
+        "limit": 100,
+    }
+
+    items = [
+        {"title": "File:One.jpg", "user": "TargetUser"},
+        {"title": "File:Two.jpg", "user": "TargetUser"},
+        {"title": "File:Three.jpg", "user": "TargetUser"},
+    ]
+
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (12345,)
+    mock_cursor.lastrowid = 999
+
+    with (
+        patch("router._load_diff_payload", return_value=payload),
+        patch("router._update_diff_payload") as mock_update_payload,
+        patch("router.fetch_diff_author_and_timestamp", return_value={"user": "TargetUser", "timestamp": "2026-03-25T03:30:00Z"}),
+        patch("router.iter_contribs_after_timestamp", return_value=iter(items)),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._set_diff_error"),
+        patch("router.status_updater.update_wiki_status"),
+        patch("router._store_diff_payload") as mock_store_payload,
+        patch("router.process_rollback_job") as mock_task,
+        patch("router.MAX_JOB_ITEMS", 2),
+    ):
+        mock_task.delay = MagicMock()
+        router.resolve_diff_rollback_job(1)
+
+    mock_update_payload.assert_called()
+    mock_store_payload.assert_called_once()
+    chunk_job_id, chunk_payload = mock_store_payload.call_args.args
+    assert chunk_job_id == 999
+    assert chunk_payload["diff"] == "123456"
+    assert chunk_payload["resolved_user"] == "TargetUser"
+    assert chunk_payload["resolved_timestamp"] == "2026-03-25T03:30:00Z"
+    assert chunk_payload["contribs_query"]["list"] == "usercontribs"
+    assert chunk_payload["source_job_id"] == 1
+
+
 def test_cancel_job_returns_401_when_not_authenticated(client):
     resp = client.delete("/api/v1/rollback/jobs/1")
     assert resp.status_code == 401
