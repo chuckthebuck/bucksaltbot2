@@ -439,6 +439,14 @@ def test_get_job_includes_diff_query_debug_metadata(client):
         "resolved_timestamp": "2026-03-25T03:30:00Z",
         "revision_query": {"action": "query", "prop": "revisions"},
         "contribs_query": {"action": "query", "list": "usercontribs"},
+        "mw_debug": [
+            {
+                "kind": "revisions",
+                "status_code": 200,
+                "elapsed_ms": 121,
+                "response_snippet": "{\"query\": ...}",
+            }
+        ],
     }
 
     with (
@@ -457,6 +465,7 @@ def test_get_job_includes_diff_query_debug_metadata(client):
     assert data["resolved_timestamp"] == "2026-03-25T03:30:00Z"
     assert data["revision_query"]["action"] == "query"
     assert data["contribs_query"]["list"] == "usercontribs"
+    assert data["mw_debug"][0]["kind"] == "revisions"
 
 
 def test_resolve_diff_rollback_job_propagates_query_payload_to_chunk_jobs():

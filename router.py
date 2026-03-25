@@ -30,6 +30,8 @@ ALLOWED_GROUPS = {"sysop"}
 GROUP_CACHE_TTL = 300
 _group_cache = {}
 _DIFF_PAYLOAD_TTL = 7 * 24 * 3600
+_MW_DEBUG_MAX_ENTRIES = 25
+_MW_DEBUG_BODY_MAX = 1200
 
 
 def _diff_payload_key(job_id: int) -> str:
@@ -66,6 +68,23 @@ def _update_diff_payload(job_id: int, updates: dict) -> None:
     _store_diff_payload(job_id, payload)
 
 
+def _append_mw_debug(job_id: int, entry: dict) -> None:
+    payload = _load_diff_payload(job_id)
+    if not payload:
+        return
+
+    history = payload.get("mw_debug")
+    if not isinstance(history, list):
+        history = []
+
+    history.append(entry)
+    if len(history) > _MW_DEBUG_MAX_ENTRIES:
+        history = history[-_MW_DEBUG_MAX_ENTRIES:]
+
+    payload["mw_debug"] = history
+    _store_diff_payload(job_id, payload)
+
+
 def _set_diff_error(job_id: int, error_message: str | None) -> None:
     try:
         if error_message:
@@ -97,7 +116,7 @@ def _extract_oldid(diff_value):
     raise ValueError("diff must be a revision id or URL containing oldid")
 
 
-def fetch_diff_author_and_timestamp(oldid):
+def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
     url = "https://commons.wikimedia.org/w/api.php"
     params = {
         "action": "query",
@@ -107,11 +126,32 @@ def fetch_diff_author_and_timestamp(oldid):
         "format": "json",
     }
 
+    started = time.perf_counter()
     try:
         resp = requests.get(url, params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
+
+        if callable(debug_callback):
+            debug_callback(
+                {
+                    "kind": "revisions",
+                    "params": params,
+                    "status_code": resp.status_code,
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "response_snippet": resp.text[:_MW_DEBUG_BODY_MAX],
+                }
+            )
     except requests.RequestException as e:
+        if callable(debug_callback):
+            debug_callback(
+                {
+                    "kind": "revisions",
+                    "params": params,
+                    "error": f"{type(e).__name__}: {e}",
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                }
+            )
         app.logger.error("Failed to fetch revision metadata for oldid %s: %s", oldid, e)
         raise ValueError(f"Failed to fetch revision metadata: {e}") from e
 
@@ -134,7 +174,7 @@ def fetch_diff_author_and_timestamp(oldid):
     raise ValueError("Revision not found for provided diff")
 
 
-def iter_contribs_after_timestamp(target_user, start_timestamp, limit=None):
+def iter_contribs_after_timestamp(target_user, start_timestamp, limit=None, debug_callback=None):
     url = "https://commons.wikimedia.org/w/api.php"
 
     uccontinue = None
@@ -163,11 +203,33 @@ def iter_contribs_after_timestamp(target_user, start_timestamp, limit=None):
         if uccontinue:
             params["uccontinue"] = uccontinue
 
+        started = time.perf_counter()
         try:
             resp = requests.get(url, params=params, timeout=15)
             resp.raise_for_status()
             data = resp.json()
+
+            if callable(debug_callback):
+                debug_callback(
+                    {
+                        "kind": "usercontribs",
+                        "params": params,
+                        "status_code": resp.status_code,
+                        "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                        "response_snippet": resp.text[:_MW_DEBUG_BODY_MAX],
+                        "uccontinue": data.get("continue", {}).get("uccontinue"),
+                    }
+                )
         except requests.RequestException as e:
+            if callable(debug_callback):
+                debug_callback(
+                    {
+                        "kind": "usercontribs",
+                        "params": params,
+                        "error": f"{type(e).__name__}: {e}",
+                        "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                )
             app.logger.error(
                 "Failed to fetch contributions for user %s after timestamp %s: %s",
                 target_user,
@@ -302,11 +364,14 @@ def resolve_diff_rollback_job(job_id: int):
     diff = payload.get("diff")
     limit = payload.get("limit")
 
+    def _debug(event: dict) -> None:
+        _append_mw_debug(job_id, event)
+
     try:
         oldid = _extract_oldid(diff)
         _update_diff_payload(job_id, {"oldid": oldid})
 
-        diff_metadata = fetch_diff_author_and_timestamp(oldid)
+        diff_metadata = fetch_diff_author_and_timestamp(oldid, debug_callback=_debug)
 
         target_user = diff_metadata["user"]
         start_timestamp = diff_metadata["timestamp"]
@@ -422,6 +487,7 @@ def resolve_diff_rollback_job(job_id: int):
                     target_user,
                     start_timestamp,
                     limit=limit,
+                    debug_callback=_debug,
                 ):
                     pending_chunk.append(item)
                     total_items += 1
@@ -1274,6 +1340,7 @@ def get_rollback_job(job_id):
             "resolved_timestamp": diff_payload.get("resolved_timestamp"),
             "revision_query": diff_payload.get("revision_query"),
             "contribs_query": diff_payload.get("contribs_query"),
+            "mw_debug": diff_payload.get("mw_debug", []),
             "items": [
                 {
                     "id": x[0],
