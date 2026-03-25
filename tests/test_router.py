@@ -388,6 +388,51 @@ def test_fetch_contribs_after_timestamp_respects_limit():
     assert results == [{"title": "File:One.jpg", "user": "TargetUser"}]
 
 
+def test_fetch_rollbackable_window_end_timestamp_uses_top_and_ucend():
+    import router
+
+    start_ts = "2024-01-01T00:00:00Z"
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {
+        "query": {
+            "usercontribs": [
+                {"title": "File:Latest.jpg", "timestamp": "2024-02-01T00:00:00Z"},
+                {"title": "File:WindowEnd.jpg", "timestamp": "2024-01-15T00:00:00Z"},
+            ]
+        }
+    }
+    mock_resp.text = "{}"
+    mock_resp.status_code = 200
+
+    with patch("router.requests.get", return_value=mock_resp) as mock_get:
+        end_ts = router.fetch_rollbackable_window_end_timestamp("TargetUser", start_ts)
+
+    assert end_ts == "2024-01-15T00:00:00Z"
+    params = mock_get.call_args.kwargs["params"]
+    assert params["ucshow"] == "top"
+    assert params["ucend"] == start_ts
+    assert int(params["uclimit"]) <= 500
+
+
+def test_fetch_rollbackable_window_end_timestamp_returns_none_when_empty():
+    import router
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {"query": {"usercontribs": []}}
+    mock_resp.text = "{}"
+    mock_resp.status_code = 200
+
+    with patch("router.requests.get", return_value=mock_resp):
+        end_ts = router.fetch_rollbackable_window_end_timestamp(
+            "TargetUser", "2024-01-01T00:00:00Z"
+        )
+
+    assert end_ts is None
+
+
 def test_fetch_diff_author_and_timestamp_handles_network_error():
     import router
     import requests
@@ -424,6 +469,140 @@ def test_retry_job_with_no_items_requeues_diff_resolution(client):
     assert resp.status_code == 200
     assert resp.get_json()["status"] == "resolving"
     mock_resolve.delay.assert_called_once_with(1)
+
+
+def test_get_job_includes_diff_query_debug_metadata(client):
+    import datetime as dt
+
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    recent_created_at = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    mock_cursor.fetchone.return_value = (1, "alice", "resolving", 1, recent_created_at)
+    mock_cursor.fetchall.return_value = []
+
+    payload = {
+        "diff": "https://commons.wikimedia.org/w/index.php?oldid=123456",
+        "oldid": 123456,
+        "resolved_user": "ExampleUser",
+        "resolved_timestamp": "2026-03-25T03:30:00Z",
+        "revision_query": {"action": "query", "prop": "revisions"},
+        "contribs_query": {"action": "query", "list": "usercontribs"},
+        "mw_debug": [
+            {
+                "kind": "revisions",
+                "status_code": 200,
+                "elapsed_ms": 121,
+                "response_snippet": "{\"query\": ...}",
+            }
+        ],
+    }
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._load_diff_payload", return_value=payload),
+        patch("router.r.get", return_value=None),
+    ):
+        resp = client.get("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "resolving"
+    assert data["diff"].endswith("oldid=123456")
+    assert data["oldid"] == 123456
+    assert data["resolved_user"] == "ExampleUser"
+    assert data["resolved_timestamp"] == "2026-03-25T03:30:00Z"
+    assert data["revision_query"]["action"] == "query"
+    assert data["contribs_query"]["list"] == "usercontribs"
+    assert data["mw_debug"][0]["kind"] == "revisions"
+
+
+def test_get_job_marks_stale_resolving_as_failed(client):
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (30, "alice", "resolving", 1, "2020-01-01 00:00:00")
+    mock_cursor.fetchall.return_value = []
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._set_diff_error") as mock_set_error,
+        patch("router._update_diff_payload") as mock_update_payload,
+        patch("router.r.get", return_value=None),
+    ):
+        resp = client.get("/api/v1/rollback/jobs/30")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "failed"
+    mock_set_error.assert_called_once()
+    mock_update_payload.assert_called_once()
+
+
+def test_all_jobs_json_marks_stale_resolving_as_failed(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchall.return_value = [
+        (30, "alice", "resolving", 1, "2020-01-01 00:00:00", 0, 0, 0),
+    ]
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router._set_diff_error"),
+        patch("router._update_diff_payload"),
+    ):
+        resp = client.get("/rollback-queue/all-jobs?format=json")
+
+    assert resp.status_code == 200
+    jobs = resp.get_json()["jobs"]
+    assert jobs[0]["status"] == "failed"
+
+
+def test_resolve_diff_rollback_job_propagates_query_payload_to_chunk_jobs():
+    import router
+
+    payload = {
+        "diff": "123456",
+        "summary": "test",
+        "requested_by": "alice",
+        "dry_run": True,
+        "limit": 100,
+    }
+
+    items = [
+        {"title": "File:One.jpg", "user": "TargetUser"},
+        {"title": "File:Two.jpg", "user": "TargetUser"},
+        {"title": "File:Three.jpg", "user": "TargetUser"},
+    ]
+
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (12345,)
+    mock_cursor.lastrowid = 999
+
+    with (
+        patch("router._load_diff_payload", return_value=payload),
+        patch("router._update_diff_payload") as mock_update_payload,
+        patch("router.fetch_diff_author_and_timestamp", return_value={"user": "TargetUser", "timestamp": "2026-03-25T03:30:00Z"}),
+        patch("router.fetch_rollbackable_window_end_timestamp", return_value="2026-03-25T04:00:00Z"),
+        patch("router.iter_contribs_after_timestamp", return_value=iter(items)),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._set_diff_error"),
+        patch("router.status_updater.update_wiki_status"),
+        patch("router._store_diff_payload") as mock_store_payload,
+        patch("router.process_rollback_job") as mock_task,
+        patch("router.MAX_JOB_ITEMS", 2),
+    ):
+        mock_task.delay = MagicMock()
+        router.resolve_diff_rollback_job(1)
+
+    mock_update_payload.assert_called()
+    mock_store_payload.assert_called_once()
+    chunk_job_id, chunk_payload = mock_store_payload.call_args.args
+    assert chunk_job_id == 999
+    assert chunk_payload["diff"] == "123456"
+    assert chunk_payload["resolved_user"] == "TargetUser"
+    assert chunk_payload["resolved_timestamp"] == "2026-03-25T03:30:00Z"
+    assert chunk_payload["contribs_query"]["list"] == "usercontribs"
+    assert chunk_payload["source_job_id"] == 1
 
 
 def test_cancel_job_returns_401_when_not_authenticated(client):

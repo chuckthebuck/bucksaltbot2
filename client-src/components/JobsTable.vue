@@ -96,7 +96,7 @@ async function onCancel(id: number) {
             :class="{
               'cdx-tag--status-success': job.status === 'completed',
               'cdx-tag--status-error': job.status === 'failed',
-              'cdx-tag--status-warning': job.status === 'queued'
+              'cdx-tag--status-warning': job.status === 'queued' || job.status === 'resolving' || job.status === 'staging'
             }"
           >
             {{ job.status }}
@@ -133,7 +133,7 @@ async function onCancel(id: number) {
 
         <td>
           <CdxButton
-            v-if="job.status === 'failed'"
+            v-if="job.status === 'failed' || job.status === 'resolving'"
             action="progressive"
             weight="primary"
             type="button"
@@ -143,7 +143,7 @@ async function onCancel(id: number) {
           </CdxButton>
 
           <CdxButton
-            v-if="job.status === 'queued' || job.status === 'running'"
+            v-if="job.status === 'queued' || job.status === 'running' || job.status === 'resolving' || job.status === 'staging'"
             action="destructive"
             weight="quiet"
             type="button"

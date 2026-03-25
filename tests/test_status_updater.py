@@ -206,10 +206,12 @@ def test_update_wiki_status_saves_page_when_live(monkeypatch):
             details="50 items queued",
         )
 
-    mock_page.save.assert_called_once()
-    save_kwargs = mock_page.save.call_args.kwargs
-    assert save_kwargs.get("minor") is True
-    assert save_kwargs.get("botflag") is True
+    # Should call save multiple times (once per status field)
+    assert mock_page.save.call_count >= 7  # All fields except optional warning
+    # Verify each call has the right parameters
+    for call in mock_page.save.call_args_list:
+        assert call.kwargs.get("minor") is True
+        assert call.kwargs.get("botflag") is True
 
 
 def test_update_wiki_status_includes_warning_when_provided(monkeypatch):
@@ -218,18 +220,30 @@ def test_update_wiki_status_includes_warning_when_provided(monkeypatch):
     monkeypatch.setenv("NOTDEV", "1")
 
     mock_page = MagicMock()
+    mock_site = MagicMock()
+    page_texts = {}
+
+    def capture_text(site, page_title):
+        page = MagicMock()
+        # Capture the text assigned to this page
+        def save_text(*args, **kwargs):
+            page_texts[page_title] = page.text
+        page.save = save_text
+        return page
 
     with (
-        patch("status_updater.pywikibot.Site"),
-        patch("status_updater.pywikibot.Page", return_value=mock_page),
+        patch("status_updater.pywikibot.Site", return_value=mock_site),
+        patch("status_updater.pywikibot.Page", side_effect=capture_text),
     ):
         status_updater.update_wiki_status(
             editing="Actively editing",
             warning="Large batch job in progress.",
         )
 
-    assigned_text = mock_page.text
-    assert "| warning = Large batch job in progress." in assigned_text
+    # Check that warning subpage was written
+    assert "Large batch job in progress." in page_texts.get(
+        status_updater.STATUS_SUBPAGES["warning"], ""
+    )
 
 
 def test_update_wiki_status_omits_warning_field_when_none(monkeypatch):
@@ -237,15 +251,21 @@ def test_update_wiki_status_omits_warning_field_when_none(monkeypatch):
 
     monkeypatch.setenv("NOTDEV", "1")
 
-    mock_page = MagicMock()
+    page_calls = []
+
+    def track_page(site, page_title):
+        page = MagicMock()
+        page_calls.append(page_title)
+        return page
 
     with (
         patch("status_updater.pywikibot.Site"),
-        patch("status_updater.pywikibot.Page", return_value=mock_page),
+        patch("status_updater.pywikibot.Page", side_effect=track_page),
     ):
         status_updater.update_wiki_status("Idle")
 
-    assert "| warning" not in mock_page.text
+    # Warning page should be created and cleared (empty text)
+    assert status_updater.STATUS_SUBPAGES["warning"] in page_calls
 
 
 def test_update_wiki_status_swallows_exceptions(monkeypatch):

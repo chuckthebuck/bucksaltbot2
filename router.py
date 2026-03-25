@@ -2,6 +2,7 @@ import os
 import json
 import secrets
 import time
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
 import mwoauth
@@ -10,6 +11,7 @@ import requests
 import logging
 from celery import shared_task
 
+import status_updater
 from flask import (
     Response,
     abort,
@@ -70,6 +72,10 @@ RATE_LIMIT_TESTER_JOBS_PER_HOUR: int = int(
 )
 
 _DIFF_PAYLOAD_TTL = 7 * 24 * 3600
+_MW_DEBUG_MAX_ENTRIES = 25
+_MW_DEBUG_BODY_MAX = 1200
+_RESOLVING_TIMEOUT_SECONDS = int(os.getenv("RESOLVING_TIMEOUT_SECONDS", "1800"))
+_ROLLBACKABLE_WINDOW_LIMIT = 500
 
 
 def _diff_payload_key(job_id: int) -> str:
@@ -95,6 +101,78 @@ def _load_diff_payload(job_id: int) -> dict | None:
         return json.loads(value)
     except Exception:
         return None
+
+
+def _update_diff_payload(job_id: int, updates: dict) -> None:
+    payload = _load_diff_payload(job_id)
+    if not payload:
+        return
+
+    payload.update(updates)
+    _store_diff_payload(job_id, payload)
+
+
+def _append_mw_debug(job_id: int, entry: dict) -> None:
+    payload = _load_diff_payload(job_id)
+    if not payload:
+        return
+
+    history = payload.get("mw_debug")
+    if not isinstance(history, list):
+        history = []
+
+    history.append(entry)
+    if len(history) > _MW_DEBUG_MAX_ENTRIES:
+        history = history[-_MW_DEBUG_MAX_ENTRIES:]
+
+    payload["mw_debug"] = history
+    _store_diff_payload(job_id, payload)
+
+
+def _created_at_to_epoch(created_at_value) -> float | None:
+    if isinstance(created_at_value, datetime):
+        if created_at_value.tzinfo is None:
+            return created_at_value.replace(tzinfo=timezone.utc).timestamp()
+        return created_at_value.timestamp()
+
+    if isinstance(created_at_value, str):
+        try:
+            parsed = datetime.strptime(created_at_value, "%Y-%m-%d %H:%M:%S")
+            return parsed.replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            return None
+
+    return None
+
+
+def _maybe_mark_stale_resolving_job_failed(job_id: int, status: str, created_at_value) -> bool:
+    if status != "resolving":
+        return False
+
+    created_epoch = _created_at_to_epoch(created_at_value)
+    if created_epoch is None:
+        return False
+
+    age_seconds = time.time() - created_epoch
+    if age_seconds < _RESOLVING_TIMEOUT_SECONDS:
+        return False
+
+    error_message = (
+        f"Resolve step exceeded {_RESOLVING_TIMEOUT_SECONDS} seconds; "
+        "marking failed. Retry the job to re-run resolution."
+    )
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE rollback_jobs SET status=%s WHERE id=%s AND status=%s",
+                ("failed", job_id, "resolving"),
+            )
+        conn.commit()
+
+    _set_diff_error(job_id, error_message)
+    _update_diff_payload(job_id, {"resolve_error": error_message})
+    return True
 
 
 def _set_diff_error(job_id: int, error_message: str | None) -> None:
@@ -128,7 +206,7 @@ def _extract_oldid(diff_value):
     raise ValueError("diff must be a revision id or URL containing oldid")
 
 
-def fetch_diff_author_and_timestamp(oldid):
+def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
     url = "https://commons.wikimedia.org/w/api.php"
     params = {
         "action": "query",
@@ -138,11 +216,32 @@ def fetch_diff_author_and_timestamp(oldid):
         "format": "json",
     }
 
+    started = time.perf_counter()
     try:
         resp = requests.get(url, params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
+
+        if callable(debug_callback):
+            debug_callback(
+                {
+                    "kind": "revisions",
+                    "params": params,
+                    "status_code": resp.status_code,
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "response_snippet": resp.text[:_MW_DEBUG_BODY_MAX],
+                }
+            )
     except requests.RequestException as e:
+        if callable(debug_callback):
+            debug_callback(
+                {
+                    "kind": "revisions",
+                    "params": params,
+                    "error": f"{type(e).__name__}: {e}",
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                }
+            )
         app.logger.error("Failed to fetch revision metadata for oldid %s: %s", oldid, e)
         raise ValueError(f"Failed to fetch revision metadata: {e}") from e
 
@@ -165,17 +264,89 @@ def fetch_diff_author_and_timestamp(oldid):
     raise ValueError("Revision not found for provided diff")
 
 
-def fetch_contribs_after_timestamp(target_user, start_timestamp, limit=None):
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def fetch_rollbackable_window_end_timestamp(
+    target_user,
+    start_timestamp,
+    limit=_ROLLBACKABLE_WINDOW_LIMIT,
+    debug_callback=None,
+):
+    """Return timestamp of the oldest edit in the latest rollbackable window.
+
+    We use Action API usercontribs with ucshow=top (rollbackable candidates),
+    bounded by ucend=start_timestamp and uclimit<=500.
+    """
+    url = "https://commons.wikimedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "list": "usercontribs",
+        "ucuser": target_user,
+        "uclimit": str(min(_ROLLBACKABLE_WINDOW_LIMIT, int(limit))),
+        "ucprop": "ids|title|timestamp",
+        "ucshow": "top",
+        "ucstart": _utc_now_iso(),
+        "ucend": start_timestamp,
+        "ucdir": "older",
+        "format": "json",
+    }
+
+    started = time.perf_counter()
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if callable(debug_callback):
+            debug_callback(
+                {
+                    "kind": "usercontribs-window",
+                    "params": params,
+                    "status_code": resp.status_code,
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "response_snippet": resp.text[:_MW_DEBUG_BODY_MAX],
+                }
+            )
+    except requests.RequestException as e:
+        if callable(debug_callback):
+            debug_callback(
+                {
+                    "kind": "usercontribs-window",
+                    "params": params,
+                    "error": f"{type(e).__name__}: {e}",
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                }
+            )
+        raise ValueError(f"Failed to fetch rollbackable contribution window: {e}") from e
+
+    contribs = data.get("query", {}).get("usercontribs", [])
+    if not contribs:
+        return None
+
+    oldest = contribs[-1].get("timestamp")
+    return oldest or None
+
+
+def iter_contribs_after_timestamp(
+    target_user,
+    start_timestamp,
+    limit=None,
+    end_timestamp=None,
+    rollbackable_only=False,
+    debug_callback=None,
+):
     url = "https://commons.wikimedia.org/w/api.php"
 
-    uccontinue = None
-    results = []
+    continue_params = None
+    yielded = 0
 
     while True:
         remaining = None
 
         if limit is not None:
-            remaining = max(limit - len(results), 0)
+            remaining = max(limit - yielded, 0)
 
             if remaining == 0:
                 break
@@ -191,14 +362,42 @@ def fetch_contribs_after_timestamp(target_user, start_timestamp, limit=None):
             "format": "json",
         }
 
-        if uccontinue:
-            params["uccontinue"] = uccontinue
+        if rollbackable_only:
+            params["ucshow"] = "top"
 
+        if end_timestamp:
+            params["ucend"] = end_timestamp
+
+        if continue_params:
+            params.update(continue_params)
+
+        started = time.perf_counter()
         try:
             resp = requests.get(url, params=params, timeout=15)
             resp.raise_for_status()
             data = resp.json()
+
+            if callable(debug_callback):
+                debug_callback(
+                    {
+                        "kind": "usercontribs",
+                        "params": params,
+                        "status_code": resp.status_code,
+                        "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                        "response_snippet": resp.text[:_MW_DEBUG_BODY_MAX],
+                        "continue": data.get("continue"),
+                    }
+                )
         except requests.RequestException as e:
+            if callable(debug_callback):
+                debug_callback(
+                    {
+                        "kind": "usercontribs",
+                        "params": params,
+                        "error": f"{type(e).__name__}: {e}",
+                        "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                )
             app.logger.error(
                 "Failed to fetch contributions for user %s after timestamp %s: %s",
                 target_user,
@@ -212,25 +411,28 @@ def fetch_contribs_after_timestamp(target_user, start_timestamp, limit=None):
         for edit in contribs:
             # Strictly after the diff timestamp.
             if edit.get("timestamp") and edit["timestamp"] > start_timestamp:
-                results.append({"title": edit["title"], "user": target_user})
+                yielded += 1
+                yield {"title": edit["title"], "user": target_user}
 
-                if limit is not None and len(results) >= limit:
+                if limit is not None and yielded >= limit:
                     break
 
-        if limit is not None and len(results) >= limit:
+        if limit is not None and yielded >= limit:
             break
 
         if not data.get("continue"):
             break
 
-        uccontinue = data["continue"]["uccontinue"]
+        continue_params = data["continue"]
 
         time.sleep(0.1)
 
-        if len(results) >= 10000:
+        if yielded >= 10000:
             break
 
-    return results
+
+def fetch_contribs_after_timestamp(target_user, start_timestamp, limit=None):
+    return list(iter_contribs_after_timestamp(target_user, start_timestamp, limit=limit))
 
 
 def create_rollback_jobs_from_diff(
@@ -330,23 +532,65 @@ def resolve_diff_rollback_job(job_id: int):
     diff = payload.get("diff")
     limit = payload.get("limit")
 
+    def _debug(event: dict) -> None:
+        _append_mw_debug(job_id, event)
+
     try:
         oldid = _extract_oldid(diff)
-        diff_metadata = fetch_diff_author_and_timestamp(oldid)
+        _update_diff_payload(job_id, {"oldid": oldid})
+
+        diff_metadata = fetch_diff_author_and_timestamp(oldid, debug_callback=_debug)
 
         target_user = diff_metadata["user"]
         start_timestamp = diff_metadata["timestamp"]
 
-        items = fetch_contribs_after_timestamp(
+        try:
+            first_uclimit = str(min(500, int(limit))) if limit is not None else "500"
+        except (TypeError, ValueError):
+            first_uclimit = "500"
+
+        rollbackable_end_timestamp = fetch_rollbackable_window_end_timestamp(
             target_user,
             start_timestamp,
-            limit=limit,
+            limit=_ROLLBACKABLE_WINDOW_LIMIT,
+            debug_callback=_debug,
         )
 
-        if not items:
-            raise ValueError("No contributions found after the provided diff timestamp")
+        query_debug_payload = {
+            "oldid": oldid,
+            "resolved_user": target_user,
+            "resolved_timestamp": start_timestamp,
+            "revision_query": {
+                "action": "query",
+                "prop": "revisions",
+                "revids": str(oldid),
+                "rvprop": "ids|user|timestamp",
+                "format": "json",
+            },
+            "contribs_query": {
+                "action": "query",
+                "list": "usercontribs",
+                "ucuser": target_user,
+                "uclimit": first_uclimit,
+                "ucprop": "ids|title|timestamp",
+                "ucshow": "top",
+                "ucstart": start_timestamp,
+                "ucend": rollbackable_end_timestamp,
+                "ucdir": "newer",
+                "format": "json",
+            },
+            "rollbackable_window_limit": _ROLLBACKABLE_WINDOW_LIMIT,
+            "rollbackable_window_end_timestamp": rollbackable_end_timestamp,
+        }
 
-        created_job_ids = [job_id]
+        _update_diff_payload(
+            job_id,
+            query_debug_payload,
+        )
+
+        created_job_ids = []
+        total_items = 0
+        pending_chunk = []
 
         with get_conn() as conn:
             with conn.cursor() as cursor:
@@ -364,48 +608,8 @@ def resolve_diff_rollback_job(job_id: int):
                 # Clear any stale items from previous failed attempts.
                 cursor.execute("DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,))
 
-                chunks = [items[i : i + MAX_JOB_ITEMS] for i in range(0, len(items), MAX_JOB_ITEMS)]
-
-                first_chunk = chunks[0]
-                for item in first_chunk:
-                    cursor.execute(
-                        """
-                        INSERT INTO rollback_job_items
-                        (job_id, file_title, target_user, summary, status)
-                        VALUES (%s, %s, %s, %s, %s)
-                        """,
-                        (
-                            job_id,
-                            item["title"],
-                            item["user"],
-                            summary or None,
-                            "queued",
-                        ),
-                    )
-
-                cursor.execute(
-                    """
-                    UPDATE rollback_jobs
-                    SET status=%s, dry_run=%s, requested_by=%s, batch_id=%s
-                    WHERE id=%s
-                    """,
-                    ("queued", 1 if dry_run else 0, requested_by, batch_id, job_id),
-                )
-
-                for chunk in chunks[1:]:
-                    cursor.execute(
-                        """
-                        INSERT INTO rollback_jobs
-                        (requested_by, status, dry_run, batch_id)
-                        VALUES (%s, %s, %s, %s)
-                        """,
-                        (requested_by, "queued", 1 if dry_run else 0, batch_id),
-                    )
-
-                    chunk_job_id = cursor.lastrowid
-                    created_job_ids.append(chunk_job_id)
-
-                    for item in chunk:
+                def _persist_chunk(chunk_items, target_job_id):
+                    for item in chunk_items:
                         cursor.execute(
                             """
                             INSERT INTO rollback_job_items
@@ -413,7 +617,7 @@ def resolve_diff_rollback_job(job_id: int):
                             VALUES (%s, %s, %s, %s, %s)
                             """,
                             (
-                                chunk_job_id,
+                                target_job_id,
                                 item["title"],
                                 item["user"],
                                 summary or None,
@@ -421,9 +625,86 @@ def resolve_diff_rollback_job(job_id: int):
                             ),
                         )
 
+                def _next_target_job_id():
+                    if not created_job_ids:
+                        cursor.execute(
+                            """
+                            UPDATE rollback_jobs
+                            SET status=%s, dry_run=%s, requested_by=%s, batch_id=%s
+                            WHERE id=%s
+                            """,
+                            ("staging", 1 if dry_run else 0, requested_by, batch_id, job_id),
+                        )
+                        return job_id
+
+                    cursor.execute(
+                        """
+                        INSERT INTO rollback_jobs
+                        (requested_by, status, dry_run, batch_id)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (requested_by, "staging", 1 if dry_run else 0, batch_id),
+                    )
+                    chunk_job_id = cursor.lastrowid
+
+                    # Keep the same diff/query context on every chunk job.
+                    _store_diff_payload(
+                        chunk_job_id,
+                        {
+                            "diff": diff,
+                            "summary": summary,
+                            "requested_by": requested_by,
+                            "dry_run": dry_run,
+                            "limit": limit,
+                            **query_debug_payload,
+                            "source_job_id": job_id,
+                        },
+                    )
+                    return chunk_job_id
+
+                for item in iter_contribs_after_timestamp(
+                    target_user,
+                    start_timestamp,
+                    limit=limit,
+                    end_timestamp=rollbackable_end_timestamp,
+                    rollbackable_only=True,
+                    debug_callback=_debug,
+                ):
+                    pending_chunk.append(item)
+                    total_items += 1
+
+                    if len(pending_chunk) < MAX_JOB_ITEMS:
+                        continue
+
+                    target_job_id = _next_target_job_id()
+                    _persist_chunk(pending_chunk, target_job_id)
+                    created_job_ids.append(target_job_id)
+                    pending_chunk = []
+
+                if pending_chunk:
+                    target_job_id = _next_target_job_id()
+                    _persist_chunk(pending_chunk, target_job_id)
+                    created_job_ids.append(target_job_id)
+
+                if not created_job_ids:
+                    raise ValueError("No contributions found after the provided diff timestamp")
+
+                # Move all staged jobs to queued only after full list/chunks are built.
+                for staged_job_id in created_job_ids:
+                    cursor.execute(
+                        "UPDATE rollback_jobs SET status=%s WHERE id=%s",
+                        ("queued", staged_job_id),
+                    )
+
             conn.commit()
 
         _set_diff_error(job_id, None)
+
+        status_updater.update_wiki_status(
+            editing="Actively editing",
+            current_job=f"Processing {total_items} resolved items from diff",
+            details=f"Diff resolved successfully into {len(created_job_ids)} job(s)",
+        )
 
         for queued_job_id in created_job_ids:
             process_rollback_job.delay(queued_job_id)
@@ -438,6 +719,12 @@ def resolve_diff_rollback_job(job_id: int):
                 )
             conn.commit()
         _set_diff_error(job_id, str(e))
+        _update_diff_payload(job_id, {"resolve_error": str(e)})
+        status_updater.update_wiki_status(
+            editing="Error",
+            last_job=f"Failed to resolve diff for job {job_id}",
+            details=str(e)[:200],
+        )
 
 
 if not os.environ.get("NOTDEV"):
@@ -924,6 +1211,11 @@ def rollback_from_diff_api():
                 "limit": limit,
             },
         )
+        status_updater.update_wiki_status(
+            editing="Resolving diff",
+            current_job=f"Resolving diff for job {job_id}",
+            details=f"Diff: {diff}, limit: {limit}",
+        )
         resolve_diff_rollback_job.delay(job_id)
     except Exception as e:
         logging.exception("Error in rollback_from_diff_api")
@@ -996,21 +1288,28 @@ def rollback_queue_all_jobs_ui():
             jobs = cursor.fetchall()
 
     if request.args.get("format") == "json":
+        jobs_for_output = []
+        for row in jobs:
+            job_id, requested_by, status, dry_run, created_at, total, completed, failed = row
+            if _maybe_mark_stale_resolving_job_failed(job_id, status, created_at):
+                status = "failed"
+
+            jobs_for_output.append(
+                {
+                    "id": job_id,
+                    "requested_by": requested_by,
+                    "status": status,
+                    "dry_run": bool(dry_run),
+                    "created_at": str(created_at),
+                    "total": int(total or 0),
+                    "completed": int(completed or 0),
+                    "failed": int(failed or 0),
+                }
+            )
+
         return jsonify(
             {
-                "jobs": [
-                    {
-                        "id": row[0],
-                        "requested_by": row[1],
-                        "status": row[2],
-                        "dry_run": bool(row[3]),
-                        "created_at": str(row[4]),
-                        "total": int(row[5] or 0),
-                        "completed": int(row[6] or 0),
-                        "failed": int(row[7] or 0),
-                    }
-                    for row in jobs
-                ]
+                "jobs": jobs_for_output
             }
         )
 
@@ -1220,6 +1519,10 @@ def retry_job(job_id):
                 )
                 conn.commit()
                 _set_diff_error(job_id, None)
+                status_updater.update_wiki_status(
+                    editing="Resolving diff",
+                    current_job=f"Resolving diff for job {job_id}",
+                )
                 resolve_diff_rollback_job.delay(job_id)
                 return jsonify({"job_id": job_id, "status": "resolving"})
 
@@ -1239,6 +1542,10 @@ def retry_job(job_id):
 
         conn.commit()
 
+    status_updater.update_wiki_status(
+        editing="Actively editing",
+        current_job=f"Retrying job {job_id}",
+    )
     process_rollback_job.delay(job_id)
 
     return jsonify({"job_id": job_id, "status": "queued"})
@@ -1302,12 +1609,18 @@ def cancel_rollback_job(job_id):
                 """
                 UPDATE rollback_job_items
                 SET status=%s, error=%s
-                WHERE job_id=%s AND status IN (%s, %s)
+                WHERE job_id=%s AND status IN (%s, %s, %s, %s)
                 """,
-                ("canceled", "Canceled by requester", job_id, "queued", "running"),
+                ("canceled", "Canceled by requester", job_id, "queued", "running", "resolving", "staging"),
             )
 
         conn.commit()
+
+    status_updater.update_wiki_status(
+        editing="Idle",
+        last_job=f"Job {job_id} canceled by {actor}",
+    )
+    _set_diff_error(job_id, None)
 
     return jsonify({"job_id": job_id, "status": "canceled"})
 
@@ -1350,6 +1663,9 @@ def get_rollback_job(job_id):
 
             items = cursor.fetchall()
 
+    if _maybe_mark_stale_resolving_job_failed(job[0], job[2], job[4]):
+        job = (job[0], job[1], "failed", job[3], job[4])
+
     if request.args.get("format") == "log":
         lines = []
 
@@ -1365,6 +1681,11 @@ def get_rollback_job(job_id):
         body = "\n".join(lines) + ("\n" if lines else "")
         return Response(body, mimetype="text/plain")
 
+    diff_payload = _load_diff_payload(job_id) or {}
+    diff_error = r.get(_diff_error_key(job_id))
+    if not isinstance(diff_error, str):
+        diff_error = None
+
     return jsonify(
         {
             "id": job[0],
@@ -1375,7 +1696,14 @@ def get_rollback_job(job_id):
             "total": len(items),
             "completed": len([x for x in items if x[4] == "completed"]),
             "failed": len([x for x in items if x[4] == "failed"]),
-            "error": _load_diff_payload(job_id) and r.get(_diff_error_key(job_id)),
+            "error": diff_error,
+            "diff": diff_payload.get("diff"),
+            "oldid": diff_payload.get("oldid"),
+            "resolved_user": diff_payload.get("resolved_user"),
+            "resolved_timestamp": diff_payload.get("resolved_timestamp"),
+            "revision_query": diff_payload.get("revision_query"),
+            "contribs_query": diff_payload.get("contribs_query"),
+            "mw_debug": diff_payload.get("mw_debug", []),
             "items": [
                 {
                     "id": x[0],
