@@ -388,6 +388,51 @@ def test_fetch_contribs_after_timestamp_respects_limit():
     assert results == [{"title": "File:One.jpg", "user": "TargetUser"}]
 
 
+def test_fetch_rollbackable_window_end_timestamp_uses_top_and_ucend():
+    import router
+
+    start_ts = "2024-01-01T00:00:00Z"
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {
+        "query": {
+            "usercontribs": [
+                {"title": "File:Latest.jpg", "timestamp": "2024-02-01T00:00:00Z"},
+                {"title": "File:WindowEnd.jpg", "timestamp": "2024-01-15T00:00:00Z"},
+            ]
+        }
+    }
+    mock_resp.text = "{}"
+    mock_resp.status_code = 200
+
+    with patch("router.requests.get", return_value=mock_resp) as mock_get:
+        end_ts = router.fetch_rollbackable_window_end_timestamp("TargetUser", start_ts)
+
+    assert end_ts == "2024-01-15T00:00:00Z"
+    params = mock_get.call_args.kwargs["params"]
+    assert params["ucshow"] == "top"
+    assert params["ucend"] == start_ts
+    assert int(params["uclimit"]) <= 500
+
+
+def test_fetch_rollbackable_window_end_timestamp_returns_none_when_empty():
+    import router
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {"query": {"usercontribs": []}}
+    mock_resp.text = "{}"
+    mock_resp.status_code = 200
+
+    with patch("router.requests.get", return_value=mock_resp):
+        end_ts = router.fetch_rollbackable_window_end_timestamp(
+            "TargetUser", "2024-01-01T00:00:00Z"
+        )
+
+    assert end_ts is None
+
+
 def test_fetch_diff_author_and_timestamp_handles_network_error():
     import router
     import requests
@@ -537,6 +582,7 @@ def test_resolve_diff_rollback_job_propagates_query_payload_to_chunk_jobs():
         patch("router._load_diff_payload", return_value=payload),
         patch("router._update_diff_payload") as mock_update_payload,
         patch("router.fetch_diff_author_and_timestamp", return_value={"user": "TargetUser", "timestamp": "2026-03-25T03:30:00Z"}),
+        patch("router.fetch_rollbackable_window_end_timestamp", return_value="2026-03-25T04:00:00Z"),
         patch("router.iter_contribs_after_timestamp", return_value=iter(items)),
         patch("router.get_conn", return_value=mock_conn),
         patch("router._set_diff_error"),

@@ -34,6 +34,7 @@ _DIFF_PAYLOAD_TTL = 7 * 24 * 3600
 _MW_DEBUG_MAX_ENTRIES = 25
 _MW_DEBUG_BODY_MAX = 1200
 _RESOLVING_TIMEOUT_SECONDS = int(os.getenv("RESOLVING_TIMEOUT_SECONDS", "1800"))
+_ROLLBACKABLE_WINDOW_LIMIT = 500
 
 
 def _diff_payload_key(job_id: int) -> str:
@@ -222,10 +223,82 @@ def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
     raise ValueError("Revision not found for provided diff")
 
 
-def iter_contribs_after_timestamp(target_user, start_timestamp, limit=None, debug_callback=None):
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def fetch_rollbackable_window_end_timestamp(
+    target_user,
+    start_timestamp,
+    limit=_ROLLBACKABLE_WINDOW_LIMIT,
+    debug_callback=None,
+):
+    """Return timestamp of the oldest edit in the latest rollbackable window.
+
+    We use Action API usercontribs with ucshow=top (rollbackable candidates),
+    bounded by ucend=start_timestamp and uclimit<=500.
+    """
+    url = "https://commons.wikimedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "list": "usercontribs",
+        "ucuser": target_user,
+        "uclimit": str(min(_ROLLBACKABLE_WINDOW_LIMIT, int(limit))),
+        "ucprop": "ids|title|timestamp",
+        "ucshow": "top",
+        "ucstart": _utc_now_iso(),
+        "ucend": start_timestamp,
+        "ucdir": "older",
+        "format": "json",
+    }
+
+    started = time.perf_counter()
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if callable(debug_callback):
+            debug_callback(
+                {
+                    "kind": "usercontribs-window",
+                    "params": params,
+                    "status_code": resp.status_code,
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "response_snippet": resp.text[:_MW_DEBUG_BODY_MAX],
+                }
+            )
+    except requests.RequestException as e:
+        if callable(debug_callback):
+            debug_callback(
+                {
+                    "kind": "usercontribs-window",
+                    "params": params,
+                    "error": f"{type(e).__name__}: {e}",
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                }
+            )
+        raise ValueError(f"Failed to fetch rollbackable contribution window: {e}") from e
+
+    contribs = data.get("query", {}).get("usercontribs", [])
+    if not contribs:
+        return None
+
+    oldest = contribs[-1].get("timestamp")
+    return oldest or None
+
+
+def iter_contribs_after_timestamp(
+    target_user,
+    start_timestamp,
+    limit=None,
+    end_timestamp=None,
+    rollbackable_only=False,
+    debug_callback=None,
+):
     url = "https://commons.wikimedia.org/w/api.php"
 
-    uccontinue = None
+    continue_params = None
     yielded = 0
 
     while True:
@@ -248,8 +321,14 @@ def iter_contribs_after_timestamp(target_user, start_timestamp, limit=None, debu
             "format": "json",
         }
 
-        if uccontinue:
-            params["uccontinue"] = uccontinue
+        if rollbackable_only:
+            params["ucshow"] = "top"
+
+        if end_timestamp:
+            params["ucend"] = end_timestamp
+
+        if continue_params:
+            params.update(continue_params)
 
         started = time.perf_counter()
         try:
@@ -265,7 +344,7 @@ def iter_contribs_after_timestamp(target_user, start_timestamp, limit=None, debu
                         "status_code": resp.status_code,
                         "elapsed_ms": int((time.perf_counter() - started) * 1000),
                         "response_snippet": resp.text[:_MW_DEBUG_BODY_MAX],
-                        "uccontinue": data.get("continue", {}).get("uccontinue"),
+                        "continue": data.get("continue"),
                     }
                 )
         except requests.RequestException as e:
@@ -303,7 +382,7 @@ def iter_contribs_after_timestamp(target_user, start_timestamp, limit=None, debu
         if not data.get("continue"):
             break
 
-        uccontinue = data["continue"]["uccontinue"]
+        continue_params = data["continue"]
 
         time.sleep(0.1)
 
@@ -429,6 +508,13 @@ def resolve_diff_rollback_job(job_id: int):
         except (TypeError, ValueError):
             first_uclimit = "500"
 
+        rollbackable_end_timestamp = fetch_rollbackable_window_end_timestamp(
+            target_user,
+            start_timestamp,
+            limit=_ROLLBACKABLE_WINDOW_LIMIT,
+            debug_callback=_debug,
+        )
+
         query_debug_payload = {
             "oldid": oldid,
             "resolved_user": target_user,
@@ -446,10 +532,14 @@ def resolve_diff_rollback_job(job_id: int):
                 "ucuser": target_user,
                 "uclimit": first_uclimit,
                 "ucprop": "ids|title|timestamp",
+                "ucshow": "top",
                 "ucstart": start_timestamp,
+                "ucend": rollbackable_end_timestamp,
                 "ucdir": "newer",
                 "format": "json",
             },
+            "rollbackable_window_limit": _ROLLBACKABLE_WINDOW_LIMIT,
+            "rollbackable_window_end_timestamp": rollbackable_end_timestamp,
         }
 
         _update_diff_payload(
@@ -502,7 +592,7 @@ def resolve_diff_rollback_job(job_id: int):
                             SET status=%s, dry_run=%s, requested_by=%s, batch_id=%s
                             WHERE id=%s
                             """,
-                            ("queued", 1 if dry_run else 0, requested_by, batch_id, job_id),
+                            ("staging", 1 if dry_run else 0, requested_by, batch_id, job_id),
                         )
                         return job_id
 
@@ -512,7 +602,7 @@ def resolve_diff_rollback_job(job_id: int):
                         (requested_by, status, dry_run, batch_id)
                         VALUES (%s, %s, %s, %s)
                         """,
-                        (requested_by, "queued", 1 if dry_run else 0, batch_id),
+                        (requested_by, "staging", 1 if dry_run else 0, batch_id),
                     )
                     chunk_job_id = cursor.lastrowid
 
@@ -535,6 +625,8 @@ def resolve_diff_rollback_job(job_id: int):
                     target_user,
                     start_timestamp,
                     limit=limit,
+                    end_timestamp=rollbackable_end_timestamp,
+                    rollbackable_only=True,
                     debug_callback=_debug,
                 ):
                     pending_chunk.append(item)
@@ -555,6 +647,13 @@ def resolve_diff_rollback_job(job_id: int):
 
                 if not created_job_ids:
                     raise ValueError("No contributions found after the provided diff timestamp")
+
+                # Move all staged jobs to queued only after full list/chunks are built.
+                for staged_job_id in created_job_ids:
+                    cursor.execute(
+                        "UPDATE rollback_jobs SET status=%s WHERE id=%s",
+                        ("queued", staged_job_id),
+                    )
 
             conn.commit()
 
@@ -1304,9 +1403,9 @@ def cancel_rollback_job(job_id):
                 """
                 UPDATE rollback_job_items
                 SET status=%s, error=%s
-                WHERE job_id=%s AND status IN (%s, %s, %s)
+                WHERE job_id=%s AND status IN (%s, %s, %s, %s)
                 """,
-                ("canceled", "Canceled by requester", job_id, "queued", "running", "resolving"),
+                ("canceled", "Canceled by requester", job_id, "queued", "running", "resolving", "staging"),
             )
 
         conn.commit()
