@@ -478,20 +478,28 @@ def is_authorized(username):
     return any(group in ALLOWED_GROUPS for group in groups)
 
 
+def is_admin_user(username: str) -> bool:
+    """Return True if the user has the Commons sysop (admin) right."""
+    if not username:
+        return False
+    return "sysop" in get_user_groups(username)
+
+
 def _user_permissions(username: str) -> frozenset:
     """Return the set of permission flags for an already-authenticated user.
 
     Permission strings
     ------------------
-    read_own    — view the user's own jobs
-    write       — submit new rollback jobs
-    cancel_own  — cancel the user's own jobs
-    retry_own   — retry the user's own jobs
-    read_all    — view every user's jobs (all-jobs interface)
-    from_diff   — use the rollback-from-diff interface
-    batch       — use the batch rollback interface
-    cancel_any  — cancel any user's job
-    retry_any   — retry any user's job
+    read_own          — view the user's own jobs
+    write             — submit new rollback jobs
+    cancel_own        — cancel the user's own jobs
+    retry_own         — retry the user's own jobs
+    read_all          — view every user's jobs (all-jobs interface)
+    from_diff         — use the rollback-from-diff interface
+    batch             — use the batch rollback interface
+    cancel_any        — cancel any non-privileged (regular) user's job
+    retry_any         — retry any user's job
+    cancel_admin_jobs — cancel a Commons admin (sysop) user's job; only admins possess this
     """
     if not username:
         return frozenset()
@@ -507,6 +515,9 @@ def _user_permissions(username: str) -> frozenset:
 
     if is_maintainer(username):
         perms |= {"read_all", "from_diff", "batch", "cancel_any", "retry_any"}
+        # Admins (sysops) receive the additional right to cancel another admin's jobs.
+        if is_admin_user(username):
+            perms.add("cancel_admin_jobs")
     else:
         # Per-user grants for non-maintainer accounts (e.g. test users).
         if lower in USERS_GRANTED_FROM_DIFF:
@@ -1194,8 +1205,22 @@ def cancel_rollback_job(job_id):
                 return jsonify({"detail": "Job not found"}), 404
 
             if job[1] != actor:
-                if "cancel_any" not in _user_permissions(actor):
+                actor_perms = _user_permissions(actor)
+                # Fast-path: actors with no cross-user cancel permission are always denied.
+                if "cancel_any" not in actor_perms and not is_maintainer(actor):
                     return jsonify({"detail": "Forbidden"}), 403
+
+                # Tier check: the required privilege depends on the job owner's level.
+                job_owner = job[1]
+                if is_admin_user(job_owner):
+                    # Only Commons admins may cancel another admin's job.
+                    if "cancel_admin_jobs" not in actor_perms:
+                        return jsonify({"detail": "Forbidden: canceling an admin's job requires admin rights"}), 403
+                elif is_maintainer(job_owner):
+                    # Only maintainers may cancel another maintainer's job.
+                    if not is_maintainer(actor):
+                        return jsonify({"detail": "Forbidden: canceling a maintainer's job requires maintainer rights"}), 403
+                # else: regular user's job; cancel_any is sufficient (already checked above).
 
             if job[2] in {"completed", "failed", "canceled"}:
                 return jsonify({"job_id": job_id, "status": job[2]})
