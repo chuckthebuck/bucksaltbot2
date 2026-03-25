@@ -173,3 +173,82 @@ def bot_site():
         yield site
     except Exception as exc:
         pytest.skip(f"pywikibot auth failed – skipping wiki tests ({exc})")
+
+
+# ── Live wiki edit ────────────────────────────────────────────────────────────
+
+_ROLLBACK_TEST_PAGE = "User:Chuckbot/rollbacktest"
+
+
+@pytest.fixture()
+def live_wiki_edit(bot_site):
+    """Make a real, uniquely-tagged edit to ``User:Chuckbot/rollbacktest``.
+
+    The fixture is guarded by the ``LIVE_WIKI_EDITS`` environment variable.
+    Set it to any non-empty value to enable tests that perform real wiki edits::
+
+        LIVE_WIKI_EDITS=1 pytest tests/live/ -v -k rollback
+
+    The fixture yields a four-tuple:
+
+        (page_title, bot_username, original_text, test_marker)
+
+    * ``page_title``   – the page that was edited (``User:Chuckbot/rollbacktest``)
+    * ``bot_username`` – Wikimedia username of the bot account
+    * ``original_text``– page wikitext *before* the test edit (used for teardown)
+    * ``test_marker``  – unique HTML comment embedded in the test edit; its
+                         presence/absence is used to verify rollback success
+
+    **Teardown**: the page is restored to ``original_text`` regardless of
+    whether the test passed or failed.  This prevents stale test edits from
+    accumulating on the page between runs.
+    """
+    import time as _time
+
+    import pywikibot
+
+    if not os.environ.get("LIVE_WIKI_EDITS"):
+        pytest.skip(
+            "LIVE_WIKI_EDITS env var not set – skipping live wiki edit tests; "
+            "set LIVE_WIKI_EDITS=1 to enable"
+        )
+
+    bot_username = bot_site.username()
+    page = pywikibot.Page(bot_site, _ROLLBACK_TEST_PAGE)
+
+    # Ensure the page exists with a stable baseline before the test edit so
+    # there is always a prior revision to roll back to.
+    original_text = page.text if page.exists() else ""
+    if not original_text.strip():
+        original_text = (
+            f"This page is used for automated rollback testing by [[User:{bot_username}]].\n"
+        )
+        page.text = original_text
+        page.save(
+            summary="Chuckbot rollback test: initialise test page",
+            minor=True,
+            botflag=True,
+        )
+
+    # Make the test edit: append a uniquely-tagged section so we can confirm
+    # the rollback removed it.
+    test_marker = f"live-test-{int(_time.time() * 1000)}"
+    page.text = original_text + f"\n<!-- {test_marker} -->\n"
+    page.save(
+        summary=f"Chuckbot rollback test: adding marker {test_marker}",
+        minor=False,
+        botflag=True,
+    )
+
+    yield _ROLLBACK_TEST_PAGE, bot_username, original_text, test_marker
+
+    # ── Teardown ──────────────────────────────────────────────────────────────
+    # Reload the page to get the latest revision.
+    page = pywikibot.Page(bot_site, _ROLLBACK_TEST_PAGE)
+    if page.text != original_text:
+        page.text = original_text
+        page.save(
+            summary=f"Chuckbot rollback test: restoring page after marker {test_marker}",
+            minor=True,
+            botflag=True,
+        )

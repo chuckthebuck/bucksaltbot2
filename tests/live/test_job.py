@@ -317,3 +317,78 @@ class TestJobPipeline:
             assert result["status"] == "completed"
         finally:
             _cleanup(db_conn, job_id)
+
+
+# ── Real wiki rollback (requires LIVE_WIKI_EDITS=1) ──────────────────────────
+
+
+class TestLiveRollback:
+    """Tests that perform actual (non-dry-run) rollbacks on the wiki.
+
+    These tests require ALL of the following:
+
+    * ``LIVE_WIKI_EDITS=1`` environment variable – explicit opt-in to real edits
+    * Bot OAuth credentials (``CONSUMER_TOKEN``, ``CONSUMER_SECRET``,
+      ``ACCESS_TOKEN``, ``ACCESS_SECRET``)
+    * A running Celery worker with the same OAuth credentials
+
+    The ``live_wiki_edit`` fixture makes a uniquely-tagged edit to
+    ``User:Chuckbot/rollbacktest`` and restores the page in teardown regardless
+    of outcome, so running these tests repeatedly is safe.
+    """
+
+    def test_live_rollback_reverts_test_edit(
+        self,
+        admin_client,
+        db_conn,
+        live_redis,
+        live_wiki_edit,
+        bot_site,
+    ):
+        """A real (dry_run=False) rollback job reverts the bot's test edit on-wiki.
+
+        Flow:
+          1. ``live_wiki_edit`` makes a test edit containing a unique marker.
+          2. A rollback job is submitted targeting ``(page, bot_username)``.
+          3. The test polls until the job reaches a terminal status.
+          4. The page content is re-read to confirm the marker is gone.
+        """
+        import pywikibot
+
+        _require_worker(live_redis)
+
+        client, user = admin_client
+        page_title, bot_username, original_text, test_marker = live_wiki_edit
+
+        # Sanity-check: the test edit is present before we start.
+        page = pywikibot.Page(bot_site, page_title)
+        assert test_marker in page.text, (
+            "Pre-condition failed: test marker not found on page before rollback"
+        )
+
+        resp = client.post(
+            "/api/v1/rollback/jobs",
+            json={
+                "items": [{"title": page_title, "user": bot_username}],
+            },
+        )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        job_id = resp.get_json()["job_id"]
+
+        try:
+            result = _poll_until_terminal(client, job_id, timeout=90)
+            assert result["status"] == "completed", (
+                f"Job {job_id} ended with status '{result['status']}'; "
+                f"items: {result.get('items', [])}"
+            )
+            assert result["completed"] == 1
+            assert result["failed"] == 0
+
+            # Verify the rollback actually happened on-wiki.
+            page = pywikibot.Page(bot_site, page_title)
+            assert test_marker not in page.text, (
+                "Test marker is still present on the page after the rollback job "
+                "completed – the wiki edit was not actually reverted"
+            )
+        finally:
+            _cleanup(db_conn, job_id)
