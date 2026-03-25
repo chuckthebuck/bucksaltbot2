@@ -1,4 +1,5 @@
 import os
+import json
 import secrets
 import time
 from urllib.parse import parse_qs, urlparse
@@ -7,6 +8,7 @@ import mwoauth
 import mwoauth.flask
 import requests
 import logging
+from celery import shared_task
 
 from flask import (
     Response,
@@ -26,6 +28,42 @@ from toolsdb import get_conn
 ALLOWED_GROUPS = {"sysop"}
 GROUP_CACHE_TTL = 300
 _group_cache = {}
+_DIFF_PAYLOAD_TTL = 7 * 24 * 3600
+
+
+def _diff_payload_key(job_id: int) -> str:
+    return f"rollback:diff:payload:{job_id}"
+
+
+def _diff_error_key(job_id: int) -> str:
+    return f"rollback:diff:error:{job_id}"
+
+
+def _store_diff_payload(job_id: int, payload: dict) -> None:
+    try:
+        r.set(_diff_payload_key(job_id), json.dumps(payload), ex=_DIFF_PAYLOAD_TTL)
+    except Exception:
+        app.logger.exception("Failed to store diff payload for job %s", job_id)
+
+
+def _load_diff_payload(job_id: int) -> dict | None:
+    try:
+        value = r.get(_diff_payload_key(job_id))
+        if not value:
+            return None
+        return json.loads(value)
+    except Exception:
+        return None
+
+
+def _set_diff_error(job_id: int, error_message: str | None) -> None:
+    try:
+        if error_message:
+            r.set(_diff_error_key(job_id), error_message, ex=_DIFF_PAYLOAD_TTL)
+        else:
+            r.delete(_diff_error_key(job_id))
+    except Exception:
+        app.logger.exception("Failed to update diff error state for job %s", job_id)
 
 
 def _extract_oldid(diff_value):
@@ -215,6 +253,137 @@ def create_rollback_jobs_from_diff(
         "resolved_timestamp": start_timestamp,
         "oldid": oldid,
     }
+
+
+@shared_task(ignore_result=True)
+def resolve_diff_rollback_job(job_id: int):
+    payload = _load_diff_payload(job_id)
+
+    if not payload:
+        with get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE rollback_jobs SET status=%s WHERE id=%s",
+                    ("failed", job_id),
+                )
+            conn.commit()
+        _set_diff_error(job_id, "Missing queued diff payload; resubmit the job.")
+        return
+
+    requested_by = payload.get("requested_by")
+    dry_run = bool(payload.get("dry_run", False))
+    summary = payload.get("summary") or ""
+    diff = payload.get("diff")
+    limit = payload.get("limit")
+
+    try:
+        oldid = _extract_oldid(diff)
+        diff_metadata = fetch_diff_author_and_timestamp(oldid)
+
+        target_user = diff_metadata["user"]
+        start_timestamp = diff_metadata["timestamp"]
+
+        items = fetch_contribs_after_timestamp(
+            target_user,
+            start_timestamp,
+            limit=limit,
+        )
+
+        if not items:
+            raise ValueError("No contributions found after the provided diff timestamp")
+
+        created_job_ids = [job_id]
+
+        with get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT batch_id FROM rollback_jobs WHERE id=%s",
+                    (job_id,),
+                )
+                row = cursor.fetchone()
+
+                if not row:
+                    raise ValueError("Job not found")
+
+                batch_id = row[0] or int(time.time() * 1000)
+
+                # Clear any stale items from previous failed attempts.
+                cursor.execute("DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,))
+
+                chunks = [items[i : i + MAX_JOB_ITEMS] for i in range(0, len(items), MAX_JOB_ITEMS)]
+
+                first_chunk = chunks[0]
+                for item in first_chunk:
+                    cursor.execute(
+                        """
+                        INSERT INTO rollback_job_items
+                        (job_id, file_title, target_user, summary, status)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (
+                            job_id,
+                            item["title"],
+                            item["user"],
+                            summary or None,
+                            "queued",
+                        ),
+                    )
+
+                cursor.execute(
+                    """
+                    UPDATE rollback_jobs
+                    SET status=%s, dry_run=%s, requested_by=%s, batch_id=%s
+                    WHERE id=%s
+                    """,
+                    ("queued", 1 if dry_run else 0, requested_by, batch_id, job_id),
+                )
+
+                for chunk in chunks[1:]:
+                    cursor.execute(
+                        """
+                        INSERT INTO rollback_jobs
+                        (requested_by, status, dry_run, batch_id)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (requested_by, "queued", 1 if dry_run else 0, batch_id),
+                    )
+
+                    chunk_job_id = cursor.lastrowid
+                    created_job_ids.append(chunk_job_id)
+
+                    for item in chunk:
+                        cursor.execute(
+                            """
+                            INSERT INTO rollback_job_items
+                            (job_id, file_title, target_user, summary, status)
+                            VALUES (%s, %s, %s, %s, %s)
+                            """,
+                            (
+                                chunk_job_id,
+                                item["title"],
+                                item["user"],
+                                summary or None,
+                                "queued",
+                            ),
+                        )
+
+            conn.commit()
+
+        _set_diff_error(job_id, None)
+
+        for queued_job_id in created_job_ids:
+            process_rollback_job.delay(queued_job_id)
+
+    except Exception as e:  # noqa: BLE001
+        app.logger.exception("Failed to resolve diff rollback job %s", job_id)
+        with get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE rollback_jobs SET status=%s WHERE id=%s",
+                    ("failed", job_id),
+                )
+            conn.commit()
+        _set_diff_error(job_id, str(e))
 
 
 if not os.environ.get("NOTDEV"):
@@ -539,24 +708,45 @@ def rollback_from_diff_api():
 
     dry_run = _parse_bool(dry_run_raw, default=False)
 
+    batch_id = int(time.time() * 1000)
+
     try:
-        result = create_rollback_jobs_from_diff(
-            diff=diff,
-            summary=summary,
-            requested_by=username,
-            dry_run=dry_run,
-            limit=limit,
+        with get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO rollback_jobs
+                    (requested_by, status, dry_run, batch_id)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (username, "resolving", 1 if dry_run else 0, batch_id),
+                )
+                job_id = cursor.lastrowid
+            conn.commit()
+
+        _store_diff_payload(
+            job_id,
+            {
+                "diff": diff,
+                "summary": summary,
+                "requested_by": username,
+                "dry_run": dry_run,
+                "limit": limit,
+            },
         )
-    except ValueError as e:
-        logging.exception("Invalid parameters in rollback_from_diff_api")
-        return jsonify({"detail": str(e)}), 400
+        resolve_diff_rollback_job.delay(job_id)
     except Exception as e:
         logging.exception("Error in rollback_from_diff_api")
         return jsonify({"detail": "Failed to create rollback jobs: " + str(e)}), 500
 
     return jsonify(
         {
-            **result,
+            "job_id": job_id,
+            "job_ids": [job_id],
+            "chunks": 1,
+            "batch_id": batch_id,
+            "total_items": 0,
+            "status": "resolving",
             "diff": diff,
             "dry_run": dry_run,
             "limit": limit,
@@ -814,6 +1004,27 @@ def retry_job(job_id):
                 return jsonify({"detail": "Forbidden"}), 403
 
             cursor.execute(
+                "SELECT COUNT(*) FROM rollback_job_items WHERE job_id=%s",
+                (job_id,),
+            )
+            item_count_row = cursor.fetchone()
+            item_count = int(item_count_row[0]) if item_count_row else 0
+
+            if item_count == 0:
+                payload = _load_diff_payload(job_id)
+                if not payload:
+                    return jsonify({"detail": "Cannot retry this job without saved diff payload"}), 400
+
+                cursor.execute(
+                    "UPDATE rollback_jobs SET status='resolving' WHERE id=%s",
+                    (job_id,),
+                )
+                conn.commit()
+                _set_diff_error(job_id, None)
+                resolve_diff_rollback_job.delay(job_id)
+                return jsonify({"job_id": job_id, "status": "resolving"})
+
+            cursor.execute(
                 "UPDATE rollback_jobs SET status='queued' WHERE id=%s",
                 (job_id,),
             )
@@ -945,6 +1156,7 @@ def get_rollback_job(job_id):
             "total": len(items),
             "completed": len([x for x in items if x[4] == "completed"]),
             "failed": len([x for x in items if x[4] == "failed"]),
+            "error": _load_diff_payload(job_id) and r.get(_diff_error_key(job_id)),
             "items": [
                 {
                     "id": x[0],

@@ -280,21 +280,15 @@ def test_from_diff_api_rejects_invalid_limit(client):
 
 def test_from_diff_api_passes_limit_to_creation_helper(client):
     _set_session(client, "alice")
-    expected = {
-        "job_id": 11,
-        "job_ids": [11],
-        "chunks": 1,
-        "batch_id": 123,
-        "total_items": 5,
-        "status": "queued",
-    }
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.lastrowid = 11
 
     with (
         patch("router.is_maintainer", return_value=True),
-        patch(
-            "router.create_rollback_jobs_from_diff", return_value=expected
-        ) as mock_create,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
     ):
+        mock_resolve.delay = MagicMock()
         resp = client.post(
             "/api/v1/rollback/from-diff",
             json={"diff": 999, "limit": 25, "dry_run": True},
@@ -305,32 +299,22 @@ def test_from_diff_api_passes_limit_to_creation_helper(client):
     assert data["limit"] == 25
     assert data["dry_run"] is True
     assert data["diff"] == 999
-    mock_create.assert_called_once_with(
-        diff=999,
-        summary="",
-        requested_by="alice",
-        dry_run=True,
-        limit=25,
-    )
+    assert data["job_id"] == 11
+    assert data["status"] == "resolving"
+    mock_resolve.delay.assert_called_once_with(11)
 
 
 def test_from_diff_api_accepts_diff_url(client):
     _set_session(client, "alice")
-    expected = {
-        "job_id": 11,
-        "job_ids": [11],
-        "chunks": 1,
-        "batch_id": 123,
-        "total_items": 5,
-        "status": "queued",
-    }
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.lastrowid = 11
 
     with (
         patch("router.is_maintainer", return_value=True),
-        patch(
-            "router.create_rollback_jobs_from_diff", return_value=expected
-        ) as mock_create,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
     ):
+        mock_resolve.delay = MagicMock()
         resp = client.post(
             "/api/v1/rollback/from-diff",
             json={
@@ -340,8 +324,28 @@ def test_from_diff_api_accepts_diff_url(client):
         )
 
     assert resp.status_code == 200
-    mock_create.assert_called_once()
-    assert "oldid=123456" in mock_create.call_args.kwargs["diff"]
+    data = resp.get_json()
+    assert data["status"] == "resolving"
+    assert "oldid=123456" in data["diff"]
+    mock_resolve.delay.assert_called_once_with(11)
+
+
+def test_retry_job_with_no_items_requeues_diff_resolution(client):
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.side_effect = [("alice",), (0,)]
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._load_diff_payload", return_value={"diff": 123}),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
+    ):
+        mock_resolve.delay = MagicMock()
+        resp = client.post("/api/v1/rollback/jobs/1/retry")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "resolving"
+    mock_resolve.delay.assert_called_once_with(1)
 
 
 def test_cancel_job_returns_401_when_not_authenticated(client):
