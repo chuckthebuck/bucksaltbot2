@@ -10,6 +10,7 @@ import requests
 import logging
 from celery import shared_task
 
+import status_updater
 from flask import (
     Response,
     abort,
@@ -384,6 +385,12 @@ def resolve_diff_rollback_job(job_id: int):
 
         _set_diff_error(job_id, None)
 
+        status_updater.update_wiki_status(
+            editing="Actively editing",
+            current_job=f"Processing {len(items)} resolved items from diff",
+            details=f"Diff resolved successfully into {len(created_job_ids)} job(s)",
+        )
+
         for queued_job_id in created_job_ids:
             process_rollback_job.delay(queued_job_id)
 
@@ -397,6 +404,11 @@ def resolve_diff_rollback_job(job_id: int):
                 )
             conn.commit()
         _set_diff_error(job_id, str(e))
+        status_updater.update_wiki_status(
+            editing="Error",
+            last_job=f"Failed to resolve diff for job {job_id}",
+            details=str(e)[:200],
+        )
 
 
 if not os.environ.get("NOTDEV"):
@@ -747,6 +759,11 @@ def rollback_from_diff_api():
                 "limit": limit,
             },
         )
+        status_updater.update_wiki_status(
+            editing="Resolving diff",
+            current_job=f"Resolving diff for job {job_id}",
+            details=f"Diff: {diff}, limit: {limit}",
+        )
         resolve_diff_rollback_job.delay(job_id)
     except Exception as e:
         logging.exception("Error in rollback_from_diff_api")
@@ -1034,6 +1051,10 @@ def retry_job(job_id):
                 )
                 conn.commit()
                 _set_diff_error(job_id, None)
+                status_updater.update_wiki_status(
+                    editing="Resolving diff",
+                    current_job=f"Resolving diff for job {job_id}",
+                )
                 resolve_diff_rollback_job.delay(job_id)
                 return jsonify({"job_id": job_id, "status": "resolving"})
 
@@ -1053,6 +1074,10 @@ def retry_job(job_id):
 
         conn.commit()
 
+    status_updater.update_wiki_status(
+        editing="Actively editing",
+        current_job=f"Retrying job {job_id}",
+    )
     process_rollback_job.delay(job_id)
 
     return jsonify({"job_id": job_id, "status": "queued"})
@@ -1096,12 +1121,18 @@ def cancel_rollback_job(job_id):
                 """
                 UPDATE rollback_job_items
                 SET status=%s, error=%s
-                WHERE job_id=%s AND status IN (%s, %s)
+                WHERE job_id=%s AND status IN (%s, %s, %s)
                 """,
-                ("canceled", "Canceled by requester", job_id, "queued", "running"),
+                ("canceled", "Canceled by requester", job_id, "queued", "running", "resolving"),
             )
 
         conn.commit()
+
+    status_updater.update_wiki_status(
+        editing="Idle",
+        last_job=f"Job {job_id} canceled by {actor}",
+    )
+    _set_diff_error(job_id, None)
 
     return jsonify({"job_id": job_id, "status": "canceled"})
 
