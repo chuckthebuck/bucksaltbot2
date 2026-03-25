@@ -49,6 +49,10 @@ from redis_state import set_progress, update_progress
 from toolsdb import get_conn
 import status_updater
 
+# MediaWiki API error codes that mean the rollback is already in the desired
+# state.  The page does not need to change, so these are not real failures.
+_ROLLBACK_NOOP_CODES = frozenset({"alreadyrolled", "onlyauthor"})
+
 
 def _fetch_job(job_id: int):
     with get_conn() as conn:
@@ -254,9 +258,15 @@ def process_rollback_job(job_id: int):
                     notified_bots[target_user] = notified_bots.get(target_user, 0) + 1
 
             except Exception as exc:  # noqa: BLE001
-                failed += 1
-                _update_item(item_id, "failed", str(exc))
-                update_progress(job_id, "failed")
+                err_str = str(exc)
+                if any(code in err_str for code in _ROLLBACK_NOOP_CODES):
+                    # Page is already in the desired state – not a real failure.
+                    _update_item(item_id, "completed", err_str)
+                    update_progress(job_id, "completed")
+                else:
+                    failed += 1
+                    _update_item(item_id, "failed", err_str)
+                    update_progress(job_id, "failed")
 
         # Notify each flagged-bot account that was rolled back (once per job).
         if site:
