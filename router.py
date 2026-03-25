@@ -140,7 +140,7 @@ def fetch_contribs_after_timestamp(target_user, start_timestamp, limit=None):
             "list": "usercontribs",
             "ucuser": target_user,
             "uclimit": str(min(500, remaining)) if remaining is not None else "500",
-            "ucprop": "ids|title",
+            "ucprop": "ids|title|timestamp",
             "ucstart": start_timestamp,
             "ucdir": "newer",
             "format": "json",

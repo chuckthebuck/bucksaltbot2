@@ -330,6 +330,64 @@ def test_from_diff_api_accepts_diff_url(client):
     mock_resolve.delay.assert_called_once_with(11)
 
 
+def test_fetch_contribs_after_timestamp_requests_timestamp_and_filters_strictly():
+    import router
+
+    start_ts = "2024-01-01T00:00:00Z"
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {
+        "query": {
+            "usercontribs": [
+                {
+                    "title": "File:EqualTs.jpg",
+                    "timestamp": "2024-01-01T00:00:00Z",
+                },
+                {
+                    "title": "File:AfterTs.jpg",
+                    "timestamp": "2024-01-01T00:00:01Z",
+                },
+            ]
+        }
+    }
+
+    with patch("router.requests.get", return_value=mock_resp) as mock_get:
+        results = router.fetch_contribs_after_timestamp("TargetUser", start_ts, limit=10)
+
+    assert results == [{"title": "File:AfterTs.jpg", "user": "TargetUser"}]
+    assert mock_get.call_count == 1
+    assert mock_get.call_args.kwargs["params"]["ucprop"] == "ids|title|timestamp"
+
+
+def test_fetch_contribs_after_timestamp_respects_limit():
+    import router
+
+    start_ts = "2024-01-01T00:00:00Z"
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {
+        "query": {
+            "usercontribs": [
+                {
+                    "title": "File:One.jpg",
+                    "timestamp": "2024-01-01T00:00:01Z",
+                },
+                {
+                    "title": "File:Two.jpg",
+                    "timestamp": "2024-01-01T00:00:02Z",
+                },
+            ]
+        }
+    }
+
+    with patch("router.requests.get", return_value=mock_resp):
+        results = router.fetch_contribs_after_timestamp("TargetUser", start_ts, limit=1)
+
+    assert results == [{"title": "File:One.jpg", "user": "TargetUser"}]
+
+
 def test_retry_job_with_no_items_requeues_diff_resolution(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
