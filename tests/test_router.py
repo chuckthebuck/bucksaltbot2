@@ -852,3 +852,510 @@ def test_extra_authorized_user_is_not_granted_maintainer_status():
             assert router.is_authorized("testuser") is True
         # … but is_maintainer is not affected by EXTRA_AUTHORIZED_USERS.
         assert is_maintainer("testuser") is False
+
+
+# ── _user_permissions ─────────────────────────────────────────────────────────
+
+
+def test_user_permissions_base_perms_for_regular_user():
+    """Authenticated non-maintainer users get the standard base permission set."""
+    import router
+
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_READ_ONLY", set()),
+    ):
+        perms = router._user_permissions("alice")
+
+    assert perms == frozenset({"read_own", "write", "cancel_own", "retry_own"})
+
+
+def test_user_permissions_empty_username_returns_empty():
+    """An empty username yields an empty permission set."""
+    import router
+
+    assert router._user_permissions("") == frozenset()
+
+
+def test_user_permissions_read_only_user_gets_only_read_own():
+    """Users in USERS_READ_ONLY can only view their own jobs."""
+    import router
+
+    with patch.object(router, "USERS_READ_ONLY", {"readonly"}):
+        perms = router._user_permissions("readonly")
+
+    assert perms == frozenset({"read_own"})
+    assert "write" not in perms
+    assert "cancel_own" not in perms
+    assert "retry_own" not in perms
+
+
+def test_user_permissions_read_only_matching_is_case_insensitive():
+    """USERS_READ_ONLY matching is case-insensitive."""
+    import router
+
+    with patch.object(router, "USERS_READ_ONLY", {"readonly"}):
+        assert "write" not in router._user_permissions("READONLY")
+        assert "write" not in router._user_permissions("ReadOnly")
+        assert "write" not in router._user_permissions("readonly")
+
+
+def test_user_permissions_maintainer_gets_all_permissions():
+    """Maintainers receive every available permission."""
+    import router
+
+    with patch("router.is_maintainer", return_value=True):
+        perms = router._user_permissions("maintainer")
+
+    for perm in (
+        "read_own",
+        "write",
+        "cancel_own",
+        "retry_own",
+        "read_all",
+        "from_diff",
+        "batch",
+        "cancel_any",
+        "retry_any",
+    ):
+        assert perm in perms, f"Expected '{perm}' in maintainer permissions"
+
+
+def test_user_permissions_granted_from_diff():
+    """USERS_GRANTED_FROM_DIFF gives the from_diff permission without full maintainer rights."""
+    import router
+
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
+    ):
+        perms = router._user_permissions("alice")
+
+    assert "from_diff" in perms
+    assert "read_all" not in perms
+    assert "batch" not in perms
+
+
+def test_user_permissions_granted_view_all():
+    """USERS_GRANTED_VIEW_ALL gives the read_all permission."""
+    import router
+
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", {"alice"}),
+    ):
+        perms = router._user_permissions("alice")
+
+    assert "read_all" in perms
+    assert "from_diff" not in perms
+
+
+def test_user_permissions_granted_cancel_any():
+    """USERS_GRANTED_CANCEL_ANY gives the cancel_any permission."""
+    import router
+
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
+    ):
+        perms = router._user_permissions("alice")
+
+    assert "cancel_any" in perms
+    assert "retry_any" not in perms
+
+
+def test_user_permissions_granted_retry_any():
+    """USERS_GRANTED_RETRY_ANY gives the retry_any permission."""
+    import router
+
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_RETRY_ANY", {"alice"}),
+    ):
+        perms = router._user_permissions("alice")
+
+    assert "retry_any" in perms
+    assert "cancel_any" not in perms
+
+
+def test_user_permissions_multiple_grants_accumulate():
+    """Multiple per-user grants are all reflected in the returned permission set."""
+    import router
+
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", {"alice"}),
+        patch.object(router, "USERS_GRANTED_BATCH", {"alice"}),
+    ):
+        perms = router._user_permissions("alice")
+
+    assert "from_diff" in perms
+    assert "read_all" in perms
+    assert "batch" in perms
+    assert "cancel_any" not in perms
+    assert "retry_any" not in perms
+
+
+# ── _check_rate_limit ─────────────────────────────────────────────────────────
+
+
+def test_check_rate_limit_disabled_when_zero():
+    """Rate limiting is off by default (RATE_LIMIT_JOBS_PER_HOUR=0)."""
+    import router
+
+    with patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 0):
+        assert router._check_rate_limit("alice") is True
+
+
+def test_check_rate_limit_allows_when_within_limit():
+    """A user whose counter is below the limit is not blocked."""
+    import router
+
+    mock_r = MagicMock()
+    mock_r.incr.return_value = 3
+
+    with (
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 10),
+        patch.object(router, "r", mock_r),
+    ):
+        assert router._check_rate_limit("alice") is True
+
+
+def test_check_rate_limit_blocks_when_exceeded():
+    """A user whose counter has exceeded the limit is blocked."""
+    import router
+
+    mock_r = MagicMock()
+    mock_r.incr.return_value = 11
+
+    with (
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 10),
+        patch.object(router, "r", mock_r),
+    ):
+        assert router._check_rate_limit("alice") is False
+
+
+def test_check_rate_limit_allows_at_exact_limit():
+    """A counter exactly equal to the limit is still allowed."""
+    import router
+
+    mock_r = MagicMock()
+    mock_r.incr.return_value = 10
+
+    with (
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 10),
+        patch.object(router, "r", mock_r),
+    ):
+        assert router._check_rate_limit("alice") is True
+
+
+def test_check_rate_limit_sets_expiry_on_new_bucket():
+    """The first increment in a bucket sets a 2-hour TTL for auto-cleanup."""
+    import router
+
+    mock_r = MagicMock()
+    mock_r.incr.return_value = 1
+
+    with (
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 5),
+        patch.object(router, "r", mock_r),
+    ):
+        router._check_rate_limit("alice")
+
+    mock_r.expire.assert_called_once()
+    assert mock_r.expire.call_args.args[1] == 7200
+
+
+def test_check_rate_limit_does_not_set_expiry_on_subsequent_increments():
+    """Subsequent increments in the same bucket do not reset the TTL."""
+    import router
+
+    mock_r = MagicMock()
+    mock_r.incr.return_value = 4
+
+    with (
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 5),
+        patch.object(router, "r", mock_r),
+    ):
+        router._check_rate_limit("alice")
+
+    mock_r.expire.assert_not_called()
+
+
+def test_check_rate_limit_fails_open_on_redis_error():
+    """A Redis failure does not block job submission (fail-open)."""
+    import router
+
+    mock_r = MagicMock()
+    mock_r.incr.side_effect = Exception("Redis unavailable")
+
+    with (
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 10),
+        patch.object(router, "r", mock_r),
+    ):
+        assert router._check_rate_limit("alice") is True
+
+
+# ── write permission & rate-limiting on POST /api/v1/rollback/jobs ────────────
+
+
+def test_create_job_returns_403_for_read_only_user(client):
+    """A user in USERS_READ_ONLY cannot submit new rollback jobs."""
+    import router
+
+    _set_session(client, "viewer")
+    with patch.object(router, "USERS_READ_ONLY", {"viewer"}):
+        resp = client.post(
+            "/api/v1/rollback/jobs",
+            json={
+                "requested_by": "viewer",
+                "items": [{"title": "File:T.jpg", "user": "V"}],
+            },
+        )
+    assert resp.status_code == 403
+    assert "write" in resp.get_json().get("detail", "").lower()
+
+
+def test_create_job_returns_429_when_rate_limited(client):
+    """A user who has exceeded the rate limit receives a 429 response."""
+    _set_session(client, "alice")
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch("router._check_rate_limit", return_value=False),
+    ):
+        resp = client.post(
+            "/api/v1/rollback/jobs",
+            json={
+                "requested_by": "alice",
+                "items": [{"title": "File:T.jpg", "user": "V"}],
+            },
+        )
+    assert resp.status_code == 429
+    assert "rate limit" in resp.get_json().get("detail", "").lower()
+
+
+def test_create_job_succeeds_when_rate_limit_disabled(client):
+    """With rate limiting off the route behaves as before."""
+    import router
+
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.lastrowid = 42
+
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 0),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
+    ):
+        mock_task.delay = MagicMock()
+        resp = client.post(
+            "/api/v1/rollback/jobs",
+            json={
+                "requested_by": "alice",
+                "items": [{"title": "File:T.jpg", "user": "V"}],
+            },
+        )
+    assert resp.status_code == 200
+
+
+# ── cancel_any permission on DELETE /api/v1/rollback/jobs/<id> ───────────────
+
+
+def test_cancel_job_allowed_for_cancel_any_user_on_others_job(client):
+    """A user with cancel_any permission can cancel another user's job."""
+    import router
+
+    _set_session(client, "admin")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "bob", "queued")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"admin"}),
+    ):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "canceled"
+
+
+def test_cancel_job_still_forbidden_without_cancel_any(client):
+    """A non-privileged user cannot cancel someone else's job."""
+    import router
+
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "bob", "queued")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", set()),
+    ):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 403
+
+
+# ── retry_any permission on POST /api/v1/rollback/jobs/<id>/retry ─────────────
+
+
+def test_retry_job_allowed_for_retry_any_user_on_others_job(client):
+    """A user with retry_any permission can retry another user's job."""
+    import router
+
+    _set_session(client, "admin")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.side_effect = [("bob",), (1,)]
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_RETRY_ANY", {"admin"}),
+        patch("router.process_rollback_job") as mock_task,
+    ):
+        mock_task.delay = MagicMock()
+        resp = client.post("/api/v1/rollback/jobs/1/retry")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "queued"
+
+
+def test_retry_job_still_forbidden_without_retry_any(client):
+    """A non-privileged user cannot retry someone else's job."""
+    import router
+
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = ("bob",)
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_RETRY_ANY", set()),
+    ):
+        resp = client.post("/api/v1/rollback/jobs/1/retry")
+
+    assert resp.status_code == 403
+
+
+# ── read_all permission on GET /api/v1/rollback/jobs/<id> ─────────────────────
+
+
+def test_get_job_allowed_for_view_all_user_on_others_job(client):
+    """A user with read_all permission can view another user's job."""
+    import router
+
+    _set_session(client, "watcher")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "bob", "completed", 0, "2024-01-01")
+    mock_cursor.fetchall.return_value = []
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", {"watcher"}),
+    ):
+        resp = client.get("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["requested_by"] == "bob"
+
+
+def test_get_job_still_forbidden_without_read_all(client):
+    """A user without read_all cannot view another user's job."""
+    import router
+
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "bob", "completed", 0, "2024-01-01")
+    mock_cursor.fetchall.return_value = []
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", set()),
+    ):
+        resp = client.get("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 403
+
+
+# ── from_diff interface grant ─────────────────────────────────────────────────
+
+
+def test_from_diff_api_allowed_for_granted_user(client):
+    """A non-maintainer in USERS_GRANTED_FROM_DIFF can use the from-diff API."""
+    import router
+
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.lastrowid = 11
+
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
+    ):
+        mock_resolve.delay = MagicMock()
+        resp = client.post(
+            "/api/v1/rollback/from-diff",
+            json={"diff": 999, "limit": 5},
+        )
+
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "resolving"
+
+
+def test_from_diff_api_still_denied_without_grant(client):
+    """A non-maintainer user without USERS_GRANTED_FROM_DIFF cannot use the from-diff API."""
+    import router
+
+    _set_session(client, "alice")
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", set()),
+    ):
+        resp = client.post(
+            "/api/v1/rollback/from-diff",
+            json={"diff": 999},
+        )
+
+    assert resp.status_code == 403
+
+
+def test_all_jobs_ui_allowed_for_view_all_granted_user(client):
+    """A non-maintainer in USERS_GRANTED_VIEW_ALL can access the all-jobs page."""
+    import router
+
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchall.return_value = []
+
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", {"alice"}),
+        patch("router.get_conn", return_value=mock_conn),
+    ):
+        resp = client.get("/rollback-queue/all-jobs")
+
+    assert resp.status_code == 200
+
+
+def test_goto_from_diff_tab_allowed_for_granted_user(client):
+    """A non-maintainer user with from_diff grant is redirected correctly by /goto."""
+    import router
+
+    _set_session(client, "alice")
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
+    ):
+        resp = client.get("/goto?tab=rollback-from-diff")
+
+    assert resp.status_code == 302
+    assert "/rollback-from-diff" in resp.headers["Location"]

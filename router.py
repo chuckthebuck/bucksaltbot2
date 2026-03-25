@@ -29,15 +29,34 @@ ALLOWED_GROUPS = {"sysop"}
 GROUP_CACHE_TTL = 300
 _group_cache = {}
 
+
+def _env_user_set(env_var: str) -> set[str]:
+    """Parse a comma-separated environment variable into a lower-cased set of usernames."""
+    return {u.strip().lower() for u in os.getenv(env_var, "").split(",") if u.strip()}
+
+
 # Comma-separated list of individual MediaWiki account names that are
 # authorised to use this tool.  Intended for adding test accounts without
 # granting full maintainer privileges.
 # Example: EXTRA_AUTHORIZED_USERS=Alice,TestUser42
-EXTRA_AUTHORIZED_USERS: set[str] = {
-    u.strip().lower()
-    for u in os.getenv("EXTRA_AUTHORIZED_USERS", "").split(",")
-    if u.strip()
-}
+EXTRA_AUTHORIZED_USERS: set[str] = _env_user_set("EXTRA_AUTHORIZED_USERS")
+
+# Users who may view their own jobs but cannot submit, cancel, or retry.
+# Example: USERS_READ_ONLY=Viewer1,Viewer2
+USERS_READ_ONLY: set[str] = _env_user_set("USERS_READ_ONLY")
+
+# Non-maintainer users granted access to specific interfaces or cross-user actions.
+# Example: USERS_GRANTED_FROM_DIFF=Alice,TestAccount
+USERS_GRANTED_FROM_DIFF: set[str] = _env_user_set("USERS_GRANTED_FROM_DIFF")
+USERS_GRANTED_VIEW_ALL: set[str] = _env_user_set("USERS_GRANTED_VIEW_ALL")
+USERS_GRANTED_BATCH: set[str] = _env_user_set("USERS_GRANTED_BATCH")
+USERS_GRANTED_CANCEL_ANY: set[str] = _env_user_set("USERS_GRANTED_CANCEL_ANY")
+USERS_GRANTED_RETRY_ANY: set[str] = _env_user_set("USERS_GRANTED_RETRY_ANY")
+
+# Per-user rate limit on job creation.  0 = disabled (the default).
+# Example: RATE_LIMIT_JOBS_PER_HOUR=20
+RATE_LIMIT_JOBS_PER_HOUR: int = int(os.getenv("RATE_LIMIT_JOBS_PER_HOUR", "0"))
+
 _DIFF_PAYLOAD_TTL = 7 * 24 * 3600
 
 
@@ -459,6 +478,77 @@ def is_authorized(username):
     return any(group in ALLOWED_GROUPS for group in groups)
 
 
+def _user_permissions(username: str) -> frozenset:
+    """Return the set of permission flags for an already-authenticated user.
+
+    Permission strings
+    ------------------
+    read_own    — view the user's own jobs
+    write       — submit new rollback jobs
+    cancel_own  — cancel the user's own jobs
+    retry_own   — retry the user's own jobs
+    read_all    — view every user's jobs (all-jobs interface)
+    from_diff   — use the rollback-from-diff interface
+    batch       — use the batch rollback interface
+    cancel_any  — cancel any user's job
+    retry_any   — retry any user's job
+    """
+    if not username:
+        return frozenset()
+
+    lower = username.lower()
+
+    # Read-only users may only view their own jobs.
+    if lower in USERS_READ_ONLY:
+        return frozenset({"read_own"})
+
+    # Base permissions granted to every authenticated user.
+    perms: set = {"read_own", "write", "cancel_own", "retry_own"}
+
+    if is_maintainer(username):
+        perms |= {"read_all", "from_diff", "batch", "cancel_any", "retry_any"}
+    else:
+        # Per-user grants for non-maintainer accounts (e.g. test users).
+        if lower in USERS_GRANTED_FROM_DIFF:
+            perms.add("from_diff")
+        if lower in USERS_GRANTED_VIEW_ALL:
+            perms.add("read_all")
+        if lower in USERS_GRANTED_BATCH:
+            perms.add("batch")
+        if lower in USERS_GRANTED_CANCEL_ANY:
+            perms.add("cancel_any")
+        if lower in USERS_GRANTED_RETRY_ANY:
+            perms.add("retry_any")
+
+    return frozenset(perms)
+
+
+def _check_rate_limit(username: str) -> bool:
+    """Return True if the user is within the per-hour job-creation rate limit.
+
+    When RATE_LIMIT_JOBS_PER_HOUR is 0 (the default) rate limiting is
+    disabled and this function always returns True.  Fails open on Redis
+    errors so that a Redis outage does not block job submission.
+    """
+    if RATE_LIMIT_JOBS_PER_HOUR <= 0:
+        return True
+
+    hour_bucket = int(time.time() // 3600)
+    key = f"rollback:ratelimit:{username.lower()}:{hour_bucket}"
+
+    try:
+        count = r.incr(key)
+        if count == 1:
+            # First entry in this bucket — expire after two hours for cleanup.
+            r.expire(key, 7200)
+        return int(count) <= RATE_LIMIT_JOBS_PER_HOUR
+    except Exception:
+        app.logger.warning(
+            "Rate-limit check failed for %s; failing open.", username
+        )
+        return True
+
+
 def _ensure_secret_key():
     configured = app.config.get("SECRET_KEY") or os.environ.get("SECRET_KEY")
     if not configured:
@@ -582,17 +672,17 @@ def goto():
         return redirect("/rollback-queue")
 
     if tab == "rollback-batch":
-        if not is_maintainer(username):
+        if "batch" not in _user_permissions(username):
             abort(403)
         return redirect("/rollback_batch")
 
     if tab == "rollback-all-jobs":
-        if not is_maintainer(username):
+        if "read_all" not in _user_permissions(username):
             abort(403)
         return redirect("/rollback-queue/all-jobs")
 
     if tab == "rollback-from-diff":
-        if not is_maintainer(username):
+        if "from_diff" not in _user_permissions(username):
             abort(403)
         return redirect("/rollback-from-diff")
 
@@ -692,7 +782,7 @@ def rollback_from_diff_api():
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
 
-    if not is_maintainer(username):
+    if "from_diff" not in _user_permissions(username):
         return jsonify({"detail": "Forbidden"}), 403
 
     payload = request.get_json(silent=True) or {}
@@ -787,7 +877,7 @@ def rollback_from_diff_page():
     if not username:
         abort(401)
 
-    if not is_maintainer(username):
+    if "from_diff" not in _user_permissions(username):
         abort(403)
 
     return render_template(
@@ -806,7 +896,7 @@ def rollback_queue_all_jobs_ui():
     if not username:
         abort(401)
 
-    if not is_maintainer(username):
+    if "read_all" not in _user_permissions(username):
         abort(403)
 
     with get_conn() as conn:
@@ -865,7 +955,7 @@ def rollback_batch():
     if not username:
         abort(401)
 
-    if not is_maintainer(username):
+    if "batch" not in _user_permissions(username):
         abort(403)
 
     return render_template(
@@ -923,6 +1013,14 @@ def create_rollback_job():
 
     if actor is None:
         return jsonify({"detail": "Not authenticated"}), 401
+
+    perms = _user_permissions(actor)
+
+    if "write" not in perms:
+        return jsonify({"detail": "Forbidden: write access required"}), 403
+
+    if not _check_rate_limit(actor):
+        return jsonify({"detail": "Rate limit exceeded; try again later"}), 429
 
     payload = request.get_json(silent=True) or {}
 
@@ -1027,7 +1125,8 @@ def retry_job(job_id):
                 return jsonify({"detail": "Job not found"}), 404
 
             if job[0] != actor:
-                return jsonify({"detail": "Forbidden"}), 403
+                if "retry_any" not in _user_permissions(actor):
+                    return jsonify({"detail": "Forbidden"}), 403
 
             cursor.execute(
                 "SELECT COUNT(*) FROM rollback_job_items WHERE job_id=%s",
@@ -1095,7 +1194,8 @@ def cancel_rollback_job(job_id):
                 return jsonify({"detail": "Job not found"}), 404
 
             if job[1] != actor:
-                return jsonify({"detail": "Forbidden"}), 403
+                if "cancel_any" not in _user_permissions(actor):
+                    return jsonify({"detail": "Forbidden"}), 403
 
             if job[2] in {"completed", "failed", "canceled"}:
                 return jsonify({"job_id": job_id, "status": job[2]})
@@ -1142,7 +1242,7 @@ def get_rollback_job(job_id):
             if not job:
                 return jsonify({"detail": "Job not found"}), 404
 
-            if job[1] != username and not is_maintainer(username):
+            if job[1] != username and "read_all" not in _user_permissions(username):
                 return jsonify({"detail": "Forbidden"}), 403
 
             cursor.execute(
