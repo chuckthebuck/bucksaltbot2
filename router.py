@@ -57,6 +57,15 @@ def _load_diff_payload(job_id: int) -> dict | None:
         return None
 
 
+def _update_diff_payload(job_id: int, updates: dict) -> None:
+    payload = _load_diff_payload(job_id)
+    if not payload:
+        return
+
+    payload.update(updates)
+    _store_diff_payload(job_id, payload)
+
+
 def _set_diff_error(job_id: int, error_message: str | None) -> None:
     try:
         if error_message:
@@ -292,10 +301,42 @@ def resolve_diff_rollback_job(job_id: int):
 
     try:
         oldid = _extract_oldid(diff)
+        _update_diff_payload(job_id, {"oldid": oldid})
+
         diff_metadata = fetch_diff_author_and_timestamp(oldid)
 
         target_user = diff_metadata["user"]
         start_timestamp = diff_metadata["timestamp"]
+
+        try:
+            first_uclimit = str(min(500, int(limit))) if limit is not None else "500"
+        except (TypeError, ValueError):
+            first_uclimit = "500"
+
+        _update_diff_payload(
+            job_id,
+            {
+                "resolved_user": target_user,
+                "resolved_timestamp": start_timestamp,
+                "revision_query": {
+                    "action": "query",
+                    "prop": "revisions",
+                    "revids": str(oldid),
+                    "rvprop": "ids|user|timestamp",
+                    "format": "json",
+                },
+                "contribs_query": {
+                    "action": "query",
+                    "list": "usercontribs",
+                    "ucuser": target_user,
+                    "uclimit": first_uclimit,
+                    "ucprop": "ids|title|timestamp",
+                    "ucstart": start_timestamp,
+                    "ucdir": "newer",
+                    "format": "json",
+                },
+            },
+        )
 
         items = fetch_contribs_after_timestamp(
             target_user,
@@ -404,6 +445,7 @@ def resolve_diff_rollback_job(job_id: int):
                 )
             conn.commit()
         _set_diff_error(job_id, str(e))
+        _update_diff_payload(job_id, {"resolve_error": str(e)})
         status_updater.update_wiki_status(
             editing="Error",
             last_job=f"Failed to resolve diff for job {job_id}",
@@ -1190,6 +1232,8 @@ def get_rollback_job(job_id):
         body = "\n".join(lines) + ("\n" if lines else "")
         return Response(body, mimetype="text/plain")
 
+    diff_payload = _load_diff_payload(job_id) or {}
+
     return jsonify(
         {
             "id": job[0],
@@ -1201,6 +1245,12 @@ def get_rollback_job(job_id):
             "completed": len([x for x in items if x[4] == "completed"]),
             "failed": len([x for x in items if x[4] == "failed"]),
             "error": r.get(_diff_error_key(job_id)),
+            "diff": diff_payload.get("diff"),
+            "oldid": diff_payload.get("oldid"),
+            "resolved_user": diff_payload.get("resolved_user"),
+            "resolved_timestamp": diff_payload.get("resolved_timestamp"),
+            "revision_query": diff_payload.get("revision_query"),
+            "contribs_query": diff_payload.get("contribs_query"),
             "items": [
                 {
                     "id": x[0],

@@ -426,6 +426,39 @@ def test_retry_job_with_no_items_requeues_diff_resolution(client):
     mock_resolve.delay.assert_called_once_with(1)
 
 
+def test_get_job_includes_diff_query_debug_metadata(client):
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "alice", "resolving", 1, "2026-03-25 03:32:25")
+    mock_cursor.fetchall.return_value = []
+
+    payload = {
+        "diff": "https://commons.wikimedia.org/w/index.php?oldid=123456",
+        "oldid": 123456,
+        "resolved_user": "ExampleUser",
+        "resolved_timestamp": "2026-03-25T03:30:00Z",
+        "revision_query": {"action": "query", "prop": "revisions"},
+        "contribs_query": {"action": "query", "list": "usercontribs"},
+    }
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._load_diff_payload", return_value=payload),
+        patch("router.r.get", return_value=None),
+    ):
+        resp = client.get("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "resolving"
+    assert data["diff"].endswith("oldid=123456")
+    assert data["oldid"] == 123456
+    assert data["resolved_user"] == "ExampleUser"
+    assert data["resolved_timestamp"] == "2026-03-25T03:30:00Z"
+    assert data["revision_query"]["action"] == "query"
+    assert data["contribs_query"]["list"] == "usercontribs"
+
+
 def test_cancel_job_returns_401_when_not_authenticated(client):
     resp = client.delete("/api/v1/rollback/jobs/1")
     assert resp.status_code == 401
