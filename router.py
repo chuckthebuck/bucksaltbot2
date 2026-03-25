@@ -2,6 +2,7 @@ import os
 import json
 import secrets
 import time
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
 import mwoauth
@@ -32,6 +33,7 @@ _group_cache = {}
 _DIFF_PAYLOAD_TTL = 7 * 24 * 3600
 _MW_DEBUG_MAX_ENTRIES = 25
 _MW_DEBUG_BODY_MAX = 1200
+_RESOLVING_TIMEOUT_SECONDS = int(os.getenv("RESOLVING_TIMEOUT_SECONDS", "1800"))
 
 
 def _diff_payload_key(job_id: int) -> str:
@@ -83,6 +85,52 @@ def _append_mw_debug(job_id: int, entry: dict) -> None:
 
     payload["mw_debug"] = history
     _store_diff_payload(job_id, payload)
+
+
+def _created_at_to_epoch(created_at_value) -> float | None:
+    if isinstance(created_at_value, datetime):
+        if created_at_value.tzinfo is None:
+            return created_at_value.replace(tzinfo=timezone.utc).timestamp()
+        return created_at_value.timestamp()
+
+    if isinstance(created_at_value, str):
+        try:
+            parsed = datetime.strptime(created_at_value, "%Y-%m-%d %H:%M:%S")
+            return parsed.replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            return None
+
+    return None
+
+
+def _maybe_mark_stale_resolving_job_failed(job_id: int, status: str, created_at_value) -> bool:
+    if status != "resolving":
+        return False
+
+    created_epoch = _created_at_to_epoch(created_at_value)
+    if created_epoch is None:
+        return False
+
+    age_seconds = time.time() - created_epoch
+    if age_seconds < _RESOLVING_TIMEOUT_SECONDS:
+        return False
+
+    error_message = (
+        f"Resolve step exceeded {_RESOLVING_TIMEOUT_SECONDS} seconds; "
+        "marking failed. Retry the job to re-run resolution."
+    )
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE rollback_jobs SET status=%s WHERE id=%s AND status=%s",
+                ("failed", job_id, "resolving"),
+            )
+        conn.commit()
+
+    _set_diff_error(job_id, error_message)
+    _update_diff_payload(job_id, {"resolve_error": error_message})
+    return True
 
 
 def _set_diff_error(job_id: int, error_message: str | None) -> None:
@@ -964,21 +1012,28 @@ def rollback_queue_all_jobs_ui():
             jobs = cursor.fetchall()
 
     if request.args.get("format") == "json":
+        jobs_for_output = []
+        for row in jobs:
+            job_id, requested_by, status, dry_run, created_at, total, completed, failed = row
+            if _maybe_mark_stale_resolving_job_failed(job_id, status, created_at):
+                status = "failed"
+
+            jobs_for_output.append(
+                {
+                    "id": job_id,
+                    "requested_by": requested_by,
+                    "status": status,
+                    "dry_run": bool(dry_run),
+                    "created_at": str(created_at),
+                    "total": int(total or 0),
+                    "completed": int(completed or 0),
+                    "failed": int(failed or 0),
+                }
+            )
+
         return jsonify(
             {
-                "jobs": [
-                    {
-                        "id": row[0],
-                        "requested_by": row[1],
-                        "status": row[2],
-                        "dry_run": bool(row[3]),
-                        "created_at": str(row[4]),
-                        "total": int(row[5] or 0),
-                        "completed": int(row[6] or 0),
-                        "failed": int(row[7] or 0),
-                    }
-                    for row in jobs
-                ]
+                "jobs": jobs_for_output
             }
         )
 
@@ -1302,6 +1357,9 @@ def get_rollback_job(job_id):
             )
 
             items = cursor.fetchall()
+
+    if _maybe_mark_stale_resolving_job_failed(job[0], job[2], job[4]):
+        job = (job[0], job[1], "failed", job[3], job[4])
 
     if request.args.get("format") == "log":
         lines = []

@@ -427,9 +427,12 @@ def test_retry_job_with_no_items_requeues_diff_resolution(client):
 
 
 def test_get_job_includes_diff_query_debug_metadata(client):
+    import datetime as dt
+
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
-    mock_cursor.fetchone.return_value = (1, "alice", "resolving", 1, "2026-03-25 03:32:25")
+    recent_created_at = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    mock_cursor.fetchone.return_value = (1, "alice", "resolving", 1, recent_created_at)
     mock_cursor.fetchall.return_value = []
 
     payload = {
@@ -466,6 +469,47 @@ def test_get_job_includes_diff_query_debug_metadata(client):
     assert data["revision_query"]["action"] == "query"
     assert data["contribs_query"]["list"] == "usercontribs"
     assert data["mw_debug"][0]["kind"] == "revisions"
+
+
+def test_get_job_marks_stale_resolving_as_failed(client):
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (30, "alice", "resolving", 1, "2020-01-01 00:00:00")
+    mock_cursor.fetchall.return_value = []
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._set_diff_error") as mock_set_error,
+        patch("router._update_diff_payload") as mock_update_payload,
+        patch("router.r.get", return_value=None),
+    ):
+        resp = client.get("/api/v1/rollback/jobs/30")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "failed"
+    mock_set_error.assert_called_once()
+    mock_update_payload.assert_called_once()
+
+
+def test_all_jobs_json_marks_stale_resolving_as_failed(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchall.return_value = [
+        (30, "alice", "resolving", 1, "2020-01-01 00:00:00", 0, 0, 0),
+    ]
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router._set_diff_error"),
+        patch("router._update_diff_payload"),
+    ):
+        resp = client.get("/rollback-queue/all-jobs?format=json")
+
+    assert resp.status_code == 200
+    jobs = resp.get_json()["jobs"]
+    assert jobs[0]["status"] == "failed"
 
 
 def test_resolve_diff_rollback_job_propagates_query_payload_to_chunk_jobs():
