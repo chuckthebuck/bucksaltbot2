@@ -1200,7 +1200,7 @@ def get_rollback_job(job_id):
             "total": len(items),
             "completed": len([x for x in items if x[4] == "completed"]),
             "failed": len([x for x in items if x[4] == "failed"]),
-            "error": _load_diff_payload(job_id) and r.get(_diff_error_key(job_id)),
+            "error": r.get(_diff_error_key(job_id)),
             "items": [
                 {
                     "id": x[0],
