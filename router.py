@@ -45,6 +45,12 @@ EXTRA_AUTHORIZED_USERS: set[str] = _env_user_set("EXTRA_AUTHORIZED_USERS")
 # Example: USERS_READ_ONLY=Viewer1,Viewer2
 USERS_READ_ONLY: set[str] = _env_user_set("USERS_READ_ONLY")
 
+# Tester accounts: above regular users, below maintainers.
+# They receive access to all tools (from_diff, batch, read_all) and a separate,
+# slightly higher rate limit, but no cross-user cancel/retry privileges.
+# Example: USERS_TESTER=Alice,TestAccount
+USERS_TESTER: set[str] = _env_user_set("USERS_TESTER")
+
 # Non-maintainer users granted access to specific interfaces or cross-user actions.
 # Example: USERS_GRANTED_FROM_DIFF=Alice,TestAccount
 USERS_GRANTED_FROM_DIFF: set[str] = _env_user_set("USERS_GRANTED_FROM_DIFF")
@@ -54,8 +60,14 @@ USERS_GRANTED_CANCEL_ANY: set[str] = _env_user_set("USERS_GRANTED_CANCEL_ANY")
 USERS_GRANTED_RETRY_ANY: set[str] = _env_user_set("USERS_GRANTED_RETRY_ANY")
 
 # Per-user rate limit on job creation.  0 = disabled (the default).
+# Maintainers are never rate-limited.  Testers use RATE_LIMIT_TESTER_JOBS_PER_HOUR
+# (falls back to RATE_LIMIT_JOBS_PER_HOUR if unset).
 # Example: RATE_LIMIT_JOBS_PER_HOUR=20
 RATE_LIMIT_JOBS_PER_HOUR: int = int(os.getenv("RATE_LIMIT_JOBS_PER_HOUR", "0"))
+# Example: RATE_LIMIT_TESTER_JOBS_PER_HOUR=50
+RATE_LIMIT_TESTER_JOBS_PER_HOUR: int = int(
+    os.getenv("RATE_LIMIT_TESTER_JOBS_PER_HOUR", str(RATE_LIMIT_JOBS_PER_HOUR))
+)
 
 _DIFF_PAYLOAD_TTL = 7 * 24 * 3600
 
@@ -495,15 +507,28 @@ def is_bot_admin(username: str) -> bool:
     return username.strip().lower() in BOT_ADMIN_ACCOUNTS
 
 
+def is_tester(username: str) -> bool:
+    """Return True if the user is in the USERS_TESTER env-var list.
+
+    Testers sit between regular users and maintainers: they have access to all
+    tools (from_diff, batch, read_all) and a higher rate limit, but no
+    cross-user cancel or retry privileges.
+    """
+    if not username:
+        return False
+    return username.strip().lower() in USERS_TESTER
+
+
 def _user_permissions(username: str) -> frozenset:
     """Return the set of permission flags for an already-authenticated user.
 
     User hierarchy (highest → lowest)
     ----------------------------------
-    bot admin (BOT_ADMIN_ACCOUNTS)  — chuckbot and similar accounts
+    bot admin (BOT_ADMIN_ACCOUNTS)   — chuckbot and similar accounts
     maintainer (Toolhub maintainers) — includes bot admins
-    admin (Commons sysop)
-    regular user
+    tester (USERS_TESTER)            — all tools, higher rate limit; no cross-user actions
+    admin (Commons sysop)            — can log in; base perms only
+    regular user (rollbacker/sysop)  — rollback queue only
 
     Permission strings
     ------------------
@@ -537,8 +562,11 @@ def _user_permissions(username: str) -> frozenset:
         # Bot admins (chuckbot) sit above all maintainers and can cancel their jobs too.
         if is_bot_admin(username):
             perms.add("cancel_maintainer_jobs")
+    elif is_tester(username):
+        # Testers get access to all tool interfaces but no cross-user actions.
+        perms |= {"read_all", "from_diff", "batch"}
     else:
-        # Per-user grants for non-maintainer accounts (e.g. test users).
+        # Per-user grants for non-maintainer, non-tester accounts.
         if lower in USERS_GRANTED_FROM_DIFF:
             perms.add("from_diff")
         if lower in USERS_GRANTED_VIEW_ALL:
@@ -554,13 +582,29 @@ def _user_permissions(username: str) -> frozenset:
 
 
 def _check_rate_limit(username: str) -> bool:
-    """Return True if the user is within the per-hour job-creation rate limit.
+    """Return True if the user is within their per-hour job-creation rate limit.
 
-    When RATE_LIMIT_JOBS_PER_HOUR is 0 (the default) rate limiting is
-    disabled and this function always returns True.  Fails open on Redis
-    errors so that a Redis outage does not block job submission.
+    Tiers
+    -----
+    maintainer  — never rate-limited.
+    tester      — checked against RATE_LIMIT_TESTER_JOBS_PER_HOUR (falls back to
+                  RATE_LIMIT_JOBS_PER_HOUR when unset).
+    regular     — checked against RATE_LIMIT_JOBS_PER_HOUR.
+
+    When the applicable limit is 0, rate limiting is disabled for that tier.
+    Fails open on Redis errors so that a Redis outage does not block job submission.
     """
-    if RATE_LIMIT_JOBS_PER_HOUR <= 0:
+    # Maintainers are never rate-limited.
+    if is_maintainer(username):
+        return True
+
+    limit = (
+        RATE_LIMIT_TESTER_JOBS_PER_HOUR
+        if is_tester(username)
+        else RATE_LIMIT_JOBS_PER_HOUR
+    )
+
+    if limit <= 0:
         return True
 
     hour_bucket = int(time.time() // 3600)
@@ -571,7 +615,7 @@ def _check_rate_limit(username: str) -> bool:
         if count == 1:
             # First entry in this bucket — expire after two hours for cleanup.
             r.expire(key, 7200)
-        return int(count) <= RATE_LIMIT_JOBS_PER_HOUR
+        return int(count) <= limit
     except Exception:
         app.logger.warning(
             "Rate-limit check failed for %s; failing open.", username
