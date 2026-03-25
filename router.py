@@ -20,7 +20,7 @@ from flask import (
     session,
     url_for,
 )
-from app import MAX_JOB_ITEMS, flask_app as app, is_maintainer
+from app import BOT_ADMIN_ACCOUNTS, MAX_JOB_ITEMS, flask_app as app, is_maintainer
 from redis_state import get_progress, r
 from rollback_queue import process_rollback_job
 from toolsdb import get_conn
@@ -485,21 +485,39 @@ def is_admin_user(username: str) -> bool:
     return "sysop" in get_user_groups(username)
 
 
+def is_bot_admin(username: str) -> bool:
+    """Return True if the user is one of the hardcoded bot-admin accounts (e.g. chuckbot).
+
+    Bot admins sit at the top of the user hierarchy: chuckbot > maintainer > admin > regular.
+    """
+    if not username:
+        return False
+    return username.strip().lower() in BOT_ADMIN_ACCOUNTS
+
+
 def _user_permissions(username: str) -> frozenset:
     """Return the set of permission flags for an already-authenticated user.
 
+    User hierarchy (highest → lowest)
+    ----------------------------------
+    bot admin (BOT_ADMIN_ACCOUNTS)  — chuckbot and similar accounts
+    maintainer (Toolhub maintainers) — includes bot admins
+    admin (Commons sysop)
+    regular user
+
     Permission strings
     ------------------
-    read_own          — view the user's own jobs
-    write             — submit new rollback jobs
-    cancel_own        — cancel the user's own jobs
-    retry_own         — retry the user's own jobs
-    read_all          — view every user's jobs (all-jobs interface)
-    from_diff         — use the rollback-from-diff interface
-    batch             — use the batch rollback interface
-    cancel_any        — cancel any non-privileged (regular) user's job
-    retry_any         — retry any user's job
-    cancel_admin_jobs — cancel a Commons admin (sysop) user's job; only admins possess this
+    read_own               — view the user's own jobs
+    write                  — submit new rollback jobs
+    cancel_own             — cancel the user's own jobs
+    retry_own              — retry the user's own jobs
+    read_all               — view every user's jobs (all-jobs interface)
+    from_diff              — use the rollback-from-diff interface
+    batch                  — use the batch rollback interface
+    cancel_any             — cancel any non-privileged (regular) user's job
+    retry_any              — retry any user's job
+    cancel_admin_jobs      — cancel a Commons admin (sysop) user's job; all maintainers
+    cancel_maintainer_jobs — cancel a maintainer's job; only bot admins possess this
     """
     if not username:
         return frozenset()
@@ -514,10 +532,11 @@ def _user_permissions(username: str) -> frozenset:
     perms: set = {"read_own", "write", "cancel_own", "retry_own"}
 
     if is_maintainer(username):
-        perms |= {"read_all", "from_diff", "batch", "cancel_any", "retry_any"}
-        # Admins (sysops) receive the additional right to cancel another admin's jobs.
-        if is_admin_user(username):
-            perms.add("cancel_admin_jobs")
+        # Maintainers are above admins: they can cancel any admin's job.
+        perms |= {"read_all", "from_diff", "batch", "cancel_any", "retry_any", "cancel_admin_jobs"}
+        # Bot admins (chuckbot) sit above all maintainers and can cancel their jobs too.
+        if is_bot_admin(username):
+            perms.add("cancel_maintainer_jobs")
     else:
         # Per-user grants for non-maintainer accounts (e.g. test users).
         if lower in USERS_GRANTED_FROM_DIFF:
@@ -1211,15 +1230,20 @@ def cancel_rollback_job(job_id):
                     return jsonify({"detail": "Forbidden"}), 403
 
                 # Tier check: the required privilege depends on the job owner's level.
+                # Hierarchy: bot admin > maintainer > admin (sysop) > regular user.
                 job_owner = job[1]
-                if is_admin_user(job_owner):
-                    # Only Commons admins may cancel another admin's job.
-                    if "cancel_admin_jobs" not in actor_perms:
-                        return jsonify({"detail": "Forbidden: canceling an admin's job requires admin rights"}), 403
+                if is_bot_admin(job_owner):
+                    # Bot-admin job: only another bot admin may cancel it.
+                    if "cancel_maintainer_jobs" not in actor_perms:
+                        return jsonify({"detail": "Forbidden: canceling a bot-admin's job requires bot-admin rights"}), 403
                 elif is_maintainer(job_owner):
-                    # Only maintainers may cancel another maintainer's job.
+                    # Regular maintainer's job: any maintainer (or bot admin) may cancel it.
                     if not is_maintainer(actor):
                         return jsonify({"detail": "Forbidden: canceling a maintainer's job requires maintainer rights"}), 403
+                elif is_admin_user(job_owner):
+                    # Admin job: any maintainer (or bot admin) may cancel it.
+                    if "cancel_admin_jobs" not in actor_perms:
+                        return jsonify({"detail": "Forbidden: canceling an admin's job requires maintainer rights"}), 403
                 # else: regular user's job; cancel_any is sufficient (already checked above).
 
             if job[2] in {"completed", "failed", "canceled"}:

@@ -901,10 +901,13 @@ def test_user_permissions_read_only_matching_is_case_insensitive():
 
 
 def test_user_permissions_maintainer_gets_all_permissions():
-    """Maintainers receive every available permission."""
+    """Maintainers receive every available non-bot-admin permission, including cancel_admin_jobs."""
     import router
 
-    with patch("router.is_maintainer", return_value=True):
+    with (
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", return_value=False),
+    ):
         perms = router._user_permissions("maintainer")
 
     for perm in (
@@ -917,8 +920,11 @@ def test_user_permissions_maintainer_gets_all_permissions():
         "batch",
         "cancel_any",
         "retry_any",
+        "cancel_admin_jobs",
     ):
         assert perm in perms, f"Expected '{perm}' in maintainer permissions"
+
+    assert "cancel_maintainer_jobs" not in perms
 
 
 def test_user_permissions_granted_from_diff():
@@ -1359,3 +1365,256 @@ def test_goto_from_diff_tab_allowed_for_granted_user(client):
 
     assert resp.status_code == 302
     assert "/rollback-from-diff" in resp.headers["Location"]
+
+
+# ── is_bot_admin ──────────────────────────────────────────────────────────────
+
+
+def test_is_bot_admin_returns_true_for_bot_admin_account():
+    """A username listed in BOT_ADMIN_ACCOUNTS is a bot admin."""
+    import router
+
+    with patch.object(router, "BOT_ADMIN_ACCOUNTS", {"chuckbot"}):
+        assert router.is_bot_admin("chuckbot") is True
+        assert router.is_bot_admin("ChuckBot") is True   # case-insensitive
+
+
+def test_is_bot_admin_returns_false_for_regular_user():
+    """A username not in BOT_ADMIN_ACCOUNTS is not a bot admin."""
+    import router
+
+    with patch.object(router, "BOT_ADMIN_ACCOUNTS", {"chuckbot"}):
+        assert router.is_bot_admin("alice") is False
+
+
+def test_is_bot_admin_returns_false_for_empty_username():
+    """An empty username is never a bot admin."""
+    import router
+
+    assert router.is_bot_admin("") is False
+
+
+# ── _user_permissions – cancel tier permissions ───────────────────────────────
+
+
+def test_user_permissions_bot_admin_gets_cancel_maintainer_jobs():
+    """Bot admins (chuckbot) receive cancel_maintainer_jobs on top of all maintainer perms."""
+    import router
+
+    with (
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", return_value=True),
+    ):
+        perms = router._user_permissions("chuckbot")
+
+    assert "cancel_maintainer_jobs" in perms
+    assert "cancel_admin_jobs" in perms
+
+
+def test_user_permissions_regular_maintainer_does_not_get_cancel_maintainer_jobs():
+    """Non-bot-admin maintainers do not receive cancel_maintainer_jobs."""
+    import router
+
+    with (
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", return_value=False),
+    ):
+        perms = router._user_permissions("maintainer")
+
+    assert "cancel_maintainer_jobs" not in perms
+    assert "cancel_admin_jobs" in perms
+
+
+def test_user_permissions_admin_sysop_does_not_get_cancel_admin_jobs():
+    """A sysop who is not a maintainer does NOT receive cancel_admin_jobs."""
+    import router
+
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_READ_ONLY", set()),
+    ):
+        perms = router._user_permissions("sysop_alice")
+
+    assert "cancel_admin_jobs" not in perms
+    assert "cancel_maintainer_jobs" not in perms
+
+
+# ── cancel_rollback_job – three-tier ownership (chuckbot > maintainer > admin > regular) ───
+
+
+def test_cancel_job_returns_403_when_owner_is_maintainer_and_actor_has_only_cancel_any(client):
+    """An env-granted cancel_any user cannot cancel a maintainer's job."""
+    import router
+
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "maintaineruser", "queued")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", side_effect=lambda u: u == "maintaineruser"),
+        patch("router.is_admin_user", return_value=False),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
+    ):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 403
+    assert "maintainer" in resp.get_json().get("detail", "").lower()
+
+
+def test_cancel_job_allowed_when_owner_is_regular_maintainer_and_actor_is_also_maintainer(client):
+    """A maintainer can cancel another regular maintainer's job."""
+    import router
+
+    _set_session(client, "maint_alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "maint_bob", "queued")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", return_value=False),
+        patch("router.is_admin_user", return_value=False),
+    ):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "canceled"
+
+
+def test_cancel_job_allowed_when_owner_is_maintainer_and_actor_is_bot_admin(client):
+    """A bot admin can cancel a maintainer's job."""
+    import router
+
+    _set_session(client, "chuckbot")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "maint_bob", "queued")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", side_effect=lambda u: u == "chuckbot"),
+        patch("router.is_admin_user", return_value=False),
+    ):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "canceled"
+
+
+def test_cancel_job_returns_403_when_owner_is_bot_admin_and_actor_is_regular_maintainer(client):
+    """A regular maintainer cannot cancel chuckbot's job."""
+    import router
+
+    _set_session(client, "maint_alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "chuckbot", "queued")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", side_effect=lambda u: u == "chuckbot"),
+        patch("router.is_admin_user", return_value=False),
+    ):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 403
+    assert "bot-admin" in resp.get_json().get("detail", "").lower()
+
+
+def test_cancel_job_allowed_when_owner_is_bot_admin_and_actor_is_also_bot_admin(client):
+    """A bot admin can cancel another bot admin's own job."""
+    import router
+
+    _set_session(client, "chuckbot2")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "chuckbot", "queued")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", return_value=True),
+        patch("router.is_admin_user", return_value=False),
+    ):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "canceled"
+
+
+def test_cancel_job_returns_403_when_owner_is_admin_and_actor_has_only_cancel_any(client):
+    """An env-granted cancel_any user cannot cancel a sysop admin's job."""
+    import router
+
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "sysop_bob", "queued")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch("router.is_admin_user", side_effect=lambda u: u == "sysop_bob"),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
+    ):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 403
+    assert "maintainer" in resp.get_json().get("detail", "").lower()
+
+
+def test_cancel_job_allowed_when_owner_is_admin_and_actor_is_maintainer(client):
+    """A maintainer can cancel a sysop admin's job."""
+    import router
+
+    _set_session(client, "maint_alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "sysop_bob", "queued")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", side_effect=lambda u: u == "maint_alice"),
+        patch("router.is_bot_admin", return_value=False),
+        patch("router.is_admin_user", side_effect=lambda u: u == "sysop_bob"),
+    ):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "canceled"
+
+
+def test_cancel_job_returns_403_when_regular_user_tries_to_cancel_admin_job(client):
+    """A regular (non-maintainer) user cannot cancel an admin's job."""
+    import router
+
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "sysop_bob", "queued")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+    ):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+
+    # Fast-path fires before tier check; no elevated cancel perms → 403.
+    assert resp.status_code == 403
+
+
+def test_cancel_job_allowed_for_cancel_any_user_on_regular_users_job(client):
+    """An env-granted cancel_any user CAN cancel a regular (non-admin, non-maintainer) user's job."""
+    import router
+
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "bob", "queued")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch("router.is_admin_user", return_value=False),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
+    ):
+        resp = client.delete("/api/v1/rollback/jobs/1")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "canceled"
