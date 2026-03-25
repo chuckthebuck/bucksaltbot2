@@ -388,6 +388,26 @@ def test_fetch_contribs_after_timestamp_respects_limit():
     assert results == [{"title": "File:One.jpg", "user": "TargetUser"}]
 
 
+def test_fetch_diff_author_and_timestamp_handles_network_error():
+    import router
+    import requests
+
+    with patch("router.requests.get") as mock_get:
+        mock_get.side_effect = requests.Timeout("Connection timeout")
+        with pytest.raises(ValueError, match="Failed to fetch revision metadata"):
+            router.fetch_diff_author_and_timestamp(123456)
+
+
+def test_fetch_contribs_after_timestamp_handles_network_error():
+    import router
+    import requests
+
+    with patch("router.requests.get") as mock_get:
+        mock_get.side_effect = requests.ConnectionError("Connection failed")
+        with pytest.raises(ValueError, match="Failed to fetch user contributions"):
+            router.fetch_contribs_after_timestamp("TestUser", "2024-01-01T00:00:00Z")
+
+
 def test_retry_job_with_no_items_requeues_diff_resolution(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()

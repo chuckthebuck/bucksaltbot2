@@ -97,9 +97,13 @@ def fetch_diff_author_and_timestamp(oldid):
         "format": "json",
     }
 
-    resp = requests.get(url, params=params, timeout=15)
-    resp.raise_for_status()
-    data = resp.json()
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.RequestException as e:
+        app.logger.error("Failed to fetch revision metadata for oldid %s: %s", oldid, e)
+        raise ValueError(f"Failed to fetch revision metadata: {e}") from e
 
     pages = data.get("query", {}).get("pages", {})
 
@@ -149,9 +153,18 @@ def fetch_contribs_after_timestamp(target_user, start_timestamp, limit=None):
         if uccontinue:
             params["uccontinue"] = uccontinue
 
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = requests.get(url, params=params, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as e:
+            app.logger.error(
+                "Failed to fetch contributions for user %s after timestamp %s: %s",
+                target_user,
+                start_timestamp,
+                e,
+            )
+            raise ValueError(f"Failed to fetch user contributions: {e}") from e
 
         contribs = data.get("query", {}).get("usercontribs", [])
 
