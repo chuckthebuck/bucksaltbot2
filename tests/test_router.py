@@ -122,6 +122,94 @@ def test_create_job_enqueues_celery_task_with_job_id(client):
     mock_task.delay.assert_called_once_with(7)
 
 
+def test_approve_diff_request_requires_maintainer(client):
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (
+        1,
+        "bob",
+        "pending_approval",
+        0,
+        12345,
+        "diff",
+        "from_diff",
+        None,
+        "maintainer",
+    )
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=False),
+    ):
+        resp = client.post("/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_diff"})
+
+    assert resp.status_code == 403
+
+
+def test_approve_diff_request_can_switch_to_account_endpoint(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (
+        1,
+        "bob",
+        "pending_approval",
+        0,
+        12345,
+        "diff",
+        "from_diff",
+        None,
+        "maintainer",
+    )
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=True),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
+        patch("router._update_diff_payload") as mock_update_payload,
+        patch("router._set_diff_error"),
+    ):
+        mock_resolve.delay = MagicMock()
+        resp = client.post("/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_account"})
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "resolving"
+    assert data["approved_endpoint"] == "from_account"
+    mock_resolve.delay.assert_called_once_with(1)
+    mock_update_payload.assert_called_once()
+
+
+def test_approve_batch_request_by_admin_queues_all_pending_jobs_in_batch(client):
+    _set_session(client, "sysop")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (
+        10,
+        "alice",
+        "pending_approval",
+        1,
+        777,
+        "batch",
+        "batch",
+        None,
+        "admin",
+    )
+    mock_cursor.fetchall.return_value = [(10,), (11,)]
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=True),
+        patch("router.process_rollback_job") as mock_task,
+    ):
+        mock_task.delay = MagicMock()
+        resp = client.post("/api/v1/rollback/jobs/10/approve", json={"endpoint": "batch"})
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "queued"
+    assert data["approved_job_ids"] == [10, 11]
+    assert mock_task.delay.call_count == 2
+
+
 def test_create_job_dry_run_flag_persisted(client):
     """dry_run=True is recorded and the task is still enqueued."""
     _set_session(client, "alice")
@@ -941,7 +1029,10 @@ def test_all_jobs_ui_returns_401_when_not_authenticated(client):
 
 def test_all_jobs_ui_returns_403_for_non_maintainer(client):
     _set_session(client, "alice")
-    with patch("router.is_maintainer", return_value=False):
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch("router.is_admin_user", return_value=False),
+    ):
         resp = client.get("/rollback-queue/all-jobs")
     assert resp.status_code == 403
 
@@ -1092,7 +1183,10 @@ def test_goto_all_jobs_tab_redirects_for_maintainer(client):
 
 def test_goto_all_jobs_tab_returns_403_for_non_maintainer(client):
     _set_session(client, "alice")
-    with patch("router.is_maintainer", return_value=False):
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch("router.is_admin_user", return_value=False),
+    ):
         resp = client.get("/goto?tab=rollback-all-jobs")
     assert resp.status_code == 403
 
