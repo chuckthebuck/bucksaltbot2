@@ -90,6 +90,14 @@ _USER_GRANT_GROUPS = {
     "operator": {"view_all", "from_diff", "batch", "cancel_any", "retry_any"},
 }
 
+_USER_IMPLICIT_FLAGS = (
+    "bot_admin",
+    "maintainer",
+    "tester",
+    "read_only",
+    "extra_authorized",
+)
+
 _USER_SET_CONFIG_KEYS = {
     "EXTRA_AUTHORIZED_USERS",
     "USERS_READ_ONLY",
@@ -237,6 +245,36 @@ def _expand_user_grants(config: dict, username: str) -> set[str]:
             expanded.add(atom)
 
     return expanded
+
+
+def _get_user_grants_payload(target_username: str, config: dict) -> dict:
+    normalized_username = _normalize_username(target_username)
+    grants_map = config.get("USER_GRANTS_JSON") or {}
+    atoms = list(grants_map.get(normalized_username, []))
+
+    groups = sorted(
+        [atom.split(":", 1)[1] for atom in atoms if atom.startswith("group:")]
+    )
+    rights = sorted([atom for atom in atoms if not atom.startswith("group:")])
+    expanded_rights = sorted(_expand_user_grants(config, normalized_username))
+
+    implicit = {
+        "bot_admin": bool(is_bot_admin(normalized_username)),
+        "maintainer": bool(is_maintainer(normalized_username)),
+        "tester": bool(normalized_username in config["USERS_TESTER"]),
+        "read_only": bool(normalized_username in config["USERS_READ_ONLY"]),
+        "extra_authorized": bool(normalized_username in config["EXTRA_AUTHORIZED_USERS"]),
+    }
+
+    return {
+        "username": target_username,
+        "normalized_username": normalized_username,
+        "atoms": sorted(atoms),
+        "groups": groups,
+        "rights": rights,
+        "expanded_rights": expanded_rights,
+        "implicit": implicit,
+    }
 
 
 def _parse_user_grants_env(raw_value: str) -> dict:
@@ -1805,6 +1843,8 @@ def get_runtime_authz_api():
             "config": _serialize_runtime_authz_config(config),
             "can_edit": _can_edit_runtime_config(username),
             "editable_keys": _RUNTIME_AUTHZ_ALLOWED_KEYS,
+            "grant_groups": sorted(_USER_GRANT_GROUPS.keys()),
+            "grant_rights": sorted(_USER_GRANT_RIGHTS),
         }
     )
 
@@ -1843,8 +1883,90 @@ def update_runtime_authz_api():
             "config": _serialize_runtime_authz_config(effective),
             "can_edit": _can_edit_runtime_config(username),
             "editable_keys": _RUNTIME_AUTHZ_ALLOWED_KEYS,
+            "grant_groups": sorted(_USER_GRANT_GROUPS.keys()),
+            "grant_rights": sorted(_USER_GRANT_RIGHTS),
         }
     )
+
+
+@app.route("/api/v1/config/authz/user-grants/<path:target_username>", methods=["GET"])
+def get_runtime_authz_user_grants(target_username: str):
+    username = session.get("username")
+
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    if not _can_view_runtime_config(username):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    normalized_target = _normalize_username(target_username)
+    if not normalized_target:
+        return jsonify({"detail": "Username is required"}), 400
+
+    config = _effective_runtime_authz_config()
+    payload = _get_user_grants_payload(normalized_target, config)
+    payload["implicit_flag_order"] = list(_USER_IMPLICIT_FLAGS)
+    payload["grant_groups"] = sorted(_USER_GRANT_GROUPS.keys())
+    payload["grant_rights"] = sorted(_USER_GRANT_RIGHTS)
+    payload["can_edit"] = _can_edit_runtime_config(username)
+    return jsonify(payload)
+
+
+@app.route("/api/v1/config/authz/user-grants/<path:target_username>", methods=["PUT"])
+def update_runtime_authz_user_grants(target_username: str):
+    username = session.get("username")
+
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    if not _can_edit_runtime_config(username):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    normalized_target = _normalize_username(target_username)
+    if not normalized_target:
+        return jsonify({"detail": "Username is required"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"detail": "Invalid payload"}), 400
+
+    groups = payload.get("groups", [])
+    rights = payload.get("rights", [])
+
+    if groups is None:
+        groups = []
+    if rights is None:
+        rights = []
+
+    normalized_entry, errors = _normalize_runtime_authz_updates(
+        {
+            "USER_GRANTS_JSON": {
+                normalized_target: {
+                    "groups": groups,
+                    "rights": rights,
+                }
+            }
+        }
+    )
+
+    if errors:
+        return jsonify({"detail": "; ".join(errors)}), 400
+
+    config = _effective_runtime_authz_config()
+    grants_map = dict(config.get("USER_GRANTS_JSON") or {})
+
+    user_map = normalized_entry.get("USER_GRANTS_JSON", {})
+    if normalized_target in user_map:
+        grants_map[normalized_target] = user_map[normalized_target]
+    else:
+        grants_map.pop(normalized_target, None)
+
+    _persist_runtime_authz_updates({"USER_GRANTS_JSON": grants_map}, updated_by=username)
+    updated_config = _effective_runtime_authz_config()
+    response_payload = _get_user_grants_payload(normalized_target, updated_config)
+    response_payload["ok"] = True
+    response_payload["can_edit"] = _can_edit_runtime_config(username)
+    return jsonify(response_payload)
 
 
 @app.route("/api/v1/rollback/jobs", methods=["GET"])

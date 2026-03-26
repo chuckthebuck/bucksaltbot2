@@ -3,8 +3,10 @@ import { onMounted, ref } from "vue";
 import { CdxButton, CdxField, CdxLookup, CdxMessage } from "@wikimedia/codex";
 import {
   fetchRuntimeAuthzConfig,
+  fetchRuntimeUserGrants,
   searchUsernames,
   updateRuntimeAuthzConfig,
+  updateRuntimeUserGrants,
   type RuntimeAuthzConfig,
 } from "./api";
 
@@ -26,6 +28,59 @@ interface ConfigInitialProps {
   username: string | null;
   can_edit_config: boolean;
 }
+
+type GrantGroupKey =
+  | "viewer"
+  | "diff"
+  | "diff_dry_run"
+  | "batch"
+  | "support"
+  | "operator";
+
+type GrantRightKey =
+  | "view_all"
+  | "from_diff"
+  | "from_diff_dry_run_only"
+  | "batch"
+  | "cancel_any"
+  | "retry_any";
+
+type ImplicitFlagKey =
+  | "bot_admin"
+  | "maintainer"
+  | "tester"
+  | "read_only"
+  | "extra_authorized";
+
+const userGrantGroupFields: Array<{ key: GrantGroupKey; label: string; help: string }> = [
+  { key: "viewer", label: "viewer", help: "Can view all jobs." },
+  { key: "diff", label: "diff", help: "Can use from-diff." },
+  { key: "diff_dry_run", label: "diff_dry_run", help: "From-diff in dry-run mode only." },
+  { key: "batch", label: "batch", help: "Can use batch rollback." },
+  { key: "support", label: "support", help: "View-all + retry-any support role." },
+  { key: "operator", label: "operator", help: "Full operator rights." },
+];
+
+const userGrantRightFields: Array<{ key: GrantRightKey; label: string; help: string }> = [
+  { key: "view_all", label: "view_all", help: "Read every user's jobs." },
+  { key: "from_diff", label: "from_diff", help: "Use rollback-from-diff." },
+  {
+    key: "from_diff_dry_run_only",
+    label: "from_diff_dry_run_only",
+    help: "Allow from-diff only when dry_run=true.",
+  },
+  { key: "batch", label: "batch", help: "Use batch rollback UI." },
+  { key: "cancel_any", label: "cancel_any", help: "Cancel regular users' jobs." },
+  { key: "retry_any", label: "retry_any", help: "Retry jobs across users." },
+];
+
+const implicitFlagFields: Array<{ key: ImplicitFlagKey; label: string }> = [
+  { key: "bot_admin", label: "bot admin" },
+  { key: "maintainer", label: "maintainer" },
+  { key: "tester", label: "tester" },
+  { key: "read_only", label: "read only" },
+  { key: "extra_authorized", label: "extra authorized" },
+];
 
 const listFields: Array<{ key: ListConfigKey; label: string; help: string }> = [
   {
@@ -134,6 +189,42 @@ const lookupMenuItems = ref<Record<string, Array<{ label: string; value: string 
 const lookupSelected = ref<Record<string, string | number | null>>({});
 const lookupInputValue = ref<Record<string, string>>({});
 const lookupRequestIds: Record<string, number> = {};
+
+const userSearchLookupItems = ref<Array<{ label: string; value: string }>>([]);
+const userSearchSelected = ref<string | number | null>(null);
+const userSearchInputValue = ref("");
+const userSearchRequestId = ref(0);
+
+const selectedGrantUser = ref("");
+const userGrantLoaded = ref(false);
+const userGrantSaving = ref(false);
+const userGrantReason = ref("");
+
+const implicitFlags = ref<Record<ImplicitFlagKey, boolean>>({
+  bot_admin: false,
+  maintainer: false,
+  tester: false,
+  read_only: false,
+  extra_authorized: false,
+});
+
+const userGroupChecks = ref<Record<GrantGroupKey, boolean>>({
+  viewer: false,
+  diff: false,
+  diff_dry_run: false,
+  batch: false,
+  support: false,
+  operator: false,
+});
+
+const userRightChecks = ref<Record<GrantRightKey, boolean>>({
+  view_all: false,
+  from_diff: false,
+  from_diff_dry_run_only: false,
+  batch: false,
+  cancel_any: false,
+  retry_any: false,
+});
 
 function normalizeUserList(raw: string): string[] {
   const users = raw
@@ -248,6 +339,126 @@ async function addLookupSelection(key: ListConfigKey): Promise<void> {
   }
 }
 
+async function onUserSearchLookupInput(value: string | number): Promise<void> {
+  const query = String(value || "").trim();
+  userSearchInputValue.value = query;
+
+  const requestId = userSearchRequestId.value + 1;
+  userSearchRequestId.value = requestId;
+
+  if (!query) {
+    userSearchLookupItems.value = [];
+    return;
+  }
+
+  try {
+    const users = await searchUsernames(query);
+    if (userSearchRequestId.value !== requestId) return;
+    userSearchLookupItems.value = users;
+  } catch {
+    if (userSearchRequestId.value !== requestId) return;
+    userSearchLookupItems.value = [];
+  }
+}
+
+function clearUserGrantChecks(): void {
+  for (const field of userGrantGroupFields) {
+    userGroupChecks.value[field.key] = false;
+  }
+
+  for (const field of userGrantRightFields) {
+    userRightChecks.value[field.key] = false;
+  }
+}
+
+function applyUserGrantPayload(payload: {
+  normalized_username: string;
+  groups: string[];
+  rights: string[];
+  implicit: Record<string, boolean>;
+  atoms: string[];
+}): void {
+  selectedGrantUser.value = payload.normalized_username;
+  userGrantLoaded.value = true;
+  clearUserGrantChecks();
+
+  for (const group of payload.groups || []) {
+    if (group in userGroupChecks.value) {
+      userGroupChecks.value[group as GrantGroupKey] = true;
+    }
+  }
+
+  for (const right of payload.rights || []) {
+    if (right in userRightChecks.value) {
+      userRightChecks.value[right as GrantRightKey] = true;
+    }
+  }
+
+  for (const field of implicitFlagFields) {
+    implicitFlags.value[field.key] = !!payload.implicit?.[field.key];
+  }
+
+  const nextMap = { ...(config.value.USER_GRANTS_JSON || {}) };
+  nextMap[payload.normalized_username] = payload.atoms || [];
+  config.value.USER_GRANTS_JSON = nextMap;
+  grantsJsonText.value = JSON.stringify(nextMap, null, 2);
+}
+
+async function loadSelectedUserGrants(): Promise<void> {
+  const selected = userSearchSelected.value;
+  const typed = userSearchInputValue.value;
+  const rawUser =
+    selected !== null && selected !== undefined && String(selected).trim()
+      ? String(selected).trim()
+      : String(typed || "").trim();
+
+  if (!rawUser) {
+    errorMessage.value = "Select or type a username to load user rights.";
+    successMessage.value = "";
+    return;
+  }
+
+  try {
+    const payload = await fetchRuntimeUserGrants(rawUser);
+    applyUserGrantPayload(payload);
+    successMessage.value = `Loaded rights for ${payload.normalized_username}.`;
+    errorMessage.value = "";
+  } catch (err) {
+    errorMessage.value = err instanceof Error ? err.message : "Failed to load user grants";
+    successMessage.value = "";
+  }
+}
+
+async function saveSelectedUserGrants(): Promise<void> {
+  if (!canEdit.value || !selectedGrantUser.value) return;
+
+  userGrantSaving.value = true;
+  errorMessage.value = "";
+  successMessage.value = "";
+
+  try {
+    const groups = userGrantGroupFields
+      .filter((field) => userGroupChecks.value[field.key])
+      .map((field) => field.key);
+    const rights = userGrantRightFields
+      .filter((field) => userRightChecks.value[field.key])
+      .map((field) => field.key);
+
+    const payload = await updateRuntimeUserGrants(selectedGrantUser.value, {
+      groups,
+      rights,
+      reason: userGrantReason.value,
+    });
+
+    applyUserGrantPayload(payload);
+    successMessage.value = `Saved user grants for ${payload.normalized_username}.`;
+  } catch (err) {
+    errorMessage.value = err instanceof Error ? err.message : "Failed to save user grants";
+  } finally {
+    userGrantSaving.value = false;
+  }
+}
+
 function applyServerConfig(nextConfig: RuntimeAuthzConfig): void {
   config.value = {
     ...nextConfig,
@@ -337,7 +548,92 @@ onMounted(() => {
 
     <div v-if="loading">Loading runtime config...</div>
 
-    <div v-else class="runtime-config-grid">
+    <section v-if="!loading" class="runtime-config-card runtime-rights-editor">
+      <h3>User rights editor</h3>
+      <p class="runtime-config-help">
+        Edit rights in a Special:ChangeUserRights style flow: pick a user, review implicit groups,
+        toggle grant groups/rights, and save.
+      </p>
+
+      <div class="runtime-user-picker">
+        <CdxField>
+          <CdxLookup
+            v-model:selected="userSearchSelected"
+            :menu-items="userSearchLookupItems"
+            :disabled="!canEdit"
+            placeholder="Search Commons username"
+            @input="onUserSearchLookupInput"
+          />
+        </CdxField>
+        <CdxButton type="button" :disabled="!canEdit" @click="() => void loadSelectedUserGrants()">
+          Load user rights
+        </CdxButton>
+      </div>
+
+      <div v-if="userGrantLoaded" class="runtime-rights-columns">
+        <div>
+          <h4>Groups you cannot change</h4>
+          <label
+            v-for="flag in implicitFlagFields"
+            :key="flag.key"
+            class="runtime-checkbox-row runtime-checkbox-row--disabled"
+          >
+            <input type="checkbox" :checked="implicitFlags[flag.key]" disabled>
+            <span>{{ flag.label }}</span>
+          </label>
+        </div>
+
+        <div>
+          <h4>Groups you can change</h4>
+          <label
+            v-for="group in userGrantGroupFields"
+            :key="group.key"
+            class="runtime-checkbox-row"
+          >
+            <input v-model="userGroupChecks[group.key]" type="checkbox" :disabled="!canEdit || userGrantSaving">
+            <span>
+              {{ group.label }}
+              <small>{{ group.help }}</small>
+            </span>
+          </label>
+
+          <h4>Rights you can change</h4>
+          <label
+            v-for="right in userGrantRightFields"
+            :key="right.key"
+            class="runtime-checkbox-row"
+          >
+            <input v-model="userRightChecks[right.key]" type="checkbox" :disabled="!canEdit || userGrantSaving">
+            <span>
+              {{ right.label }}
+              <small>{{ right.help }}</small>
+            </span>
+          </label>
+
+          <label class="runtime-reason-label">Reason</label>
+          <input
+            v-model="userGrantReason"
+            type="text"
+            :disabled="!canEdit || userGrantSaving"
+            placeholder="Optional reason"
+          >
+
+          <div class="runtime-config-actions">
+            <CdxButton
+              action="progressive"
+              weight="primary"
+              type="button"
+              :disabled="!canEdit || userGrantSaving"
+              @click="() => void saveSelectedUserGrants()"
+            >
+              {{ userGrantSaving ? "Saving..." : "Save user groups" }}
+            </CdxButton>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div v-if="!loading" class="runtime-config-grid">
       <section v-for="field in listFields" :key="field.key" class="runtime-config-card">
         <h3>{{ field.label }}</h3>
         <p class="runtime-config-help">{{ field.help }}</p>

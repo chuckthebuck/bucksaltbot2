@@ -2074,3 +2074,58 @@ def test_from_diff_api_allows_dry_run_for_dry_run_only_right(client):
 
     assert resp.status_code == 200
     assert resp.get_json()["dry_run"] is True
+
+
+def test_get_runtime_authz_user_grants_returns_payload_for_bot_admin(client):
+    import router
+
+    _set_session(client, "chuckbot")
+    cfg = router._runtime_authz_defaults()
+    cfg["USER_GRANTS_JSON"] = {
+        "alice": ["group:operator", "from_diff_dry_run_only"],
+    }
+
+    with (
+        patch("router.is_bot_admin", return_value=True),
+        patch("router._effective_runtime_authz_config", return_value=cfg),
+        patch("router.is_maintainer", return_value=False),
+    ):
+        resp = client.get("/api/v1/config/authz/user-grants/Alice")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["normalized_username"] == "alice"
+    assert "operator" in data["groups"]
+    assert "from_diff_dry_run_only" in data["rights"]
+
+
+def test_update_runtime_authz_user_grants_updates_single_user(client):
+    import router
+
+    _set_session(client, "chuckbot")
+    cfg = router._runtime_authz_defaults()
+    cfg["USER_GRANTS_JSON"] = {
+        "alice": ["group:viewer"],
+    }
+
+    with (
+        patch("router.is_bot_admin", return_value=True),
+        patch("router._effective_runtime_authz_config", return_value=cfg),
+        patch("router._persist_runtime_authz_updates") as mock_persist,
+        patch("router.is_maintainer", return_value=False),
+    ):
+        resp = client.put(
+            "/api/v1/config/authz/user-grants/Alice",
+            json={
+                "groups": ["operator"],
+                "rights": ["from_diff_dry_run_only"],
+            },
+        )
+
+    assert resp.status_code == 200
+    persisted_updates = mock_persist.call_args.args[0]
+    assert "USER_GRANTS_JSON" in persisted_updates
+    assert persisted_updates["USER_GRANTS_JSON"]["alice"] == [
+        "from_diff_dry_run_only",
+        "group:operator",
+    ]

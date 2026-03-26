@@ -390,6 +390,53 @@ body {
     margin-bottom: @spacing-50;
 }
 
+.runtime-rights-editor {
+    margin-bottom: @spacing-125;
+}
+
+.runtime-user-picker {
+    display: grid;
+    grid-template-columns: minmax( 0, 1fr ) auto;
+    gap: @spacing-75;
+    align-items: end;
+    margin-bottom: @spacing-100;
+}
+
+.runtime-rights-columns {
+    display: grid;
+    grid-template-columns: repeat( 2, minmax( 0, 1fr ) );
+    gap: @spacing-150;
+}
+
+.runtime-rights-columns h4 {
+    margin-top: 0;
+    margin-bottom: @spacing-50;
+}
+
+.runtime-checkbox-row {
+    display: grid;
+    grid-template-columns: auto minmax( 0, 1fr );
+    gap: @spacing-50;
+    align-items: start;
+    margin-bottom: @spacing-50;
+}
+
+.runtime-checkbox-row small {
+    display: block;
+    color: @color-subtle;
+    margin-top: @spacing-25;
+}
+
+.runtime-checkbox-row--disabled {
+    color: @color-subtle;
+}
+
+.runtime-reason-label {
+    display: block;
+    margin-top: @spacing-100;
+    margin-bottom: @spacing-25;
+}
+
 .runtime-config-save {
     margin-top: @spacing-100;
     margin-bottom: @spacing-150;
@@ -398,6 +445,11 @@ body {
 @media all and ( max-width: @max-width-breakpoint-tablet ) {
     .runtime-config-grid,
     .runtime-config-grid--numbers {
+        grid-template-columns: 1fr;
+    }
+
+    .runtime-rights-columns,
+    .runtime-user-picker {
         grid-template-columns: 1fr;
     }
 

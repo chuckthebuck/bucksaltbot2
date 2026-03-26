@@ -57,6 +57,23 @@ export interface RuntimeAuthzResponse {
   config: RuntimeAuthzConfig;
   can_edit: boolean;
   editable_keys: string[];
+  grant_groups?: string[];
+  grant_rights?: string[];
+}
+
+export interface RuntimeUserGrantsResponse {
+  ok?: boolean;
+  username: string;
+  normalized_username: string;
+  atoms: string[];
+  groups: string[];
+  rights: string[];
+  expanded_rights: string[];
+  implicit: Record<string, boolean>;
+  implicit_flag_order?: string[];
+  grant_groups?: string[];
+  grant_rights?: string[];
+  can_edit?: boolean;
 }
 
 // ------------------------
@@ -343,6 +360,45 @@ export async function updateRuntimeAuthzConfig(
   const data = await r.json();
   if (!r.ok) {
     throw new Error(data?.detail || `Failed to save runtime config: ${r.status}`);
+  }
+
+  return data;
+}
+
+export async function fetchRuntimeUserGrants(
+  username: string
+): Promise<RuntimeUserGrantsResponse> {
+  const normalized = username.trim();
+  const r = await fetch(`/api/v1/config/authz/user-grants/${encodeURIComponent(normalized)}`);
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to fetch user grants: ${r.status}`);
+  }
+
+  return data;
+}
+
+export async function updateRuntimeUserGrants(
+  username: string,
+  payload: {
+    groups?: string[];
+    rights?: string[];
+    reason?: string;
+  }
+): Promise<RuntimeUserGrantsResponse> {
+  const normalized = username.trim();
+  const r = await fetch(`/api/v1/config/authz/user-grants/${encodeURIComponent(normalized)}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to update user grants: ${r.status}`);
   }
 
   return data;
