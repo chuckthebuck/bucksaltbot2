@@ -217,6 +217,7 @@ def test_request_preview_from_diff_full_loads_all_items(client):
 
     with (
         patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_review_requests", return_value=True),
         patch(
             "router._load_diff_payload",
             return_value={"diff": "123", "limit": 5, "requested_by": "alice"},
