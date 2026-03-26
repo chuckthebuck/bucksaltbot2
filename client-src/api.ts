@@ -48,6 +48,7 @@ export interface RuntimeAuthzConfig {
   USERS_GRANTED_BATCH: string[];
   USERS_GRANTED_CANCEL_ANY: string[];
   USERS_GRANTED_RETRY_ANY: string[];
+  USER_GRANTS_JSON: Record<string, string[]>;
   RATE_LIMIT_JOBS_PER_HOUR: number;
   RATE_LIMIT_TESTER_JOBS_PER_HOUR: number;
 }

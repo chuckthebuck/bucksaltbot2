@@ -123,11 +123,13 @@ const config = ref<RuntimeAuthzConfig>({
   USERS_GRANTED_BATCH: [],
   USERS_GRANTED_CANCEL_ANY: [],
   USERS_GRANTED_RETRY_ANY: [],
+  USER_GRANTS_JSON: {},
   RATE_LIMIT_JOBS_PER_HOUR: 0,
   RATE_LIMIT_TESTER_JOBS_PER_HOUR: 0,
 });
 
 const listText = ref<Record<string, string>>({});
+const grantsJsonText = ref("{}");
 const lookupMenuItems = ref<Record<string, Array<{ label: string; value: string }>>>({});
 const lookupSelected = ref<Record<string, string | number | null>>({});
 const lookupInputValue = ref<Record<string, string>>({});
@@ -257,11 +259,25 @@ function applyServerConfig(nextConfig: RuntimeAuthzConfig): void {
     USERS_GRANTED_BATCH: [...(nextConfig.USERS_GRANTED_BATCH || [])],
     USERS_GRANTED_CANCEL_ANY: [...(nextConfig.USERS_GRANTED_CANCEL_ANY || [])],
     USERS_GRANTED_RETRY_ANY: [...(nextConfig.USERS_GRANTED_RETRY_ANY || [])],
+    USER_GRANTS_JSON: { ...(nextConfig.USER_GRANTS_JSON || {}) },
     RATE_LIMIT_JOBS_PER_HOUR: Number(nextConfig.RATE_LIMIT_JOBS_PER_HOUR || 0),
     RATE_LIMIT_TESTER_JOBS_PER_HOUR: Number(nextConfig.RATE_LIMIT_TESTER_JOBS_PER_HOUR || 0),
   };
 
   syncTextFromConfig();
+  grantsJsonText.value = JSON.stringify(config.value.USER_GRANTS_JSON || {}, null, 2);
+}
+
+function parseUserGrantsJsonText(): Record<string, string[]> {
+  const trimmed = grantsJsonText.value.trim();
+  if (!trimmed) return {};
+
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("User-centric grants JSON must be an object");
+  }
+
+  return parsed as Record<string, string[]>;
 }
 
 async function loadConfig(): Promise<void> {
@@ -287,6 +303,9 @@ async function saveConfig(): Promise<void> {
   successMessage.value = "";
 
   try {
+    const parsedUserGrants = parseUserGrantsJsonText();
+    config.value.USER_GRANTS_JSON = parsedUserGrants;
+
     const response = await updateRuntimeAuthzConfig(config.value);
     applyServerConfig(response.config);
     successMessage.value = "Runtime config updated.";
@@ -349,6 +368,20 @@ onMounted(() => {
     </div>
 
     <div v-if="!loading" class="runtime-config-grid runtime-config-grid--numbers">
+      <section class="runtime-config-card">
+        <h3>User-centric grants (by username)</h3>
+        <p class="runtime-config-help">
+          Optional JSON map of username to grants. Supports rights and groups.
+          Rights: view_all, from_diff, from_diff_dry_run_only, batch, cancel_any, retry_any.
+          Groups: viewer, diff, diff_dry_run, batch, support, operator.
+        </p>
+        <textarea
+          v-model="grantsJsonText"
+          :disabled="!canEdit"
+          rows="8"
+        />
+      </section>
+
       <section v-for="field in numberFields" :key="field.key" class="runtime-config-card">
         <h3>{{ field.label }}</h3>
         <p class="runtime-config-help">{{ field.help }}</p>

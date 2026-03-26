@@ -1971,3 +1971,106 @@ def test_update_runtime_authz_api_normalizes_quoted_and_prefixed_usernames(clien
     assert resp.status_code == 200
     persisted_updates = mock_persist.call_args.args[0]
     assert persisted_updates["EXTRA_AUTHORIZED_USERS"] == ["chaotic enby", "luni zunie"]
+
+
+def test_update_runtime_authz_api_accepts_user_grants_json(client):
+    import router
+
+    _set_session(client, "chuckbot")
+    default_cfg = router._runtime_authz_defaults()
+
+    with (
+        patch("router.is_bot_admin", return_value=True),
+        patch("router._persist_runtime_authz_updates") as mock_persist,
+        patch("router._effective_runtime_authz_config", return_value=default_cfg),
+    ):
+        resp = client.put(
+            "/api/v1/config/authz",
+            json={
+                "config": {
+                    "USER_GRANTS_JSON": {
+                        "Alice": ["group:operator"],
+                        "Bob": ["from_diff_dry_run_only"],
+                    }
+                }
+            },
+        )
+
+    assert resp.status_code == 200
+    persisted_updates = mock_persist.call_args.args[0]
+    assert persisted_updates["USER_GRANTS_JSON"]["alice"] == ["group:operator"]
+    assert persisted_updates["USER_GRANTS_JSON"]["bob"] == ["from_diff_dry_run_only"]
+
+
+def test_user_permissions_supports_user_centric_view_all_right():
+    import router
+
+    cfg = router._runtime_authz_defaults()
+    cfg["USER_GRANTS_JSON"] = {
+        "alice": ["view_all"],
+    }
+
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch("router.is_tester", return_value=False),
+        patch("router._effective_runtime_authz_config", return_value=cfg),
+    ):
+        perms = router._user_permissions("alice")
+
+    assert "read_all" in perms
+    assert "view_all" in perms
+
+
+def test_user_permissions_supports_group_based_user_centric_grants():
+    import router
+
+    cfg = router._runtime_authz_defaults()
+    cfg["USER_GRANTS_JSON"] = {
+        "alice": ["group:operator"],
+    }
+
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch("router.is_tester", return_value=False),
+        patch("router._effective_runtime_authz_config", return_value=cfg),
+    ):
+        perms = router._user_permissions("alice")
+
+    assert "read_all" in perms
+    assert "from_diff" in perms
+    assert "batch" in perms
+    assert "cancel_any" in perms
+    assert "retry_any" in perms
+
+
+def test_from_diff_api_rejects_live_mode_for_dry_run_only_right(client):
+    _set_session(client, "alice")
+
+    with patch("router._user_permissions", return_value=frozenset({"from_diff", "from_diff_dry_run_only"})):
+        resp = client.post(
+            "/api/v1/rollback/from-diff",
+            json={"diff": 123, "dry_run": False},
+        )
+
+    assert resp.status_code == 403
+    assert "dry-run" in resp.get_json().get("detail", "").lower()
+
+
+def test_from_diff_api_allows_dry_run_for_dry_run_only_right(client):
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.lastrowid = 77
+
+    with (
+        patch("router._user_permissions", return_value=frozenset({"from_diff", "from_diff_dry_run_only"})),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
+    ):
+        mock_resolve.delay = MagicMock()
+        resp = client.post(
+            "/api/v1/rollback/from-diff",
+            json={"diff": 123, "dry_run": True},
+        )
+
+    assert resp.status_code == 200
+    assert resp.get_json()["dry_run"] is True

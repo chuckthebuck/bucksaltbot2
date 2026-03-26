@@ -72,6 +72,24 @@ RATE_LIMIT_TESTER_JOBS_PER_HOUR: int = int(
 
 _CONFIG_EDIT_PRIMARY_ACCOUNT = os.getenv("CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot").strip().lower()
 
+_USER_GRANT_RIGHTS = {
+    "from_diff",
+    "batch",
+    "view_all",
+    "cancel_any",
+    "retry_any",
+    "from_diff_dry_run_only",
+}
+
+_USER_GRANT_GROUPS = {
+    "viewer": {"view_all"},
+    "diff": {"from_diff"},
+    "diff_dry_run": {"from_diff", "from_diff_dry_run_only"},
+    "batch": {"batch"},
+    "support": {"view_all", "retry_any"},
+    "operator": {"view_all", "from_diff", "batch", "cancel_any", "retry_any"},
+}
+
 _USER_SET_CONFIG_KEYS = {
     "EXTRA_AUTHORIZED_USERS",
     "USERS_READ_ONLY",
@@ -88,7 +106,11 @@ _INT_CONFIG_KEYS = {
     "RATE_LIMIT_TESTER_JOBS_PER_HOUR",
 }
 
-_RUNTIME_AUTHZ_ALLOWED_KEYS = sorted(_USER_SET_CONFIG_KEYS | _INT_CONFIG_KEYS)
+_JSON_CONFIG_KEYS = {
+    "USER_GRANTS_JSON",
+}
+
+_RUNTIME_AUTHZ_ALLOWED_KEYS = sorted(_USER_SET_CONFIG_KEYS | _INT_CONFIG_KEYS | _JSON_CONFIG_KEYS)
 _RUNTIME_AUTHZ_CACHE_TTL = 60
 _runtime_authz_cache = None
 _runtime_authz_cache_expiry = 0.0
@@ -96,6 +118,142 @@ _runtime_authz_cache_expiry = 0.0
 
 def _parse_user_csv(raw_value: str) -> set[str]:
     return {u.strip().lower() for u in (raw_value or "").split(",") if u.strip()}
+
+
+def _normalize_username(raw_value: str) -> str:
+    cleaned = str(raw_value or "").strip()
+
+    if cleaned.lower().startswith("user:"):
+        cleaned = cleaned[5:].strip()
+
+    if len(cleaned) >= 2 and (
+        (cleaned[0] == '"' and cleaned[-1] == '"')
+        or (cleaned[0] == "'" and cleaned[-1] == "'")
+    ):
+        cleaned = cleaned[1:-1].strip()
+
+    cleaned = " ".join(cleaned.replace("_", " ").split())
+    return cleaned.lower()
+
+
+def _normalize_grant_atom(atom: str) -> str:
+    normalized = str(atom or "").strip().lower().replace(" ", "_")
+    if normalized == "read_all":
+        return "view_all"
+    return normalized
+
+
+def _normalize_user_grants_map_input(value, key: str) -> dict:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{key} must be valid JSON") from exc
+
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be an object mapping username to grants")
+
+    normalized = {}
+
+    for raw_user, raw_grants in value.items():
+        user = _normalize_username(str(raw_user))
+        if not user:
+            continue
+
+        atoms = []
+        if isinstance(raw_grants, dict):
+            rights = raw_grants.get("rights", [])
+            groups = raw_grants.get("groups", [])
+            if isinstance(rights, str):
+                rights = [part.strip() for part in rights.split(",") if part.strip()]
+            if isinstance(groups, str):
+                groups = [part.strip() for part in groups.split(",") if part.strip()]
+            if isinstance(groups, list):
+                atoms.extend([f"group:{g}" for g in groups])
+            if isinstance(rights, list):
+                atoms.extend([str(r) for r in rights])
+        elif isinstance(raw_grants, list):
+            atoms = [str(item) for item in raw_grants]
+        elif isinstance(raw_grants, str):
+            atoms = [part.strip() for part in raw_grants.replace("\n", ",").split(",")]
+        else:
+            raise ValueError(f"{key}.{user} must be a list/string/object")
+
+        user_atoms = set()
+        for atom in atoms:
+            normalized_atom = _normalize_grant_atom(atom)
+            if not normalized_atom:
+                continue
+
+            if normalized_atom.startswith("group:"):
+                group_name = normalized_atom.split(":", 1)[1]
+                if group_name not in _USER_GRANT_GROUPS:
+                    raise ValueError(f"Unknown grant group '{group_name}' for {user}")
+                user_atoms.add(normalized_atom)
+                continue
+
+            if normalized_atom in _USER_GRANT_GROUPS:
+                user_atoms.add(f"group:{normalized_atom}")
+                continue
+
+            if normalized_atom not in _USER_GRANT_RIGHTS:
+                raise ValueError(f"Unknown right '{normalized_atom}' for {user}")
+
+            user_atoms.add(normalized_atom)
+
+        if user_atoms:
+            normalized[user] = sorted(user_atoms)
+
+    if len(normalized) > 1000:
+        raise ValueError(f"{key} cannot contain more than 1000 users")
+
+    return normalized
+
+
+def _expand_user_grants(config: dict, username: str) -> set[str]:
+    user = _normalize_username(username)
+    if not user:
+        return set()
+
+    grants_map = config.get("USER_GRANTS_JSON") or {}
+    atoms = grants_map.get(user) or []
+    expanded = set()
+
+    for raw_atom in atoms:
+        atom = _normalize_grant_atom(raw_atom)
+        if not atom:
+            continue
+
+        if atom.startswith("group:"):
+            group_name = atom.split(":", 1)[1]
+            expanded |= _USER_GRANT_GROUPS.get(group_name, set())
+            continue
+
+        if atom in _USER_GRANT_GROUPS:
+            expanded |= _USER_GRANT_GROUPS[atom]
+            continue
+
+        if atom in _USER_GRANT_RIGHTS:
+            expanded.add(atom)
+
+    return expanded
+
+
+def _parse_user_grants_env(raw_value: str) -> dict:
+    if not raw_value:
+        return {}
+
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        app.logger.warning("Invalid USER_GRANTS_JSON env var; ignoring.")
+        return {}
+
+    try:
+        return _normalize_user_grants_map_input(parsed, "USER_GRANTS_JSON")
+    except ValueError as exc:
+        app.logger.warning("Invalid USER_GRANTS_JSON env var; ignoring: %s", exc)
+        return {}
 
 
 def _parse_nonnegative_int(value, fallback: int) -> int:
@@ -122,6 +280,7 @@ def _runtime_authz_defaults() -> dict:
         "USERS_GRANTED_RETRY_ANY": set(USERS_GRANTED_RETRY_ANY),
         "RATE_LIMIT_JOBS_PER_HOUR": int(RATE_LIMIT_JOBS_PER_HOUR),
         "RATE_LIMIT_TESTER_JOBS_PER_HOUR": int(RATE_LIMIT_TESTER_JOBS_PER_HOUR),
+        "USER_GRANTS_JSON": _parse_user_grants_env(os.getenv("USER_GRANTS_JSON", "")),
     }
 
 
@@ -154,6 +313,13 @@ def _load_runtime_authz_overrides() -> dict:
 
         if key in _INT_CONFIG_KEYS:
             overrides[key] = _parse_nonnegative_int(raw_value, defaults[key])
+            continue
+
+        if key in _JSON_CONFIG_KEYS:
+            try:
+                overrides[key] = _normalize_user_grants_map_input(raw_value, key)
+            except ValueError:
+                overrides[key] = defaults.get(key, {})
 
     _runtime_authz_cache = overrides
     _runtime_authz_cache_expiry = now + _RUNTIME_AUTHZ_CACHE_TTL
@@ -172,6 +338,8 @@ def _serialize_runtime_authz_config(config: dict) -> dict:
         value = config.get(key)
         if key in _USER_SET_CONFIG_KEYS:
             output[key] = sorted(value or set())
+        elif key in _JSON_CONFIG_KEYS:
+            output[key] = value or {}
         else:
             output[key] = int(value or 0)
     return output
@@ -191,20 +359,7 @@ def _normalize_user_list_input(value, key: str) -> list[str]:
         if not item:
             continue
 
-        cleaned = item.strip()
-
-        if cleaned.lower().startswith("user:"):
-            cleaned = cleaned[5:].strip()
-
-        if len(cleaned) >= 2 and (
-            (cleaned[0] == '"' and cleaned[-1] == '"')
-            or (cleaned[0] == "'" and cleaned[-1] == "'")
-        ):
-            cleaned = cleaned[1:-1].strip()
-
-        cleaned = " ".join(cleaned.replace("_", " ").split())
-
-        lowered = cleaned.lower()
+        lowered = _normalize_username(item)
 
         if not lowered:
             continue
@@ -254,6 +409,13 @@ def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
                 continue
 
             normalized[key] = parsed
+            continue
+
+        if key in _JSON_CONFIG_KEYS:
+            try:
+                normalized[key] = _normalize_user_grants_map_input(value, key)
+            except ValueError as exc:
+                errors.append(str(exc))
 
     return normalized, errors
 
@@ -263,6 +425,8 @@ def _persist_runtime_authz_updates(updates: dict, updated_by: str) -> None:
     for key, value in updates.items():
         if key in _USER_SET_CONFIG_KEYS:
             rows[key] = ",".join(value)
+        elif key in _JSON_CONFIG_KEYS:
+            rows[key] = json.dumps(value, sort_keys=True)
         else:
             rows[key] = str(value)
 
@@ -1037,7 +1201,9 @@ def _user_permissions(username: str) -> frozenset:
     cancel_own             — cancel the user's own jobs
     retry_own              — retry the user's own jobs
     read_all               — view every user's jobs (all-jobs interface)
+    view_all               — alias for read_all (for grant semantics)
     from_diff              — use the rollback-from-diff interface
+    from_diff_dry_run_only — can use from-diff only when dry_run=true
     batch                  — use the batch rollback interface
     cancel_any             — cancel any non-privileged (regular) user's job
     retry_any              — retry any user's job
@@ -1069,7 +1235,7 @@ def _user_permissions(username: str) -> frozenset:
         # Testers get access to all tool interfaces but no cross-user actions.
         perms |= {"read_all", "from_diff", "batch"}
     else:
-        # Per-user grants for non-maintainer, non-tester accounts.
+        # Legacy per-right grants for non-maintainer, non-tester accounts.
         if lower in config["USERS_GRANTED_FROM_DIFF"]:
             perms.add("from_diff")
         if lower in config["USERS_GRANTED_VIEW_ALL"]:
@@ -1080,6 +1246,25 @@ def _user_permissions(username: str) -> frozenset:
             perms.add("cancel_any")
         if lower in config["USERS_GRANTED_RETRY_ANY"]:
             perms.add("retry_any")
+
+        # User-centric grants (MediaWiki-style): username -> rights/groups.
+        expanded_grants = _expand_user_grants(config, lower)
+        if "from_diff_dry_run_only" in expanded_grants:
+            # Dry-run-only implies from_diff access but only in dry-run mode.
+            perms |= {"from_diff", "from_diff_dry_run_only"}
+        if "from_diff" in expanded_grants:
+            perms.add("from_diff")
+        if "view_all" in expanded_grants:
+            perms |= {"read_all", "view_all"}
+        if "batch" in expanded_grants:
+            perms.add("batch")
+        if "cancel_any" in expanded_grants:
+            perms.add("cancel_any")
+        if "retry_any" in expanded_grants:
+            perms.add("retry_any")
+
+    if "read_all" in perms:
+        perms.add("view_all")
 
     if _can_view_runtime_config(username):
         perms.add("config_view")
@@ -1372,7 +1557,9 @@ def rollback_from_diff_api():
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
 
-    if "from_diff" not in _user_permissions(username):
+    perms = _user_permissions(username)
+
+    if "from_diff" not in perms:
         return jsonify({"detail": "Forbidden"}), 403
 
     payload = request.get_json(silent=True) or {}
@@ -1413,6 +1600,9 @@ def rollback_from_diff_api():
             return jsonify({"detail": "limit must be <= 10000"}), 400
 
     dry_run = _parse_bool(dry_run_raw, default=False)
+
+    if "from_diff_dry_run_only" in perms and not dry_run:
+        return jsonify({"detail": "Forbidden: from-diff access is limited to dry-run mode"}), 403
 
     batch_id = int(time.time() * 1000)
 
@@ -1472,7 +1662,9 @@ def rollback_from_diff_page():
     if not username:
         abort(401)
 
-    if "from_diff" not in _user_permissions(username):
+    perms = _user_permissions(username)
+
+    if "from_diff" not in perms:
         abort(403)
 
     return render_template(
@@ -1480,6 +1672,7 @@ def rollback_from_diff_page():
         username=username,
         max_limit=10000,
         default_limit=100,
+        from_diff_dry_run_only=bool("from_diff_dry_run_only" in perms),
         type="rollback-from-diff",
     )
 

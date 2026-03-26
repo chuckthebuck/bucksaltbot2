@@ -15,11 +15,12 @@ const props = JSON.parse(
   username: string;
   default_limit?: number;
   max_limit?: number;
+  from_diff_dry_run_only?: boolean;
 };
 
 const diff = ref("");
 const summary = ref("");
-const dryRun = ref(false);
+const dryRun = ref(Boolean(props.from_diff_dry_run_only));
 const limit = ref(String(props.default_limit ?? 100));
 
 const loading = ref(false);
@@ -102,6 +103,10 @@ async function submit() {
       then queues that author's edits after that timestamp.
     </CdxMessage>
 
+    <CdxMessage v-if="props.from_diff_dry_run_only" type="warning" class="top-message">
+      Your from-diff permission is currently dry-run-only. Live rollback submission is disabled.
+    </CdxMessage>
+
     <div class="rollback-tool-form">
       <CdxField
         label="Diff oldid or URL"
@@ -136,7 +141,7 @@ async function submit() {
         />
       </CdxField>
 
-      <CdxCheckbox v-model="dryRun" :disabled="loading">
+      <CdxCheckbox v-model="dryRun" :disabled="loading || props.from_diff_dry_run_only">
         Dry run (do not execute live rollback)
       </CdxCheckbox>
 
