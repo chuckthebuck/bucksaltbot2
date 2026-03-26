@@ -4,10 +4,12 @@ import {
   CdxButton,
   CdxCheckbox,
   CdxField,
+  CdxLookup,
   CdxMessage,
   CdxTextInput,
   CdxTextArea
 } from "@wikimedia/codex";
+import { searchUsernames } from "./api";
 
 const props = JSON.parse(
   document.getElementById("from-account-props")!.textContent!
@@ -19,6 +21,10 @@ const props = JSON.parse(
 };
 
 const account = ref("");
+const accountLookupItems = ref<Array<{ label: string; value: string }>>([]);
+const accountLookupSelected = ref<string | number | null>(null);
+const accountLookupInputValue = ref("");
+const accountLookupRequestId = ref(0);
 const summary = ref("");
 const dryRun = ref(Boolean(props.from_diff_dry_run_only));
 const limit = ref(String(props.default_limit ?? 500));
@@ -29,10 +35,42 @@ const result = ref<Record<string, unknown> | null>(null);
 
 const maxLimit = computed(() => Number(props.max_limit ?? 500));
 
+function resolveTargetAccount(): string {
+  const selected = accountLookupSelected.value;
+  const typed = accountLookupInputValue.value;
+  const candidate =
+    selected !== null && selected !== undefined && String(selected).trim()
+      ? String(selected).trim()
+      : String(typed || "").trim();
+
+  return candidate;
+}
+
+async function onAccountLookupInput(value: string | number): Promise<void> {
+  const query = String(value || "").trim();
+  accountLookupInputValue.value = query;
+  const requestId = accountLookupRequestId.value + 1;
+  accountLookupRequestId.value = requestId;
+
+  if (!query) {
+    accountLookupItems.value = [];
+    return;
+  }
+
+  try {
+    const users = await searchUsernames(query);
+    if (accountLookupRequestId.value !== requestId) return;
+    accountLookupItems.value = users;
+  } catch {
+    if (accountLookupRequestId.value !== requestId) return;
+    accountLookupItems.value = [];
+  }
+}
+
 function validate(): boolean {
   errors.value = [];
 
-  const trimmedAccount = String(account.value ?? "").trim();
+  const trimmedAccount = resolveTargetAccount();
   if (!trimmedAccount) {
     errors.value.push("Account is required.");
   }
@@ -61,7 +99,8 @@ async function submit() {
     errors.value = [];
     result.value = null;
 
-    const trimmedAccount = String(account.value ?? "").trim();
+    const trimmedAccount = resolveTargetAccount();
+    account.value = trimmedAccount;
     const trimmedSummary = String(summary.value ?? "").trim();
     const trimmedLimit = String(limit.value ?? "").trim();
 
@@ -110,10 +149,12 @@ async function submit() {
         label="Target account"
         description="Username to roll back. You can include or omit the User: prefix."
       >
-        <CdxTextInput
-          v-model="account"
-          placeholder="ExampleVandal"
+        <CdxLookup
+          v-model:selected="accountLookupSelected"
+          :menu-items="accountLookupItems"
+          placeholder="Search Commons username"
           :disabled="loading"
+          @input="onAccountLookupInput"
         />
       </CdxField>
 

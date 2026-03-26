@@ -1149,6 +1149,8 @@ def resolve_diff_rollback_job_impl(job_id: int):
                             "target_user": target_user,
                             "requested_endpoint": requested_endpoint,
                             "approved_endpoint": approved_endpoint,
+                            "resolved_user": target_user,
+                            "resolved_timestamp": start_timestamp,
                             **query_debug_payload,
                             "source_job_id": job_id,
                         },
@@ -1821,7 +1823,7 @@ def rollback_from_diff_api():
 
     perms = _user_permissions(username)
 
-    if "write" not in perms:
+    if "write" not in perms and "from_diff" not in perms:
         return jsonify({"detail": "Forbidden: write access required"}), 403
 
     if not _check_rate_limit(username):
@@ -2434,7 +2436,7 @@ def create_rollback_job():
 
     perms = _user_permissions(actor)
 
-    if "write" not in perms:
+    if "write" not in perms and "from_diff" not in perms:
         return jsonify({"detail": "Forbidden: write access required"}), 403
 
     if not _check_rate_limit(actor):
