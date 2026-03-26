@@ -1533,6 +1533,27 @@ def _check_rate_limit(username: str) -> bool:
         return True
 
 
+@app.context_processor
+def inject_nav_capabilities():
+    """Expose template flags so nav tabs only render when actionable."""
+    username = session.get("username")
+    if not username:
+        return {
+            "nav_can_write": False,
+            "nav_can_all_jobs": False,
+            "nav_is_admin": False,
+        }
+
+    perms = _user_permissions(username)
+    is_admin = bool(session.get("is_admin") or is_admin_user(username))
+
+    return {
+        "nav_can_write": bool("write" in perms),
+        "nav_can_all_jobs": bool("read_all" in perms or is_admin),
+        "nav_is_admin": is_admin,
+    }
+
+
 def _ensure_secret_key():
     configured = app.config.get("SECRET_KEY") or os.environ.get("SECRET_KEY")
     if not configured:

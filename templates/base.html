@@ -49,7 +49,7 @@
             Rollback Queue
           </a>
 
-          {% if username %}
+          {% if username and nav_can_write %}
           <a
             class="cdx-tabs__list__item"
             role="tab"
@@ -59,7 +59,7 @@
             Batch Rollback
           </a>
 
-          {% if is_maintainer or session.get('is_admin') %}
+          {% if nav_can_all_jobs %}
           <a
             class="cdx-tabs__list__item"
             role="tab"
