@@ -8,10 +8,44 @@
     background-color: @background-color-interactive;
     display: flex;
     flex-direction: row;
-    justify-content: flex-end;
-    a {
-        margin-left: @spacing-125;
-    }
+    align-items: center;
+    gap: @spacing-100;
+}
+
+.header-tabs {
+    display: flex;
+    gap: @spacing-50;
+}
+
+.header-tab {
+    display: inline-flex;
+    align-items: center;
+    min-height: 36px;
+    padding: 0 @spacing-100;
+    border: @border-base;
+    border-radius: @border-radius-base;
+    background-color: @background-color-base;
+    color: @color-base;
+    text-decoration: none;
+}
+
+.header-tab:hover {
+    background-color: @background-color-neutral-subtle;
+    text-decoration: none;
+}
+
+.header-tab.is-active {
+    background-color: @background-color-progressive-subtle;
+    border-color: @border-color-progressive;
+    color: @color-progressive;
+    font-weight: @font-weight-bold;
+}
+
+.user-area {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: @spacing-100;
 }
 
 a {
@@ -36,6 +70,35 @@ a {
     margin-top:3vw;
     min-width: 50vw;
     background-color: @color-inverted;
+}
+
+.subnav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: @spacing-50;
+    margin-bottom: @spacing-125;
+    padding-bottom: @spacing-75;
+    border-bottom: @border-base;
+}
+
+.subnav-item {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 0 @spacing-75;
+    border-radius: @border-radius-base;
+    color: @color-subtle;
+}
+
+.subnav-item:hover {
+    background-color: @background-color-neutral-subtle;
+    text-decoration: none;
+}
+
+.subnav-item.is-active {
+    background-color: @background-color-progressive-subtle;
+    color: @color-progressive;
+    font-weight: @font-weight-bold;
 }
 
 .footer {
@@ -209,6 +272,21 @@ body {
 }
 
 @media all and ( max-width: @max-width-breakpoint-mobile ) {
+    .header {
+        flex-wrap: wrap;
+    }
+
+    .header-tabs {
+        order: 3;
+        width: 100%;
+        justify-content: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .user-area {
+        margin-left: 0;
+    }
+
     .layout {
         grid-template-columns: 1fr;
     }

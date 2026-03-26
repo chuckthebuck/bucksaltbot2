@@ -22,106 +22,71 @@
 </head>
 
 <body> 
+{% set current_section = 'rollback' %}
+{% if type in ['rollback-all-jobs', 'rollback-requests'] %}
+  {% set current_section = 'jobs' %}
+{% elif type in ['runtime-config', 'documentation'] %}
+  {% set current_section = 'config' %}
+{% endif %}
+
 <header class="header">
   <span class="logo">
     <b>Rollback</b> & <b>Queue</b>
   </span>
 
+  <nav class="header-tabs" aria-label="Primary navigation">
+    <a
+      class="header-tab{% if current_section == 'rollback' %} is-active{% endif %}"
+      aria-current="{% if current_section == 'rollback' %}page{% else %}false{% endif %}"
+      href="/goto?tab=rollback-queue"
+    >
+      Rollback
+    </a>
+    <a
+      class="header-tab{% if current_section == 'jobs' %} is-active{% endif %}"
+      aria-current="{% if current_section == 'jobs' %}page{% else %}false{% endif %}"
+      href="{% if username and nav_can_all_jobs %}/goto?tab=rollback-all-jobs{% elif username %}/goto?tab=rollback-requests{% else %}/goto?tab=rollback-queue{% endif %}"
+    >
+      Jobs
+    </a>
+    <a
+      class="header-tab{% if current_section == 'config' %} is-active{% endif %}"
+      aria-current="{% if current_section == 'config' %}page{% else %}false{% endif %}"
+      href="{% if is_bot_admin %}/goto?tab=rollback-config{% else %}/goto?tab=documentation{% endif %}"
+    >
+      Config
+    </a>
+  </nav>
+
   {% if username %}
-    <span>{{ username }}</span>
-    <a href="/logout" class="logout">Logout</a>
+    <div class="user-area">
+      <span>{{ username }}</span>
+      <a href="/logout" class="logout">Logout</a>
+    </div>
   {% endif %}
 </header>
   <div class="container">
-    
-
-    <div class="cdx-tabs">
-      <div class="cdx-tabs__header">
-        <div class="cdx-tabs__list" tabindex="-1" role="tablist">
-
-          <a
-            id="form-tabs-rollback-label"
-            class="cdx-tabs__list__item"
-            role="tab"
-            aria-selected="{% if type == 'rollback-queue' %}true{% else %}false{% endif %}"
-            href="/goto?tab=rollback-queue"
-          >
-            Rollback Queue
-          </a>
-
-          {% if username and nav_can_write %}
-          <a
-            class="cdx-tabs__list__item"
-            role="tab"
-            aria-selected="{% if type == 'rollback-batch' %}true{% else %}false{% endif %}"
-            href="/goto?tab=rollback-batch"
-          >
-            Batch Rollback
-          </a>
-
-          {% if nav_can_all_jobs %}
-          <a
-            class="cdx-tabs__list__item"
-            role="tab"
-            aria-selected="{% if type == 'rollback-all-jobs' %}true{% else %}false{% endif %}"
-            href="/goto?tab=rollback-all-jobs"
-          >
-            All Jobs
-          </a>
-          {% endif %}
-
-          <a
-            class="cdx-tabs__list__item"
-            role="tab"
-            aria-selected="{% if type == 'rollback-from-diff' %}true{% else %}false{% endif %}"
-            href="/goto?tab=rollback-from-diff"
-          >
-            From Diff
-          </a>
-
-          <a
-            class="cdx-tabs__list__item"
-            role="tab"
-            aria-selected="{% if type == 'rollback-account' %}true{% else %}false{% endif %}"
-            href="/goto?tab=rollback-account"
-          >
-            Account Rollback
-          </a>
-          {% endif %}
-
-          {% if username %}
-          <a
-            class="cdx-tabs__list__item"
-            role="tab"
-            aria-selected="{% if type == 'rollback-requests' %}true{% else %}false{% endif %}"
-            href="/goto?tab=rollback-requests"
-          >
-            Request Review
-          </a>
-          {% endif %}
-
-          {% if is_bot_admin %}
-          <a
-            class="cdx-tabs__list__item"
-            role="tab"
-            aria-selected="{% if type == 'runtime-config' %}true{% else %}false{% endif %}"
-            href="/goto?tab=rollback-config"
-          >
-            Runtime Config
-          </a>
-          {% endif %}
-
-          <a
-            class="cdx-tabs__list__item"
-            role="tab"
-            aria-selected="{% if type == 'documentation' %}true{% else %}false{% endif %}"
-            href="/goto?tab=documentation"
-          >
-            Documentation
-          </a>
-
-        </div>
-      </div>
+    <div class="subnav" aria-label="Section navigation">
+      {% if current_section == 'rollback' %}
+      <a class="subnav-item{% if type == 'rollback-queue' %} is-active{% endif %}" href="/goto?tab=rollback-queue">Rollback Queue</a>
+      {% if username and nav_can_write %}
+      <a class="subnav-item{% if type in ['rollback-batch', 'batch-rollback'] %} is-active{% endif %}" href="/goto?tab=rollback-batch">Batch Rollback</a>
+      <a class="subnav-item{% if type == 'rollback-from-diff' %} is-active{% endif %}" href="/goto?tab=rollback-from-diff">From Diff</a>
+      <a class="subnav-item{% if type == 'rollback-account' %} is-active{% endif %}" href="/goto?tab=rollback-account">Account Rollback</a>
+      {% endif %}
+      {% elif current_section == 'jobs' %}
+      {% if username %}
+      <a class="subnav-item{% if type == 'rollback-requests' %} is-active{% endif %}" href="/goto?tab=rollback-requests">Request Review</a>
+      {% if nav_can_all_jobs %}
+      <a class="subnav-item{% if type == 'rollback-all-jobs' %} is-active{% endif %}" href="/goto?tab=rollback-all-jobs">All Jobs</a>
+      {% endif %}
+      {% endif %}
+      {% elif current_section == 'config' %}
+      {% if is_bot_admin %}
+      <a class="subnav-item{% if type == 'runtime-config' %} is-active{% endif %}" href="/goto?tab=rollback-config">Runtime Config</a>
+      {% endif %}
+      <a class="subnav-item" href="/goto?tab=documentation">Documentation</a>
+      {% endif %}
     </div>
 <div id="app"></div>
     {% block content %}

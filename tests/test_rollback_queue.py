@@ -197,8 +197,8 @@ def test_process_rollback_job_live_run_obtains_mw_rollback_token():
         user="Vandal",
         token="TOKEN+\\",
         summary="Custom summary; requested-by=alice",
-        markbot=1,
-        bot=1,
+        markbot=True,
+        bot=True,
     )
     mock_request.submit.assert_called_once()
 

@@ -182,6 +182,8 @@ async function submitJob() {
 }
 
 async function refresh() {
+  await loadJobs();
+
   if (!activeJobIds.value.length) return;
 
   const data = (await fetchProgress(activeJobIds.value)) as {
@@ -205,6 +207,11 @@ async function refresh() {
     target.completed = updated.completed || 0;
     target.failed = updated.failed || 0;
   }
+}
+
+async function onJobUpdated() {
+  await loadJobs();
+  await refresh();
 }
 
 function startPolling() {
@@ -319,6 +326,6 @@ onBeforeUnmount(() => {
     <p>Showing active jobs, failed jobs from the last 24 hours, and completed jobs from the last 2 hours.</p>
     <p>To cancel a queued or running job, use the <em>Cancel rollback job</em> button in the Actions column.</p>
 
-    <JobsTable :jobs="visibleJobs" :token="statusToken" />
+    <JobsTable :jobs="visibleJobs" :token="statusToken" @job-updated="onJobUpdated" />
   </div>
 </template>
