@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { fetchAllJobs, type AllJobsRow as ApiAllJobsRow } from "./api";
-import { fetchJobDetails } from "./api";
+import { fetchAllJobs, fetchJobDetails, type AllJobsRow as ApiAllJobsRow } from "./api";
 
 interface AllJobsRow {
   id: number;
+  batchId: number | null;
   requestedBy: string;
   status: string;
   dryRun: boolean;
@@ -13,6 +13,37 @@ interface AllJobsRow {
   completed: number;
   failed: number;
 }
+
+interface ProgressRow {
+  total: number;
+  completed: number;
+  failed: number;
+}
+
+interface DisplayJobRow extends AllJobsRow {
+  kind: "job";
+  rowKey: string;
+  label: string;
+}
+
+interface DisplayBatchRow {
+  kind: "batch";
+  rowKey: string;
+  batchId: number;
+  label: string;
+  requestedBy: string;
+  status: string;
+  dryRun: boolean | null;
+  created: string;
+  total: number;
+  completed: number;
+  failed: number;
+  jobs: AllJobsRow[];
+}
+
+type DisplayRow = DisplayJobRow | DisplayBatchRow;
+
+const ACTIVE_STATUSES = new Set(["queued", "running", "resolving", "staging"]);
 
 function asBoolean(value: unknown): boolean {
   if (typeof value === "boolean") return value;
@@ -26,6 +57,11 @@ function asBoolean(value: unknown): boolean {
   return false;
 }
 
+function asPositiveIntOrNull(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function normalizeAllJobsRow(row: unknown): AllJobsRow | null {
   if (!row || typeof row !== "object") return null;
 
@@ -35,6 +71,7 @@ function normalizeAllJobsRow(row: unknown): AllJobsRow | null {
 
   return {
     id,
+    batchId: asPositiveIntOrNull(obj.batch_id),
     requestedBy: String(obj.requested_by ?? ""),
     status: String(obj.status ?? "queued"),
     dryRun: asBoolean(obj.dry_run),
@@ -48,8 +85,8 @@ function normalizeAllJobsRow(row: unknown): AllJobsRow | null {
 const jobs = ref<AllJobsRow[]>([]);
 const loading = ref(true);
 const error = ref("");
-const details = ref<Record<number, string>>({});
-const openRows = ref<Record<number, boolean>>({});
+const details = ref<Record<string, string>>({});
+const openRows = ref<Record<string, boolean>>({});
 
 onMounted(async () => {
   try {
@@ -65,18 +102,19 @@ onMounted(async () => {
   }
 });
 
-function progressText(job: AllJobsRow): string {
-  const done = (job.completed || 0) + (job.failed || 0);
-  return `${done}/${job.total || 0}`;
+function progressText(row: ProgressRow): string {
+  const done = (row.completed || 0) + (row.failed || 0);
+  return `${done}/${row.total || 0}`;
 }
 
-function progressPct(job: AllJobsRow): number {
-  const done = (job.completed || 0) + (job.failed || 0);
-  return job.total ? Math.round((done / job.total) * 100) : 0;
+function progressPct(row: ProgressRow): number {
+  const done = (row.completed || 0) + (row.failed || 0);
+  return row.total ? Math.round((done / row.total) * 100) : 0;
 }
 
-function modeLabel(job: AllJobsRow): string {
-  return job.dryRun ? "Dry run" : "Live";
+function modeLabel(dryRun: boolean | null): string {
+  if (dryRun === null) return "Mixed";
+  return dryRun ? "Dry run" : "Live";
 }
 
 function esc(s: unknown): string {
@@ -86,17 +124,83 @@ function esc(s: unknown): string {
     .replace(/>/g, "&gt;");
 }
 
-async function toggle(id: number) {
-  if (openRows.value[id]) {
-    openRows.value[id] = false;
+function summarizeBatchStatus(batchJobs: AllJobsRow[]): string {
+  const statuses = batchJobs.map((job) => job.status);
+
+  if (statuses.every((status) => status === "completed")) return "completed";
+  if (statuses.every((status) => status === "canceled")) return "canceled";
+  if (statuses.some((status) => status === "failed")) return "failed";
+  if (statuses.some((status) => ACTIVE_STATUSES.has(status))) return "running";
+  if (statuses.some((status) => status === "completed")) return "running";
+
+  return statuses[0] ?? "queued";
+}
+
+function summarizeBatchMode(batchJobs: AllJobsRow[]): boolean | null {
+  const hasDryRun = batchJobs.some((job) => job.dryRun);
+  const hasLive = batchJobs.some((job) => !job.dryRun);
+
+  if (hasDryRun && hasLive) return null;
+  return hasDryRun;
+}
+
+function statusClassName(status: string): string {
+  if (status === "completed") return "cdx-tag--status-success";
+  if (status === "failed") return "cdx-tag--status-error";
+  if (status === "canceled") return "cdx-tag--status-muted";
+  if (ACTIVE_STATUSES.has(status)) return "cdx-tag--status-warning";
+  return "cdx-tag--status-muted";
+}
+
+function modeClassName(dryRun: boolean | null): string {
+  if (dryRun === null) return "cdx-tag--mode-mixed";
+  return dryRun ? "cdx-tag--mode-dry-run" : "cdx-tag--mode-live";
+}
+
+function rowProgressAriaLabel(row: DisplayRow): string {
+  return row.kind === "batch" ? `Batch ${row.batchId} progress` : `Job ${row.id} progress`;
+}
+
+function buildBatchDetails(row: DisplayBatchRow): string {
+  const jobsList = row.jobs
+    .map(
+      (job) =>
+        `<li><b>Job ${job.id}</b>: ${esc(job.status)} (${progressText(job)}) - ` +
+        `<a href="/api/v1/rollback/jobs/${job.id}" target="_blank" rel="noopener noreferrer">JSON</a> | ` +
+        `<a href="/api/v1/rollback/jobs/${job.id}?format=log" target="_blank" rel="noopener noreferrer">Log</a></li>`
+    )
+    .join("");
+
+  return `
+    <b>Batch ID:</b> ${row.batchId}<br>
+    <b>Jobs:</b> ${row.jobs.length}<br>
+    <b>Requested by:</b> ${esc(row.requestedBy)}<br>
+    <b>Status:</b> ${esc(row.status)}<br>
+    <b>Mode:</b> ${esc(modeLabel(row.dryRun))}<br>
+    <b>Progress:</b> ${progressText(row)} (${progressPct(row)}%)<br>
+    <ul>${jobsList}</ul>
+  `;
+}
+
+async function toggle(row: DisplayRow) {
+  const key = row.rowKey;
+
+  if (openRows.value[key]) {
+    openRows.value[key] = false;
     return;
   }
 
-  const d = await fetchJobDetails(id);
+  if (row.kind === "batch") {
+    details.value[key] = buildBatchDetails(row);
+    openRows.value[key] = true;
+    return;
+  }
+
+  const d = await fetchJobDetails(row.id);
   const isDryRun = !!((d as { dry_run?: boolean; dryRun?: boolean }).dry_run ??
     (d as { dry_run?: boolean; dryRun?: boolean }).dryRun);
 
-  details.value[id] = `
+  details.value[key] = `
     <b>Status:</b> ${esc(d.status)}<br>
     <b>Mode:</b> ${isDryRun ? "Dry run" : "Live"}<br>
     <b>Total:</b> ${d.total}<br>
@@ -104,10 +208,63 @@ async function toggle(id: number) {
     <b>Failed:</b> ${d.failed}<br>
     <pre>${esc(JSON.stringify(d.items, null, 2))}</pre>
   `;
-  openRows.value[id] = true;
+  openRows.value[key] = true;
 }
 
-const orderedJobs = computed(() => jobs.value);
+const displayedRows = computed<DisplayRow[]>(() => {
+  const sorted = [...jobs.value].sort((a, b) => {
+    const aBatchSortKey = a.batchId ?? a.id;
+    const bBatchSortKey = b.batchId ?? b.id;
+
+    if (aBatchSortKey !== bBatchSortKey) {
+      return bBatchSortKey - aBatchSortKey;
+    }
+
+    return b.id - a.id;
+  });
+
+  const grouped = new Map<string, AllJobsRow[]>();
+  for (const job of sorted) {
+    const groupKey = String(job.batchId ?? job.id);
+    if (!grouped.has(groupKey)) grouped.set(groupKey, []);
+    grouped.get(groupKey)!.push(job);
+  }
+
+  const rows: DisplayRow[] = [];
+
+  for (const groupJobs of grouped.values()) {
+    if (groupJobs.length === 1) {
+      const job = groupJobs[0];
+      rows.push({
+        ...job,
+        kind: "job",
+        rowKey: `job:${job.id}`,
+        label: String(job.id),
+      });
+      continue;
+    }
+
+    const batchId = groupJobs[0].batchId ?? groupJobs[0].id;
+    const requesterSet = new Set(groupJobs.map((job) => job.requestedBy).filter(Boolean));
+
+    rows.push({
+      kind: "batch",
+      rowKey: `batch:${batchId}`,
+      batchId,
+      label: `Batch ${batchId}`,
+      requestedBy: requesterSet.size === 1 ? groupJobs[0].requestedBy : `${requesterSet.size} users`,
+      status: summarizeBatchStatus(groupJobs),
+      dryRun: summarizeBatchMode(groupJobs),
+      created: groupJobs[0].created,
+      total: groupJobs.reduce((sum, job) => sum + (job.total || 0), 0),
+      completed: groupJobs.reduce((sum, job) => sum + (job.completed || 0), 0),
+      failed: groupJobs.reduce((sum, job) => sum + (job.failed || 0), 0),
+      jobs: groupJobs,
+    });
+  }
+
+  return rows;
+});
 </script>
 
 <template>
@@ -127,57 +284,48 @@ const orderedJobs = computed(() => jobs.value);
         </tr>
       </thead>
       <tbody>
-        <template v-for="job in orderedJobs" :key="job.id">
+        <template v-for="row in displayedRows" :key="row.rowKey">
           <tr>
-            <td class="all-jobs-table__id"><a href="#" @click.prevent="toggle(job.id)">{{ job.id }}</a></td>
-            <td>{{ job.requestedBy }}</td>
+            <td class="all-jobs-table__id"><a href="#" @click.prevent="toggle(row)">{{ row.label }}</a></td>
+            <td>{{ row.requestedBy }}</td>
             <td>
-              <span
-                class="cdx-tag"
-                :class="{
-                  'cdx-tag--status-success': job.status === 'completed',
-                  'cdx-tag--status-error': job.status === 'failed',
-                  'cdx-tag--status-warning': job.status === 'queued' || job.status === 'running',
-                  'cdx-tag--status-muted': job.status === 'canceled'
-                }"
-              >
-                {{ job.status }}
+              <span class="cdx-tag" :class="statusClassName(row.status)">
+                {{ row.status }}
               </span>
             </td>
             <td>
-              <span
-                class="cdx-tag"
-                :class="{
-                  'cdx-tag--mode-dry-run': job.dryRun,
-                  'cdx-tag--mode-live': !job.dryRun
-                }"
-              >
-                {{ modeLabel(job) }}
+              <span class="cdx-tag" :class="modeClassName(row.dryRun)">
+                {{ modeLabel(row.dryRun) }}
               </span>
             </td>
             <td>
-              <div class="job-progress-track" :aria-label="`Job ${job.id} progress`">
-                <div class="job-progress-fill" :style="{ width: `${progressPct(job)}%` }"></div>
+              <div class="job-progress-track" :aria-label="rowProgressAriaLabel(row)">
+                <div class="job-progress-fill" :style="{ width: `${progressPct(row)}%` }"></div>
               </div>
               <div class="job-progress-text">
-                <span>{{ progressText(job) }}</span>
-                <span>{{ progressPct(job) }}%</span>
+                <span>{{ progressText(row) }}</span>
+                <span>{{ progressPct(row) }}%</span>
               </div>
             </td>
-            <td class="all-jobs-table__created">{{ job.created }}</td>
+            <td class="all-jobs-table__created">{{ row.created }}</td>
             <td class="all-jobs-table__links">
-              <a :href="`/api/v1/rollback/jobs/${job.id}`" target="_blank" rel="noopener noreferrer">JSON</a>
-              <span aria-hidden="true"> | </span>
-              <a :href="`/api/v1/rollback/jobs/${job.id}?format=log`" target="_blank" rel="noopener noreferrer">Log</a>
+              <template v-if="row.kind === 'job'">
+                <a :href="`/api/v1/rollback/jobs/${row.id}`" target="_blank" rel="noopener noreferrer">JSON</a>
+                <span aria-hidden="true"> | </span>
+                <a :href="`/api/v1/rollback/jobs/${row.id}?format=log`" target="_blank" rel="noopener noreferrer">Log</a>
+              </template>
+              <template v-else>
+                <span class="all-jobs-table__batch-hint">{{ row.jobs.length }} jobs</span>
+              </template>
             </td>
           </tr>
-          <tr v-if="openRows[job.id]">
+          <tr v-if="openRows[row.rowKey]">
             <td colspan="7">
-              <div class="job-details" style="display:block" v-html="details[job.id]"></div>
+              <div class="job-details" style="display:block" v-html="details[row.rowKey]"></div>
             </td>
           </tr>
         </template>
-        <tr v-if="!orderedJobs.length">
+        <tr v-if="!displayedRows.length">
           <td colspan="7" class="all-jobs-table__empty">No jobs found.</td>
         </tr>
       </tbody>
@@ -239,6 +387,10 @@ const orderedJobs = computed(() => jobs.value);
   white-space: nowrap;
 }
 
+.all-jobs-table__batch-hint {
+  color: var(--color-subtle, #54595d);
+}
+
 .all-jobs-table__empty {
   text-align: center;
   color: var(--color-subtle, #54595d);
@@ -292,6 +444,12 @@ const orderedJobs = computed(() => jobs.value);
   background-color: var(--background-color-neutral-subtle, #f8f9fa);
   border-color: var(--border-color-subtle, #c8ccd1);
   color: var(--color-base, #202122);
+}
+
+.cdx-tag--mode-mixed {
+  background-color: var(--background-color-neutral-subtle, #f8f9fa);
+  border-color: var(--border-color-subtle, #c8ccd1);
+  color: var(--color-subtle, #54595d);
 }
 
 .job-progress-track {

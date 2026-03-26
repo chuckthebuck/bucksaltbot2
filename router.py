@@ -1500,6 +1500,7 @@ def rollback_queue_all_jobs_ui():
                 """
                 SELECT
                     j.id,
+                    j.batch_id,
                     j.requested_by,
                     j.status,
                     j.dry_run,
@@ -1509,8 +1510,8 @@ def rollback_queue_all_jobs_ui():
                     COALESCE(SUM(CASE WHEN i.status='failed' THEN 1 ELSE 0 END), 0) AS failed_items
                 FROM rollback_jobs j
                 LEFT JOIN rollback_job_items i ON i.job_id = j.id
-                GROUP BY j.id, j.requested_by, j.status, j.dry_run, j.created_at
-                ORDER BY j.id DESC
+                GROUP BY j.id, j.batch_id, j.requested_by, j.status, j.dry_run, j.created_at
+                ORDER BY COALESCE(j.batch_id, j.id) DESC, j.id DESC
                 """
             )
 
@@ -1519,13 +1520,14 @@ def rollback_queue_all_jobs_ui():
     if request.args.get("format") == "json":
         jobs_for_output = []
         for row in jobs:
-            job_id, requested_by, status, dry_run, created_at, total, completed, failed = row
+            job_id, batch_id, requested_by, status, dry_run, created_at, total, completed, failed = row
             if _maybe_mark_stale_resolving_job_failed(job_id, status, created_at):
                 status = "failed"
 
             jobs_for_output.append(
                 {
                     "id": job_id,
+                    "batch_id": int(batch_id) if batch_id is not None else None,
                     "requested_by": requested_by,
                     "status": status,
                     "dry_run": bool(dry_run),

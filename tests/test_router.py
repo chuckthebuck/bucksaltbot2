@@ -541,7 +541,7 @@ def test_all_jobs_json_marks_stale_resolving_as_failed(client):
     _set_session(client, "maintainer")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchall.return_value = [
-        (30, "alice", "resolving", 1, "2020-01-01 00:00:00", 0, 0, 0),
+        (30, 12345, "alice", "resolving", 1, "2020-01-01 00:00:00", 0, 0, 0),
     ]
 
     with (
@@ -555,6 +555,7 @@ def test_all_jobs_json_marks_stale_resolving_as_failed(client):
     assert resp.status_code == 200
     jobs = resp.get_json()["jobs"]
     assert jobs[0]["status"] == "failed"
+    assert jobs[0]["batch_id"] == 12345
 
 
 def test_resolve_diff_rollback_job_propagates_query_payload_to_chunk_jobs():

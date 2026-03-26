@@ -29,6 +29,7 @@ export interface QueueProps {
 
 export interface AllJobsRow {
   id: number;
+  batch_id: number | null;
   requested_by: string;
   status: string;
   dry_run: boolean;
