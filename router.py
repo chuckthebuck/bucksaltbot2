@@ -1547,6 +1547,51 @@ def _parse_bool(value, default=False):
     return default
 
 
+_REQUEST_TYPE_QUEUE = "queue"
+_REQUEST_TYPE_BATCH = "batch"
+_REQUEST_TYPE_DIFF = "diff"
+
+_REQUEST_STATUS_PENDING_APPROVAL = "pending_approval"
+
+_APPROVAL_REQUIRED_ADMIN = "admin"
+_APPROVAL_REQUIRED_MAINTAINER = "maintainer"
+
+_ENDPOINT_BATCH = "batch"
+_ENDPOINT_FROM_DIFF = "from_diff"
+_ENDPOINT_FROM_ACCOUNT = "from_account"
+
+_ALLOWED_DIFF_REQUEST_ENDPOINTS = frozenset({_ENDPOINT_FROM_DIFF, _ENDPOINT_FROM_ACCOUNT})
+_ALLOWED_REQUEST_TYPES = frozenset({_REQUEST_TYPE_QUEUE, _REQUEST_TYPE_BATCH, _REQUEST_TYPE_DIFF})
+
+
+def _normalize_request_type(raw_value) -> str:
+    value = str(raw_value or "").strip().lower()
+    if value in _ALLOWED_REQUEST_TYPES:
+        return value
+    return _REQUEST_TYPE_QUEUE
+
+
+def _approval_requirement_for_request(request_type: str, requested_endpoint: str | None) -> str | None:
+    if request_type == _REQUEST_TYPE_BATCH or requested_endpoint == _ENDPOINT_BATCH:
+        return _APPROVAL_REQUIRED_ADMIN
+    if request_type == _REQUEST_TYPE_DIFF:
+        return _APPROVAL_REQUIRED_MAINTAINER
+    return None
+
+
+def _can_actor_approve(actor: str, required_level: str | None) -> bool:
+    if not actor or not required_level:
+        return False
+
+    if required_level == _APPROVAL_REQUIRED_MAINTAINER:
+        return is_maintainer(actor)
+
+    if required_level == _APPROVAL_REQUIRED_ADMIN:
+        return is_maintainer(actor) or is_admin_user(actor)
+
+    return False
+
+
 @app.route("/goto")
 def goto():
     username = session.get("username")
@@ -1559,7 +1604,7 @@ def goto():
         return redirect("/rollback-queue")
 
     if tab == "rollback-batch":
-        if "batch" not in _user_permissions(username):
+        if "write" not in _user_permissions(username):
             abort(403)
         return redirect("/rollback_batch")
 
@@ -1569,12 +1614,12 @@ def goto():
         return redirect("/rollback-queue/all-jobs")
 
     if tab == "rollback-from-diff":
-        if "from_diff" not in _user_permissions(username):
+        if "write" not in _user_permissions(username):
             abort(403)
         return redirect("/rollback-from-diff")
 
     if tab == "rollback-account":
-        if "from_diff" not in _user_permissions(username):
+        if "write" not in _user_permissions(username):
             abort(403)
         return redirect("/rollback-account")
 
@@ -1681,8 +1726,11 @@ def rollback_from_diff_api():
 
     perms = _user_permissions(username)
 
-    if "from_diff" not in perms:
-        return jsonify({"detail": "Forbidden"}), 403
+    if "write" not in perms:
+        return jsonify({"detail": "Forbidden: write access required"}), 403
+
+    if not _check_rate_limit(username):
+        return jsonify({"detail": "Rate limit exceeded; try again later"}), 429
 
     payload = request.get_json(silent=True) or {}
 
@@ -1734,10 +1782,28 @@ def rollback_from_diff_api():
                 cursor.execute(
                     """
                     INSERT INTO rollback_jobs
-                    (requested_by, status, dry_run, batch_id)
-                    VALUES (%s, %s, %s, %s)
+                    (
+                        requested_by,
+                        status,
+                        dry_run,
+                        batch_id,
+                        request_type,
+                        requested_endpoint,
+                        approved_endpoint,
+                        approval_required
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (username, "resolving", 1 if dry_run else 0, batch_id),
+                    (
+                        username,
+                        _REQUEST_STATUS_PENDING_APPROVAL,
+                        1 if dry_run else 0,
+                        batch_id,
+                        _REQUEST_TYPE_DIFF,
+                        _ENDPOINT_FROM_DIFF,
+                        None,
+                        _APPROVAL_REQUIRED_MAINTAINER,
+                    ),
                 )
                 job_id = cursor.lastrowid
             conn.commit()
@@ -1750,14 +1816,9 @@ def rollback_from_diff_api():
                 "requested_by": username,
                 "dry_run": dry_run,
                 "limit": limit,
+                "requested_endpoint": _ENDPOINT_FROM_DIFF,
             },
         )
-        status_updater.update_wiki_status(
-            editing="Resolving diff",
-            current_job=f"Resolving diff for job {job_id}",
-            details=f"Diff: {diff}, limit: {limit}",
-        )
-        resolve_diff_rollback_job.delay(job_id)
     except Exception as e:
         logging.exception("Error in rollback_from_diff_api")
         return jsonify({"detail": "Failed to create rollback jobs: " + str(e)}), 500
@@ -1769,10 +1830,13 @@ def rollback_from_diff_api():
             "chunks": 1,
             "batch_id": batch_id,
             "total_items": 0,
-            "status": "resolving",
+            "status": _REQUEST_STATUS_PENDING_APPROVAL,
             "diff": diff,
             "dry_run": dry_run,
             "limit": limit,
+            "request_type": _REQUEST_TYPE_DIFF,
+            "requested_endpoint": _ENDPOINT_FROM_DIFF,
+            "approval_required": _APPROVAL_REQUIRED_MAINTAINER,
         }
     )
 
@@ -1933,7 +1997,7 @@ def rollback_from_diff_page():
 
     perms = _user_permissions(username)
 
-    if "from_diff" not in perms:
+    if "write" not in perms:
         abort(403)
 
     return render_template(
@@ -1955,7 +2019,7 @@ def rollback_account_page():
 
     perms = _user_permissions(username)
 
-    if "from_diff" not in perms:
+    if "write" not in perms:
         abort(403)
 
     return render_template(
@@ -2052,7 +2116,7 @@ def rollback_batch():
     if not username:
         abort(401)
 
-    if "batch" not in _user_permissions(username):
+    if "write" not in _user_permissions(username):
         abort(403)
 
     return render_template(
