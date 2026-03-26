@@ -221,6 +221,7 @@ async function submit() {
       requested_by: props.username,
       dry_run: dryRun.value,
       batch_id: batchId,
+      request_type: "batch",
       items
     })
   });
@@ -235,7 +236,7 @@ async function submit() {
 
     <!-- instructions -->
     <CdxMessage>
-      Enter one item per line:
+      Enter one item per line to submit a batch request (admin approval required before execution):
       <br>
       <code>Title|User|Optional summary</code>
     </CdxMessage>
@@ -299,7 +300,7 @@ async function submit() {
     </CdxButton>
 
     <CdxButton type="button" action="progressive" weight="primary" @click.prevent="submit">
-      Submit batch job
+      Submit batch request
     </CdxButton>
 
     <!-- errors -->

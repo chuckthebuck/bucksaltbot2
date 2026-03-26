@@ -13,6 +13,12 @@ export interface JobRow {
   completed?: number;
   failed?: number;
   items?: CreateJobItem[];
+  request_type?: string;
+  requested_endpoint?: string | null;
+  approved_endpoint?: string | null;
+  approval_required?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
 }
 
 export interface CreateJobItem {
@@ -34,6 +40,12 @@ export interface AllJobsRow {
   status: string;
   dry_run: boolean;
   created_at: string;
+  request_type?: string | null;
+  requested_endpoint?: string | null;
+  approved_endpoint?: string | null;
+  approval_required?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
   total: number;
   completed: number;
   failed: number;
@@ -283,6 +295,34 @@ export async function retryJob(id: number): Promise<void> {
   });
 
   if (!r.ok) throw new Error(`Retry failed for job ${id}: ${r.status}`);
+}
+
+export async function approveJob(id: number, endpoint?: string): Promise<any> {
+  const body: Record<string, unknown> = {};
+  if (endpoint) {
+    body.endpoint = endpoint;
+  }
+
+  const r = await fetch(`/api/v1/rollback/jobs/${id}/approve`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  let data: any = null;
+  try {
+    data = await r.json();
+  } catch {
+    data = null;
+  }
+
+  if (!r.ok) {
+    throw new Error(String(data?.detail || `Approval failed for job ${id}: ${r.status}`));
+  }
+
+  return data;
 }
 
 export async function cancelJob(id: number, token?: string): Promise<void> {

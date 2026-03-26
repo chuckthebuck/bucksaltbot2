@@ -97,8 +97,8 @@ async function submit() {
 <template>
   <div class="rollback-tool-section">
     <CdxMessage type="notice" class="top-message">
-      Queue rollback jobs for a target account's latest rollbackable contributions.
-      Maximum allowed per request is {{ maxLimit }}.
+      Submit an account rollback request. A maintainer must approve it before
+      any rollback runs. Maximum allowed per request is {{ maxLimit }}.
     </CdxMessage>
 
     <CdxMessage v-if="props.from_diff_dry_run_only" type="warning" class="top-message">
@@ -150,7 +150,7 @@ async function submit() {
         :disabled="loading"
         @click="submit"
       >
-        {{ loading ? "Submitting..." : "Queue account rollback jobs" }}
+        {{ loading ? "Submitting..." : "Submit account rollback request" }}
       </CdxButton>
     </div>
 
@@ -161,7 +161,7 @@ async function submit() {
     </CdxMessage>
 
     <CdxMessage v-if="result" type="success">
-      Created {{ result.total_items }} items across {{ result.chunks }} job chunk(s).
+      Request submitted with status: {{ result.status }}.
       <br>
       Target account: {{ result.resolved_user }}
       <br>

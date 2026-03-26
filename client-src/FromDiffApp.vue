@@ -99,8 +99,8 @@ async function submit() {
 <template>
   <div class="rollback-tool-section">
     <CdxMessage type="notice" class="top-message">
-      Enter a diff oldid or URL. The tool resolves that revision's author and timestamp,
-      then queues that author's edits after that timestamp.
+      Enter a diff oldid or URL to submit a rollback request. A maintainer must approve
+      the request before it runs.
     </CdxMessage>
 
     <CdxMessage v-if="props.from_diff_dry_run_only" type="warning" class="top-message">
@@ -152,7 +152,7 @@ async function submit() {
         :disabled="loading"
         @click="submit"
       >
-        {{ loading ? "Submitting..." : "Queue rollback jobs" }}
+        {{ loading ? "Submitting..." : "Submit rollback request" }}
       </CdxButton>
     </div>
 
@@ -163,9 +163,9 @@ async function submit() {
     </CdxMessage>
 
     <CdxMessage v-if="result" type="success">
-      Created {{ result.total_items }} items across {{ result.chunks }} job chunk(s).
+      Request submitted with status: {{ result.status }}.
       <br>
-      Resolved author: {{ result.resolved_user }}
+      Requested endpoint: {{ result.requested_endpoint }}
       <br>
       Batch ID: {{ result.batch_id }}
       <br>

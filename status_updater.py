@@ -64,14 +64,15 @@ from redis_state import r as _redis
 
 # ── Page titles ───────────────────────────────────────────────────────────────
 
-STATUS_PAGE = "User:Alachuckthebuck/chuckbot/status"
-NOTIFY_PAGE = "User:Alachuckthebuck/chuckbot/notify"
+# Status pages are maintained under User:Chuckbot/status/* on Commons.
+STATUS_PAGE = "User:Chuckbot/status"
+NOTIFY_PAGE = "User:Chuckbot/status/notify"
 STATUS_SUBPAGES = {
     "editing": f"{STATUS_PAGE}/editing",
     "web": f"{STATUS_PAGE}/web",
-    "last_edit": f"{STATUS_PAGE}/last_edit",
-    "current_job": f"{STATUS_PAGE}/current_job",
-    "last_job": f"{STATUS_PAGE}/last_job",
+    "last_edit": f"{STATUS_PAGE}/last edit",
+    "current_job": f"{STATUS_PAGE}/current job",
+    "last_job": f"{STATUS_PAGE}/last job",
     "details": f"{STATUS_PAGE}/details",
     "warning": f"{STATUS_PAGE}/warning",
     "updated": f"{STATUS_PAGE}/updated",

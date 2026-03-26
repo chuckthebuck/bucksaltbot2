@@ -1,6 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { fetchAllJobs, fetchJobDetails, type AllJobsRow as ApiAllJobsRow } from "./api";
+import { CdxButton } from "@wikimedia/codex";
+import {
+  approveJob,
+  fetchAllJobs,
+  fetchJobDetails,
+  type AllJobsRow as ApiAllJobsRow,
+} from "./api";
+
+const pageProps = JSON.parse(
+  document.getElementById("all-jobs-props")!.textContent || "{}"
+) as {
+  can_approve_diff?: boolean;
+  can_approve_batch?: boolean;
+};
 
 interface AllJobsRow {
   id: number;
@@ -9,6 +22,12 @@ interface AllJobsRow {
   status: string;
   dryRun: boolean;
   created: string;
+  requestType: string;
+  requestedEndpoint: string | null;
+  approvedEndpoint: string | null;
+  approvalRequired: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
   total: number;
   completed: number;
   failed: number;
@@ -43,7 +62,7 @@ interface DisplayBatchRow {
 
 type DisplayRow = DisplayJobRow | DisplayBatchRow;
 
-const ACTIVE_STATUSES = new Set(["queued", "running", "resolving", "staging"]);
+const ACTIVE_STATUSES = new Set(["queued", "running", "resolving", "staging", "pending_approval"]);
 
 function asBoolean(value: unknown): boolean {
   if (typeof value === "boolean") return value;
@@ -76,6 +95,12 @@ function normalizeAllJobsRow(row: unknown): AllJobsRow | null {
     status: String(obj.status ?? "queued"),
     dryRun: asBoolean(obj.dry_run),
     created: String(obj.created_at ?? ""),
+    requestType: String(obj.request_type ?? "queue"),
+    requestedEndpoint: obj.requested_endpoint ? String(obj.requested_endpoint) : null,
+    approvedEndpoint: obj.approved_endpoint ? String(obj.approved_endpoint) : null,
+    approvalRequired: obj.approval_required ? String(obj.approval_required) : null,
+    approvedBy: obj.approved_by ? String(obj.approved_by) : null,
+    approvedAt: obj.approved_at ? String(obj.approved_at) : null,
     total: Number(obj.total ?? 0),
     completed: Number(obj.completed ?? 0),
     failed: Number(obj.failed ?? 0)
@@ -85,15 +110,25 @@ function normalizeAllJobsRow(row: unknown): AllJobsRow | null {
 const jobs = ref<AllJobsRow[]>([]);
 const loading = ref(true);
 const error = ref("");
+const actionError = ref("");
+const actionNotice = ref("");
 const details = ref<Record<string, string>>({});
 const openRows = ref<Record<string, boolean>>({});
+const pendingApprove = ref<Record<number, boolean>>({});
+
+const canApproveDiff = computed(() => Boolean(pageProps.can_approve_diff));
+const canApproveBatch = computed(() => Boolean(pageProps.can_approve_batch));
+
+async function loadAllJobsRows() {
+  const rows = await fetchAllJobs();
+  jobs.value = (rows as ApiAllJobsRow[])
+    .map((j) => normalizeAllJobsRow(j))
+    .filter((j): j is AllJobsRow => j !== null);
+}
 
 onMounted(async () => {
   try {
-    const rows = await fetchAllJobs();
-    jobs.value = (rows as ApiAllJobsRow[])
-      .map((j) => normalizeAllJobsRow(j))
-      .filter((j): j is AllJobsRow => j !== null);
+    await loadAllJobsRows();
   } catch (e) {
     console.error("Failed to load all jobs:", e);
     error.value = "Failed to load all jobs.";
@@ -155,6 +190,45 @@ function statusClassName(status: string): string {
 function modeClassName(dryRun: boolean | null): string {
   if (dryRun === null) return "cdx-tag--mode-mixed";
   return dryRun ? "cdx-tag--mode-dry-run" : "cdx-tag--mode-live";
+}
+
+function canApproveRow(row: DisplayRow): boolean {
+  if (row.kind !== "job") return false;
+  if (row.status !== "pending_approval") return false;
+
+  if (row.approvalRequired === "maintainer") {
+    return canApproveDiff.value;
+  }
+
+  if (row.approvalRequired === "admin") {
+    return canApproveBatch.value;
+  }
+
+  if (row.requestType === "diff") {
+    return canApproveDiff.value;
+  }
+
+  if (row.requestType === "batch") {
+    return canApproveBatch.value;
+  }
+
+  return false;
+}
+
+async function onApprove(row: DisplayJobRow, endpoint?: string) {
+  actionError.value = "";
+  actionNotice.value = "";
+  pendingApprove.value[row.id] = true;
+
+  try {
+    const result = await approveJob(row.id, endpoint);
+    actionNotice.value = String(result?.status || "Approved");
+    await loadAllJobsRows();
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : "Approval failed";
+  } finally {
+    pendingApprove.value[row.id] = false;
+  }
 }
 
 function rowProgressAriaLabel(row: DisplayRow): string {
@@ -233,6 +307,22 @@ const displayedRows = computed<DisplayRow[]>(() => {
   const rows: DisplayRow[] = [];
 
   for (const groupJobs of grouped.values()) {
+    const containsPendingBatchRequest = groupJobs.some(
+      (job) => job.status === "pending_approval" && job.requestType === "batch"
+    );
+
+    if (containsPendingBatchRequest) {
+      for (const job of groupJobs) {
+        rows.push({
+          ...job,
+          kind: "job",
+          rowKey: `job:${job.id}`,
+          label: String(job.id),
+        });
+      }
+      continue;
+    }
+
     if (groupJobs.length === 1) {
       const job = groupJobs[0];
       rows.push({
@@ -269,6 +359,9 @@ const displayedRows = computed<DisplayRow[]>(() => {
 
 <template>
   <div class="all-jobs-table-wrap">
+    <div v-if="actionNotice" class="all-jobs-action all-jobs-action--ok">{{ actionNotice }}</div>
+    <div v-if="actionError" class="all-jobs-action all-jobs-action--error">{{ actionError }}</div>
+
     <div v-if="loading" class="all-jobs-table__empty">Loading jobs...</div>
     <div v-else-if="error" class="all-jobs-table__empty">{{ error }}</div>
     <table v-else class="all-jobs-table">
@@ -313,6 +406,43 @@ const displayedRows = computed<DisplayRow[]>(() => {
                 <a :href="`/api/v1/rollback/jobs/${row.id}`" target="_blank" rel="noopener noreferrer">JSON</a>
                 <span aria-hidden="true"> | </span>
                 <a :href="`/api/v1/rollback/jobs/${row.id}?format=log`" target="_blank" rel="noopener noreferrer">Log</a>
+
+                <template v-if="canApproveRow(row)">
+                  <div class="all-jobs-table__actions">
+                    <CdxButton
+                      v-if="row.requestType === 'batch'"
+                      action="progressive"
+                      weight="primary"
+                      size="small"
+                      :disabled="pendingApprove[row.id]"
+                      @click="onApprove(row, 'batch')"
+                    >
+                      {{ pendingApprove[row.id] ? 'Approving...' : 'Approve batch' }}
+                    </CdxButton>
+
+                    <template v-else-if="row.requestType === 'diff'">
+                      <CdxButton
+                        action="progressive"
+                        weight="primary"
+                        size="small"
+                        :disabled="pendingApprove[row.id]"
+                        @click="onApprove(row, 'from_diff')"
+                      >
+                        {{ pendingApprove[row.id] ? 'Approving...' : 'Approve as diff' }}
+                      </CdxButton>
+
+                      <CdxButton
+                        action="default"
+                        weight="quiet"
+                        size="small"
+                        :disabled="pendingApprove[row.id]"
+                        @click="onApprove(row, 'from_account')"
+                      >
+                        Approve as account
+                      </CdxButton>
+                    </template>
+                  </div>
+                </template>
               </template>
               <template v-else>
                 <span class="all-jobs-table__batch-hint">{{ row.jobs.length }} jobs</span>
@@ -337,6 +467,22 @@ const displayedRows = computed<DisplayRow[]>(() => {
 .all-jobs-table-wrap {
   width: 100%;
   overflow-x: auto;
+}
+
+.all-jobs-action {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border-radius: 4px;
+}
+
+.all-jobs-action--ok {
+  background: #e6f5ff;
+  border: 1px solid #7fb3ff;
+}
+
+.all-jobs-action--error {
+  background: #fee7e6;
+  border: 1px solid #d73333;
 }
 
 .all-jobs-table {
@@ -385,6 +531,13 @@ const displayedRows = computed<DisplayRow[]>(() => {
 
 .all-jobs-table__links {
   white-space: nowrap;
+}
+
+.all-jobs-table__actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .all-jobs-table__batch-hint {

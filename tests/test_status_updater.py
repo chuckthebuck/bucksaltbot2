@@ -188,6 +188,20 @@ def test_update_wiki_status_noop_when_not_live(monkeypatch):
     mock_site_cls.assert_not_called()
 
 
+def test_status_subpages_target_user_chuckbot_status_space_names():
+    import status_updater
+
+    assert status_updater.STATUS_PAGE == "User:Chuckbot/status"
+    assert status_updater.STATUS_SUBPAGES["editing"] == "User:Chuckbot/status/editing"
+    assert status_updater.STATUS_SUBPAGES["web"] == "User:Chuckbot/status/web"
+    assert status_updater.STATUS_SUBPAGES["last_edit"] == "User:Chuckbot/status/last edit"
+    assert status_updater.STATUS_SUBPAGES["current_job"] == "User:Chuckbot/status/current job"
+    assert status_updater.STATUS_SUBPAGES["last_job"] == "User:Chuckbot/status/last job"
+    assert status_updater.STATUS_SUBPAGES["details"] == "User:Chuckbot/status/details"
+    assert status_updater.STATUS_SUBPAGES["warning"] == "User:Chuckbot/status/warning"
+    assert status_updater.STATUS_SUBPAGES["updated"] == "User:Chuckbot/status/updated"
+
+
 def test_update_wiki_status_saves_page_when_live(monkeypatch):
     import status_updater
 
