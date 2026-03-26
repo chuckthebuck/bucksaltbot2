@@ -1524,10 +1524,19 @@ def rollback_queue_all_jobs_ui():
             if _maybe_mark_stale_resolving_job_failed(job_id, status, created_at):
                 status = "failed"
 
+            # Some legacy rows may store non-numeric batch identifiers.
+            # Keep the endpoint resilient by treating unparseable values as null.
+            normalized_batch_id = None
+            if batch_id is not None:
+                try:
+                    normalized_batch_id = int(batch_id)
+                except (TypeError, ValueError):
+                    normalized_batch_id = None
+
             jobs_for_output.append(
                 {
                     "id": job_id,
-                    "batch_id": int(batch_id) if batch_id is not None else None,
+                    "batch_id": normalized_batch_id,
                     "requested_by": requested_by,
                     "status": status,
                     "dry_run": bool(dry_run),

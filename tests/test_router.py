@@ -558,6 +558,27 @@ def test_all_jobs_json_marks_stale_resolving_as_failed(client):
     assert jobs[0]["batch_id"] == 12345
 
 
+def test_all_jobs_json_tolerates_legacy_non_numeric_batch_id(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchall.return_value = [
+        (31, "legacy-9", "alice", "queued", 0, "2020-01-01 00:00:00", 1, 0, 0),
+    ]
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router._set_diff_error"),
+        patch("router._update_diff_payload"),
+    ):
+        resp = client.get("/rollback-queue/all-jobs?format=json")
+
+    assert resp.status_code == 200
+    jobs = resp.get_json()["jobs"]
+    assert jobs[0]["id"] == 31
+    assert jobs[0]["batch_id"] is None
+
+
 def test_resolve_diff_rollback_job_propagates_query_payload_to_chunk_jobs():
     import router
 
