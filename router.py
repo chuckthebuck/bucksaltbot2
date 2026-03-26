@@ -22,14 +22,55 @@ from flask import (
     session,
     url_for,
 )
-from app import MAX_JOB_ITEMS, flask_app as app, is_maintainer
+from app import BOT_ADMIN_ACCOUNTS, MAX_JOB_ITEMS, flask_app as app, is_maintainer
 from redis_state import get_progress, r
 from rollback_queue import process_rollback_job
 from toolsdb import get_conn
 
-ALLOWED_GROUPS = {"sysop"}
+ALLOWED_GROUPS = {"sysop", "rollbacker"}
 GROUP_CACHE_TTL = 300
 _group_cache = {}
+
+
+def _env_user_set(env_var: str) -> set[str]:
+    """Parse a comma-separated environment variable into a lower-cased set of usernames."""
+    return {u.strip().lower() for u in os.getenv(env_var, "").split(",") if u.strip()}
+
+
+# Comma-separated list of individual MediaWiki account names that are
+# authorised to use this tool.  Intended for adding test accounts without
+# granting full maintainer privileges.
+# Example: EXTRA_AUTHORIZED_USERS=Alice,TestUser42
+EXTRA_AUTHORIZED_USERS: set[str] = _env_user_set("EXTRA_AUTHORIZED_USERS")
+
+# Users who may view their own jobs but cannot submit, cancel, or retry.
+# Example: USERS_READ_ONLY=Viewer1,Viewer2
+USERS_READ_ONLY: set[str] = _env_user_set("USERS_READ_ONLY")
+
+# Tester accounts: above regular users, below maintainers.
+# They receive access to all tools (from_diff, batch, read_all) and a separate,
+# slightly higher rate limit, but no cross-user cancel/retry privileges.
+# Example: USERS_TESTER=Alice,TestAccount
+USERS_TESTER: set[str] = _env_user_set("USERS_TESTER")
+
+# Non-maintainer users granted access to specific interfaces or cross-user actions.
+# Example: USERS_GRANTED_FROM_DIFF=Alice,TestAccount
+USERS_GRANTED_FROM_DIFF: set[str] = _env_user_set("USERS_GRANTED_FROM_DIFF")
+USERS_GRANTED_VIEW_ALL: set[str] = _env_user_set("USERS_GRANTED_VIEW_ALL")
+USERS_GRANTED_BATCH: set[str] = _env_user_set("USERS_GRANTED_BATCH")
+USERS_GRANTED_CANCEL_ANY: set[str] = _env_user_set("USERS_GRANTED_CANCEL_ANY")
+USERS_GRANTED_RETRY_ANY: set[str] = _env_user_set("USERS_GRANTED_RETRY_ANY")
+
+# Per-user rate limit on job creation.  0 = disabled (the default).
+# Maintainers are never rate-limited.  Testers use RATE_LIMIT_TESTER_JOBS_PER_HOUR
+# (falls back to RATE_LIMIT_JOBS_PER_HOUR if unset).
+# Example: RATE_LIMIT_JOBS_PER_HOUR=20
+RATE_LIMIT_JOBS_PER_HOUR: int = int(os.getenv("RATE_LIMIT_JOBS_PER_HOUR", "0"))
+# Example: RATE_LIMIT_TESTER_JOBS_PER_HOUR=50
+RATE_LIMIT_TESTER_JOBS_PER_HOUR: int = int(
+    os.getenv("RATE_LIMIT_TESTER_JOBS_PER_HOUR", str(RATE_LIMIT_JOBS_PER_HOUR))
+)
+
 _DIFF_PAYLOAD_TTL = 7 * 24 * 3600
 _MW_DEBUG_MAX_ENTRIES = 25
 _MW_DEBUG_BODY_MAX = 1200
@@ -729,8 +770,144 @@ def is_authorized(username):
     if is_maintainer(username):
         return True
 
+    if username.lower() in EXTRA_AUTHORIZED_USERS:
+        return True
+
     groups = get_user_groups(username)
     return any(group in ALLOWED_GROUPS for group in groups)
+
+
+def is_admin_user(username: str) -> bool:
+    """Return True if the user has the Commons sysop (admin) right."""
+    if not username:
+        return False
+    return "sysop" in get_user_groups(username)
+
+
+def is_bot_admin(username: str) -> bool:
+    """Return True if the user is one of the hardcoded bot-admin accounts (e.g. chuckbot).
+
+    Bot admins sit at the top of the user hierarchy: chuckbot > maintainer > admin > regular.
+    """
+    if not username:
+        return False
+    return username.strip().lower() in BOT_ADMIN_ACCOUNTS
+
+
+def is_tester(username: str) -> bool:
+    """Return True if the user is in the USERS_TESTER env-var list.
+
+    Testers sit between regular users and maintainers: they have access to all
+    tools (from_diff, batch, read_all) and a higher rate limit, but no
+    cross-user cancel or retry privileges.
+    """
+    if not username:
+        return False
+    return username.strip().lower() in USERS_TESTER
+
+
+def _user_permissions(username: str) -> frozenset:
+    """Return the set of permission flags for an already-authenticated user.
+
+    User hierarchy (highest → lowest)
+    ----------------------------------
+    bot admin (BOT_ADMIN_ACCOUNTS)   — chuckbot and similar accounts
+    maintainer (Toolhub maintainers) — includes bot admins
+    tester (USERS_TESTER)            — all tools, higher rate limit; no cross-user actions
+    admin (Commons sysop)            — can log in; base perms only
+    regular user (rollbacker/sysop)  — rollback queue only
+
+    Permission strings
+    ------------------
+    read_own               — view the user's own jobs
+    write                  — submit new rollback jobs
+    cancel_own             — cancel the user's own jobs
+    retry_own              — retry the user's own jobs
+    read_all               — view every user's jobs (all-jobs interface)
+    from_diff              — use the rollback-from-diff interface
+    batch                  — use the batch rollback interface
+    cancel_any             — cancel any non-privileged (regular) user's job
+    retry_any              — retry any user's job
+    cancel_admin_jobs      — cancel a Commons admin (sysop) user's job; all maintainers
+    cancel_maintainer_jobs — cancel a maintainer's job; only bot admins possess this
+    """
+    if not username:
+        return frozenset()
+
+    lower = username.lower()
+
+    # Read-only users may only view their own jobs.
+    if lower in USERS_READ_ONLY:
+        return frozenset({"read_own"})
+
+    # Base permissions granted to every authenticated user.
+    perms: set = {"read_own", "write", "cancel_own", "retry_own"}
+
+    if is_maintainer(username):
+        # Maintainers are above admins: they can cancel any admin's job.
+        perms |= {"read_all", "from_diff", "batch", "cancel_any", "retry_any", "cancel_admin_jobs"}
+        # Bot admins (chuckbot) sit above all maintainers and can cancel their jobs too.
+        if is_bot_admin(username):
+            perms.add("cancel_maintainer_jobs")
+    elif is_tester(username):
+        # Testers get access to all tool interfaces but no cross-user actions.
+        perms |= {"read_all", "from_diff", "batch"}
+    else:
+        # Per-user grants for non-maintainer, non-tester accounts.
+        if lower in USERS_GRANTED_FROM_DIFF:
+            perms.add("from_diff")
+        if lower in USERS_GRANTED_VIEW_ALL:
+            perms.add("read_all")
+        if lower in USERS_GRANTED_BATCH:
+            perms.add("batch")
+        if lower in USERS_GRANTED_CANCEL_ANY:
+            perms.add("cancel_any")
+        if lower in USERS_GRANTED_RETRY_ANY:
+            perms.add("retry_any")
+
+    return frozenset(perms)
+
+
+def _check_rate_limit(username: str) -> bool:
+    """Return True if the user is within their per-hour job-creation rate limit.
+
+    Tiers
+    -----
+    maintainer  — never rate-limited.
+    tester      — checked against RATE_LIMIT_TESTER_JOBS_PER_HOUR (falls back to
+                  RATE_LIMIT_JOBS_PER_HOUR when unset).
+    regular     — checked against RATE_LIMIT_JOBS_PER_HOUR.
+
+    When the applicable limit is 0, rate limiting is disabled for that tier.
+    Fails open on Redis errors so that a Redis outage does not block job submission.
+    """
+    # Maintainers are never rate-limited.
+    if is_maintainer(username):
+        return True
+
+    limit = (
+        RATE_LIMIT_TESTER_JOBS_PER_HOUR
+        if is_tester(username)
+        else RATE_LIMIT_JOBS_PER_HOUR
+    )
+
+    if limit <= 0:
+        return True
+
+    hour_bucket = int(time.time() // 3600)
+    key = f"rollback:ratelimit:{username.lower()}:{hour_bucket}"
+
+    try:
+        count = r.incr(key)
+        if count == 1:
+            # First entry in this bucket — expire after two hours for cleanup.
+            r.expire(key, 7200)
+        return int(count) <= limit
+    except Exception:
+        app.logger.warning(
+            "Rate-limit check failed for %s; failing open.", username
+        )
+        return True
 
 
 def _ensure_secret_key():
@@ -856,17 +1033,17 @@ def goto():
         return redirect("/rollback-queue")
 
     if tab == "rollback-batch":
-        if not is_maintainer(username):
+        if "batch" not in _user_permissions(username):
             abort(403)
         return redirect("/rollback_batch")
 
     if tab == "rollback-all-jobs":
-        if not is_maintainer(username):
+        if "read_all" not in _user_permissions(username):
             abort(403)
         return redirect("/rollback-queue/all-jobs")
 
     if tab == "rollback-from-diff":
-        if not is_maintainer(username):
+        if "from_diff" not in _user_permissions(username):
             abort(403)
         return redirect("/rollback-from-diff")
 
@@ -966,7 +1143,7 @@ def rollback_from_diff_api():
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
 
-    if not is_maintainer(username):
+    if "from_diff" not in _user_permissions(username):
         return jsonify({"detail": "Forbidden"}), 403
 
     payload = request.get_json(silent=True) or {}
@@ -1066,7 +1243,7 @@ def rollback_from_diff_page():
     if not username:
         abort(401)
 
-    if not is_maintainer(username):
+    if "from_diff" not in _user_permissions(username):
         abort(403)
 
     return render_template(
@@ -1085,7 +1262,7 @@ def rollback_queue_all_jobs_ui():
     if not username:
         abort(401)
 
-    if not is_maintainer(username):
+    if "read_all" not in _user_permissions(username):
         abort(403)
 
     with get_conn() as conn:
@@ -1151,7 +1328,7 @@ def rollback_batch():
     if not username:
         abort(401)
 
-    if not is_maintainer(username):
+    if "batch" not in _user_permissions(username):
         abort(403)
 
     return render_template(
@@ -1209,6 +1386,14 @@ def create_rollback_job():
 
     if actor is None:
         return jsonify({"detail": "Not authenticated"}), 401
+
+    perms = _user_permissions(actor)
+
+    if "write" not in perms:
+        return jsonify({"detail": "Forbidden: write access required"}), 403
+
+    if not _check_rate_limit(actor):
+        return jsonify({"detail": "Rate limit exceeded; try again later"}), 429
 
     payload = request.get_json(silent=True) or {}
 
@@ -1313,7 +1498,8 @@ def retry_job(job_id):
                 return jsonify({"detail": "Job not found"}), 404
 
             if job[0] != actor:
-                return jsonify({"detail": "Forbidden"}), 403
+                if "retry_any" not in _user_permissions(actor):
+                    return jsonify({"detail": "Forbidden"}), 403
 
             cursor.execute(
                 "SELECT COUNT(*) FROM rollback_job_items WHERE job_id=%s",
@@ -1389,7 +1575,27 @@ def cancel_rollback_job(job_id):
                 return jsonify({"detail": "Job not found"}), 404
 
             if job[1] != actor:
-                return jsonify({"detail": "Forbidden"}), 403
+                actor_perms = _user_permissions(actor)
+                # Fast-path: actors with no cross-user cancel permission are always denied.
+                if "cancel_any" not in actor_perms and not is_maintainer(actor):
+                    return jsonify({"detail": "Forbidden"}), 403
+
+                # Tier check: the required privilege depends on the job owner's level.
+                # Hierarchy: bot admin > maintainer > admin (sysop) > regular user.
+                job_owner = job[1]
+                if is_bot_admin(job_owner):
+                    # Bot-admin job: only another bot admin may cancel it.
+                    if "cancel_maintainer_jobs" not in actor_perms:
+                        return jsonify({"detail": "Forbidden: canceling a bot-admin's job requires bot-admin rights"}), 403
+                elif is_maintainer(job_owner):
+                    # Regular maintainer's job: any maintainer (or bot admin) may cancel it.
+                    if not is_maintainer(actor):
+                        return jsonify({"detail": "Forbidden: canceling a maintainer's job requires maintainer rights"}), 403
+                elif is_admin_user(job_owner):
+                    # Admin job: any maintainer (or bot admin) may cancel it.
+                    if "cancel_admin_jobs" not in actor_perms:
+                        return jsonify({"detail": "Forbidden: canceling an admin's job requires maintainer rights"}), 403
+                # else: regular user's job; cancel_any is sufficient (already checked above).
 
             if job[2] in {"completed", "failed", "canceled"}:
                 return jsonify({"job_id": job_id, "status": job[2]})
@@ -1442,7 +1648,7 @@ def get_rollback_job(job_id):
             if not job:
                 return jsonify({"detail": "Job not found"}), 404
 
-            if job[1] != username and not is_maintainer(username):
+            if job[1] != username and "read_all" not in _user_permissions(username):
                 return jsonify({"detail": "Forbidden"}), 403
 
             cursor.execute(
