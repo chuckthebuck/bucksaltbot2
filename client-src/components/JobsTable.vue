@@ -18,6 +18,10 @@ const props = defineProps<{
   token: string;
 }>();
 
+const emit = defineEmits<{
+  (e: "job-updated"): void;
+}>();
+
 const details = ref<Record<number, string>>({});
 const openRows = ref<Record<number, boolean>>({});
 
@@ -65,11 +69,13 @@ async function toggle(id: number) {
 async function onRetry(id: number) {
   if (!confirm(`Retry job ${id}?`)) return;
   await retryJob(id);
+  emit("job-updated");
 }
 
 async function onCancel(id: number) {
   if (!confirm(`Cancel job ${id}?`)) return;
   await cancelJob(id, props.token);
+  emit("job-updated");
 }
 </script>
 

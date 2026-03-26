@@ -259,8 +259,8 @@ def process_rollback_job(job_id: int):
                     user=target_user,
                     token=token,
                     summary=_summary_with_requester(summary, requested_by),
-                    markbot=1,
-                    bot=1,
+                    markbot=True,
+                    bot=True,
                 ).submit()
 
                 _update_item(item_id, "completed", None)
