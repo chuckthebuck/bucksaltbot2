@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Request review</h2>
+<p>Review rollback requests and approve eligible jobs. Diff requests include a preview of all edits selected for rollback.</p>
+
+<script id="request-review-props" type="application/json">
+{{ {
+  "username": username,
+  "can_review_all_requests": can_review_all_requests,
+  "can_approve_diff": can_approve_diff,
+  "can_approve_batch": can_approve_batch
+}|tojson }}
+</script>
+
+{% endblock %}

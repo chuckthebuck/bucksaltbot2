@@ -1710,6 +1710,104 @@ def _can_actor_approve(actor: str, required_level: str | None) -> bool:
     return False
 
 
+def _can_review_requests(username: str) -> bool:
+    if not username:
+        return False
+    return is_maintainer(username) or is_admin_user(username)
+
+
+def _compute_diff_request_preview(
+    job_id: int,
+    payload: dict,
+    endpoint: str,
+    full_from_diff: bool = True,
+) -> dict:
+    """Compute and cache preview edits for a diff-style request endpoint."""
+    if endpoint not in _ALLOWED_DIFF_REQUEST_ENDPOINTS:
+        raise ValueError("Unsupported endpoint for diff request preview")
+
+    preview_by_endpoint = payload.get("preview_by_endpoint")
+    if not isinstance(preview_by_endpoint, dict):
+        preview_by_endpoint = {}
+
+    cache_key = f"{endpoint}:{'full' if (endpoint == _ENDPOINT_FROM_DIFF and full_from_diff) else 'limited'}"
+    cached = preview_by_endpoint.get(cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("items"), list):
+        return cached
+
+    limit_raw = payload.get("limit")
+    limit = None
+    if limit_raw not in (None, ""):
+        try:
+            limit = int(limit_raw)
+        except (TypeError, ValueError):
+            raise ValueError("limit must be an integer")
+        if limit <= 0:
+            raise ValueError("limit must be a positive integer")
+
+    diff = payload.get("diff")
+    target_user = _normalize_target_user_input(payload.get("target_user"))
+    oldid = payload.get("oldid")
+    start_timestamp = payload.get("resolved_timestamp")
+
+    if diff not in (None, ""):
+        if oldid in (None, ""):
+            oldid = _extract_oldid(diff)
+        diff_metadata = fetch_diff_author_and_timestamp(oldid)
+        if not target_user:
+            target_user = diff_metadata["user"]
+        if not start_timestamp:
+            start_timestamp = diff_metadata["timestamp"]
+
+    if not target_user:
+        raise ValueError("Unable to resolve target user for request preview")
+
+    items: list[dict] = []
+    rollbackable_end_timestamp = None
+
+    if endpoint == _ENDPOINT_FROM_ACCOUNT:
+        effective_limit = limit or _ACCOUNT_ROLLBACK_MAX_LIMIT
+        if effective_limit > _ACCOUNT_ROLLBACK_MAX_LIMIT:
+            raise ValueError(f"limit must be <= {_ACCOUNT_ROLLBACK_MAX_LIMIT}")
+        items = fetch_recent_rollbackable_contribs(target_user, limit=effective_limit)
+    else:
+        if not start_timestamp:
+            raise ValueError("Diff timestamp is required for from-diff preview")
+        rollbackable_end_timestamp = fetch_rollbackable_window_end_timestamp(
+            target_user,
+            start_timestamp,
+            limit=_ROLLBACKABLE_WINDOW_LIMIT,
+        )
+        items = list(
+            iter_contribs_after_timestamp(
+                target_user,
+                start_timestamp,
+                limit=None if full_from_diff else limit,
+                end_timestamp=rollbackable_end_timestamp,
+                rollbackable_only=True,
+            )
+        )
+
+    preview_payload = {
+        "endpoint": endpoint,
+        "oldid": oldid,
+        "resolved_user": target_user,
+        "resolved_timestamp": start_timestamp,
+        "rollbackable_window_end_timestamp": rollbackable_end_timestamp,
+        "limit": None if (endpoint == _ENDPOINT_FROM_DIFF and full_from_diff) else limit,
+        "request_limit": limit,
+        "full_from_diff": bool(endpoint == _ENDPOINT_FROM_DIFF and full_from_diff),
+        "total_items": len(items),
+        "items": items,
+        "generated_at": _utc_now_iso(),
+    }
+
+    preview_by_endpoint[cache_key] = preview_payload
+    payload["preview_by_endpoint"] = preview_by_endpoint
+    _store_diff_payload(job_id, payload)
+    return preview_payload
+
+
 @app.route("/goto")
 def goto():
     username = session.get("username")
@@ -1740,6 +1838,9 @@ def goto():
         if "write" not in _user_permissions(username):
             abort(403)
         return redirect("/rollback-account")
+
+    if tab == "rollback-requests":
+        return redirect("/rollback-requests")
 
     if tab == "rollback-config":
         if not _can_view_runtime_config(username):
@@ -2147,6 +2248,243 @@ def rollback_account_page():
         default_limit=_ACCOUNT_ROLLBACK_MAX_LIMIT,
         from_diff_dry_run_only=bool("from_diff_dry_run_only" in perms),
         type="rollback-account",
+    )
+
+
+@app.route("/rollback-requests")
+def rollback_requests_page():
+    username = session.get("username")
+
+    if not username:
+        abort(401)
+
+    can_review = _can_review_requests(username)
+
+    return render_template(
+        "rollback_requests.html",
+        username=username,
+        can_review_all_requests=bool(can_review),
+        can_approve_diff=bool(is_maintainer(username)),
+        can_approve_batch=bool(can_review),
+        type="rollback-requests",
+    )
+
+
+@app.route("/api/v1/rollback/requests", methods=["GET"])
+def list_rollback_requests_api():
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    can_review = _can_review_requests(username)
+    requested_by_filter = request.args.get("requested_by")
+    status_filter = request.args.get("status")
+
+    where_parts = ["j.request_type IN (%s, %s)"]
+    params = [_REQUEST_TYPE_DIFF, _REQUEST_TYPE_BATCH]
+
+    if status_filter:
+        where_parts.append("j.status=%s")
+        params.append(status_filter)
+
+    if requested_by_filter:
+        if not can_review and requested_by_filter.strip().lower() != username.strip().lower():
+            return jsonify({"detail": "Forbidden"}), 403
+        where_parts.append("j.requested_by=%s")
+        params.append(requested_by_filter)
+    elif not can_review:
+        where_parts.append("j.requested_by=%s")
+        params.append(username)
+
+    where_sql = " AND ".join(where_parts)
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT
+                    j.id,
+                    j.batch_id,
+                    j.requested_by,
+                    j.status,
+                    j.dry_run,
+                    j.created_at,
+                    j.request_type,
+                    j.requested_endpoint,
+                    j.approved_endpoint,
+                    j.approval_required,
+                    j.approved_by,
+                    j.approved_at,
+                    COUNT(i.id) AS total_items,
+                    COALESCE(SUM(CASE WHEN i.status='completed' THEN 1 ELSE 0 END), 0) AS completed_items,
+                    COALESCE(SUM(CASE WHEN i.status='failed' THEN 1 ELSE 0 END), 0) AS failed_items
+                FROM rollback_jobs j
+                LEFT JOIN rollback_job_items i ON i.job_id = j.id
+                WHERE {where_sql}
+                GROUP BY
+                    j.id,
+                    j.batch_id,
+                    j.requested_by,
+                    j.status,
+                    j.dry_run,
+                    j.created_at,
+                    j.request_type,
+                    j.requested_endpoint,
+                    j.approved_endpoint,
+                    j.approval_required,
+                    j.approved_by,
+                    j.approved_at
+                ORDER BY j.id DESC
+                LIMIT 500
+                """,
+                tuple(params),
+            )
+            rows = cursor.fetchall()
+
+    requests_payload = []
+    for row in rows:
+        (
+            job_id,
+            batch_id,
+            requested_by,
+            status,
+            dry_run,
+            created_at,
+            request_type,
+            requested_endpoint,
+            approved_endpoint,
+            approval_required,
+            approved_by,
+            approved_at,
+            total,
+            completed,
+            failed,
+        ) = row
+
+        requests_payload.append(
+            {
+                "id": int(job_id),
+                "batch_id": int(batch_id) if batch_id is not None else None,
+                "requested_by": requested_by,
+                "status": status,
+                "dry_run": bool(dry_run),
+                "created_at": str(created_at),
+                "request_type": request_type,
+                "requested_endpoint": requested_endpoint,
+                "approved_endpoint": approved_endpoint,
+                "approval_required": approval_required,
+                "approved_by": approved_by,
+                "approved_at": str(approved_at) if approved_at else None,
+                "total": int(total or 0),
+                "completed": int(completed or 0),
+                "failed": int(failed or 0),
+            }
+        )
+
+    return jsonify(
+        {
+            "requests": requests_payload,
+            "can_review_all_requests": bool(can_review),
+            "can_approve_diff": bool(is_maintainer(username)),
+            "can_approve_batch": bool(can_review),
+        }
+    )
+
+
+@app.route("/api/v1/rollback/requests/<int:job_id>/preview", methods=["GET"])
+def rollback_request_preview_api(job_id: int):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    requested_endpoint = str(request.args.get("endpoint") or "").strip().lower() or None
+    full_from_diff = _parse_bool(request.args.get("full"), default=True)
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, requested_by, request_type, requested_endpoint
+                FROM rollback_jobs
+                WHERE id=%s
+                """,
+                (job_id,),
+            )
+            row = cursor.fetchone()
+
+            if not row:
+                return jsonify({"detail": "Request not found"}), 404
+
+            _, requested_by, request_type, stored_endpoint = row
+
+            if requested_by != username and not _can_review_requests(username):
+                return jsonify({"detail": "Forbidden"}), 403
+
+            request_type = _normalize_request_type(request_type)
+
+            if request_type == _REQUEST_TYPE_BATCH:
+                cursor.execute(
+                    """
+                    SELECT file_title, target_user, summary, status, error
+                    FROM rollback_job_items
+                    WHERE job_id=%s
+                    ORDER BY id ASC
+                    """,
+                    (job_id,),
+                )
+                items = cursor.fetchall()
+
+                preview_items = [
+                    {
+                        "title": item[0],
+                        "user": item[1],
+                        "summary": item[2],
+                        "status": item[3],
+                        "error": item[4],
+                    }
+                    for item in items
+                ]
+
+                return jsonify(
+                    {
+                        "job_id": job_id,
+                        "request_type": request_type,
+                        "endpoint": _ENDPOINT_BATCH,
+                        "total_items": len(preview_items),
+                        "items": preview_items,
+                    }
+                )
+
+    if request_type != _REQUEST_TYPE_DIFF:
+        return jsonify({"detail": f"Unsupported request_type: {request_type}"}), 400
+
+    payload = _load_diff_payload(job_id)
+    if not payload:
+        return jsonify({"detail": "Missing request payload"}), 404
+
+    endpoint = requested_endpoint or str(stored_endpoint or payload.get("requested_endpoint") or _ENDPOINT_FROM_DIFF).strip().lower()
+    if endpoint not in _ALLOWED_DIFF_REQUEST_ENDPOINTS:
+        return jsonify({"detail": "Invalid endpoint"}), 400
+
+    try:
+        preview = _compute_diff_request_preview(
+            job_id,
+            payload,
+            endpoint,
+            full_from_diff=full_from_diff,
+        )
+    except ValueError as exc:
+        return jsonify({"detail": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        app.logger.exception("Failed to compute request preview for job %s", job_id)
+        return jsonify({"detail": f"Failed to compute request preview: {exc}"}), 500
+
+    return jsonify(
+        {
+            "job_id": job_id,
+            "request_type": request_type,
+            **preview,
+        }
     )
 
 

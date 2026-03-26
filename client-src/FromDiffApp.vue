@@ -170,6 +170,8 @@ async function submit() {
       Batch ID: {{ result.batch_id }}
       <br>
       Requested by: {{ props.username }}
+      <br>
+      Open the <b>Request Review</b> tab to preview and approve.
     </CdxMessage>
 
     <pre v-if="result" class="log-pre">{{ JSON.stringify(result, null, 2) }}</pre>

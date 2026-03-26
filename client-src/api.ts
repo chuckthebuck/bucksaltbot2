@@ -88,6 +88,50 @@ export interface RuntimeUserGrantsResponse {
   can_edit?: boolean;
 }
 
+export interface RollbackRequestRow {
+  id: number;
+  batch_id: number | null;
+  requested_by: string;
+  status: string;
+  dry_run: boolean;
+  created_at: string;
+  request_type: string;
+  requested_endpoint?: string | null;
+  approved_endpoint?: string | null;
+  approval_required?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  total: number;
+  completed: number;
+  failed: number;
+}
+
+export interface RollbackRequestsResponse {
+  requests: RollbackRequestRow[];
+  can_review_all_requests: boolean;
+  can_approve_diff: boolean;
+  can_approve_batch: boolean;
+}
+
+export interface RollbackRequestPreview {
+  job_id: number;
+  request_type: string;
+  endpoint: string;
+  total_items: number;
+  limit?: number | null;
+  request_limit?: number | null;
+  full_from_diff?: boolean;
+  resolved_user?: string | null;
+  resolved_timestamp?: string | null;
+  items: Array<{
+    title: string;
+    user: string;
+    summary?: string | null;
+    status?: string | null;
+    error?: string | null;
+  }>;
+}
+
 // ------------------------
 // INITIAL PROPS
 // ------------------------
@@ -279,6 +323,30 @@ export async function fetchAllJobs(): Promise<AllJobsRow[]> {
 
   const data = await r.json();
   return Array.isArray(data?.jobs) ? data.jobs : [];
+}
+
+export async function fetchRollbackRequests(): Promise<RollbackRequestsResponse> {
+  const r = await fetch("/api/v1/rollback/requests");
+
+  if (!r.ok) throw new Error(`Failed to fetch rollback requests: ${r.status}`);
+
+  return r.json();
+}
+
+export async function fetchRollbackRequestPreview(
+  jobId: number,
+  endpoint?: string,
+  full: boolean = true,
+): Promise<RollbackRequestPreview> {
+  const query = new URLSearchParams();
+  if (endpoint) query.set("endpoint", endpoint);
+  query.set("full", full ? "1" : "0");
+
+  const r = await fetch(`/api/v1/rollback/requests/${jobId}/preview?${query.toString()}`);
+
+  if (!r.ok) throw new Error(`Failed to fetch request preview ${jobId}: ${r.status}`);
+
+  return r.json();
 }
 
 export async function fetchProgress(ids: number[]): Promise<Record<number, any>> {

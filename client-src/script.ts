@@ -8,6 +8,7 @@ import AllJobsApp from "./AllJobsApp.vue";
 import FromDiffApp from "./FromDiffApp.vue";
 import AccountRollbackApp from "./AccountRollbackApp.vue";
 import ConfigApp from "./ConfigApp.vue";
+import RequestReviewApp from "./RequestReviewApp.vue";
 
 if (document.getElementById("batch-props")) {
   createApp(BatchApp).mount("#app");
@@ -19,6 +20,8 @@ if (document.getElementById("batch-props")) {
   createApp(AccountRollbackApp).mount("#app");
 } else if (document.getElementById("runtime-config-props")) {
   createApp(ConfigApp).mount("#app");
+} else if (document.getElementById("request-review-props")) {
+  createApp(RequestReviewApp).mount("#app");
 } else if (document.getElementById("rollback-queue-props")) {
   createApp(App).mount("#app");
 }
