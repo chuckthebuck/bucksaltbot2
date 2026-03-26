@@ -54,6 +54,20 @@ import status_updater
 _ROLLBACK_NOOP_CODES = frozenset({"alreadyrolled", "onlyauthor"})
 
 
+def _summary_with_requester(summary: str | None, requested_by: str) -> str:
+    """Append requester attribution to rollback summary when missing."""
+    requester_tag = f"requested-by={requested_by}"
+    base = (summary or "").strip()
+
+    if not base:
+        return f"Mass rollback via bucksaltbot queue; {requester_tag}"
+
+    if requester_tag in base:
+        return base
+
+    return f"{base}; {requester_tag}"
+
+
 def _fetch_job(job_id: int):
     with get_conn() as conn:
         with conn.cursor() as cursor:
@@ -244,8 +258,7 @@ def process_rollback_job(job_id: int):
                     title=file_title,
                     user=target_user,
                     token=token,
-                    summary=summary
-                    or f"Mass rollback via bucksaltbot queue; requested-by={requested_by}",
+                    summary=_summary_with_requester(summary, requested_by),
                     markbot=1,
                     bot=1,
                 ).submit()

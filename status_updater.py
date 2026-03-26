@@ -66,6 +66,16 @@ from redis_state import r as _redis
 
 STATUS_PAGE = "User:Alachuckthebuck/chuckbot/status"
 NOTIFY_PAGE = "User:Alachuckthebuck/chuckbot/notify"
+STATUS_SUBPAGES = {
+    "editing": f"{STATUS_PAGE}/editing",
+    "web": f"{STATUS_PAGE}/web",
+    "last_edit": f"{STATUS_PAGE}/last_edit",
+    "current_job": f"{STATUS_PAGE}/current_job",
+    "last_job": f"{STATUS_PAGE}/last_job",
+    "details": f"{STATUS_PAGE}/details",
+    "warning": f"{STATUS_PAGE}/warning",
+    "updated": f"{STATUS_PAGE}/updated",
+}
 
 # ── Redis key settings ────────────────────────────────────────────────────────
 
@@ -134,6 +144,13 @@ def _get_authenticated_site() -> pywikibot.Site:
 def _is_live() -> bool:
     """Return True when running in production (``NOTDEV`` is set)."""
     return bool(os.environ.get("NOTDEV"))
+
+
+def _save_status_subpage(site: pywikibot.Site, key: str, text: str) -> None:
+    """Write a status field to its dedicated subpage."""
+    page = pywikibot.Page(site, STATUS_SUBPAGES[key])
+    page.text = text
+    page.save(summary="Updating Chuckbot status", minor=True, botflag=True)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -222,34 +239,40 @@ def update_wiki_status(
     details: str = "",
     warning: str | None = None,
 ) -> None:
-    """Rewrite the on-wiki Chuckbot status page.  No-op in dev / test mode."""
+    """Update Chuckbot status subpages consumed by the on-wiki template."""
     if not _is_live():
         return
 
     try:
         site = _get_authenticated_site()
-        page = pywikibot.Page(site, STATUS_PAGE)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         resolved_last_edit = last_edit or get_last_bot_edit(site)
 
-        lines = [
-            "{{Chuckbot status",
-            f"| editing = {editing}",
-            f"| web = {web}",
-            f"| last_edit = {resolved_last_edit}",
-            f"| current_job = {current_job or 'None'}",
-            f"| last_job = {last_job or 'None'}",
-            f"| details = {details}",
-        ]
-        if warning:
-            lines.append(f"| warning = {warning}")
-        lines.append(f"| updated = {now}")
-        lines.append("}}")
+        fields = {
+            "editing": editing,
+            "web": web,
+            "last_edit": resolved_last_edit,
+            "current_job": current_job or "None",
+            "last_job": last_job or "None",
+            "details": details,
+            # Always write the warning field so stale warnings are cleared.
+            "warning": warning or "",
+            "updated": now,
+        }
 
-        page.text = "\n".join(lines)
-        page.save(summary="Updating Chuckbot status", minor=True, botflag=True)
+        for key, value in fields.items():
+            _save_status_subpage(site, key, value)
     except Exception:  # noqa: BLE001
         pass
+
+
+def run_status_cron_update() -> None:
+    """Refresh the status template from cron with a lightweight heartbeat."""
+    update_wiki_status(
+        editing="Idle",
+        web="Online",
+        details="Daily cron heartbeat",
+    )
 
 
 def notify_maintainers(
@@ -322,3 +345,7 @@ def notify_bot_user(
         )
     except Exception:  # noqa: BLE001
         pass
+
+
+if __name__ == "__main__":
+    run_status_cron_update()
