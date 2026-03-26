@@ -59,7 +59,7 @@
             Batch Rollback
           </a>
 
-          {% if is_maintainer %}
+          {% if is_maintainer or session.get('is_admin') %}
           <a
             class="cdx-tabs__list__item"
             role="tab"
