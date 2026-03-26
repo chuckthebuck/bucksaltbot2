@@ -1706,7 +1706,7 @@ def goto():
         return redirect("/rollback_batch")
 
     if tab == "rollback-all-jobs":
-        if "read_all" not in _user_permissions(username):
+        if "read_all" not in _user_permissions(username) and not is_admin_user(username):
             abort(403)
         return redirect("/rollback-queue/all-jobs")
 
@@ -2136,7 +2136,7 @@ def rollback_queue_all_jobs_ui():
     if not username:
         abort(401)
 
-    if "read_all" not in _user_permissions(username):
+    if "read_all" not in _user_permissions(username) and not is_admin_user(username):
         abort(403)
 
     with get_conn() as conn:
