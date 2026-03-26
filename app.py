@@ -109,8 +109,13 @@ celery = celery_init_app(flask_app)
 def inject_user_permissions():
 
     username = session.get("username")
+    is_bot_admin = bool(username and username.lower() in BOT_ADMIN_ACCOUNTS)
 
-    return {"username": username, "is_maintainer": is_maintainer(username)}
+    return {
+        "username": username,
+        "is_maintainer": is_maintainer(username),
+        "is_bot_admin": is_bot_admin,
+    }
 
 
 import router  # noqa: E402,F401

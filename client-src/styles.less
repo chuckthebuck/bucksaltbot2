@@ -338,3 +338,70 @@ body {
     min-width: 0;
     width: 100%;
 }
+
+.runtime-config-container {
+    min-width: 0;
+    max-width: 1280px;
+    margin: @spacing-150 auto;
+    padding: 0 @spacing-125;
+}
+
+.runtime-config-grid {
+    display: grid;
+    grid-template-columns: repeat( 2, minmax( 0, 1fr ) );
+    gap: @spacing-100;
+    margin-bottom: @spacing-125;
+}
+
+.runtime-config-grid--numbers {
+    grid-template-columns: repeat( 2, minmax( 0, 1fr ) );
+}
+
+.runtime-config-card {
+    border: @border-base;
+    border-radius: @border-radius-base;
+    padding: @spacing-100;
+    background-color: @background-color-base;
+}
+
+.runtime-config-card h3 {
+    margin-top: 0;
+    margin-bottom: @spacing-50;
+}
+
+.runtime-config-help {
+    margin-top: 0;
+    margin-bottom: @spacing-75;
+    color: @color-subtle;
+    font-size: @font-size-small;
+}
+
+.runtime-config-card textarea,
+.runtime-config-card input[type="number"] {
+    width: 100%;
+    box-sizing: border-box;
+    border: @border-base;
+    border-radius: @border-radius-base;
+    padding: @spacing-50;
+}
+
+.runtime-config-actions {
+    margin-top: @spacing-50;
+    margin-bottom: @spacing-50;
+}
+
+.runtime-config-save {
+    margin-top: @spacing-100;
+    margin-bottom: @spacing-150;
+}
+
+@media all and ( max-width: @max-width-breakpoint-tablet ) {
+    .runtime-config-grid,
+    .runtime-config-grid--numbers {
+        grid-template-columns: 1fr;
+    }
+
+    .runtime-config-container {
+        padding: 0 @spacing-75;
+    }
+}

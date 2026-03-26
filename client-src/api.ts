@@ -38,6 +38,25 @@ export interface AllJobsRow {
   failed: number;
 }
 
+export interface RuntimeAuthzConfig {
+  EXTRA_AUTHORIZED_USERS: string[];
+  USERS_READ_ONLY: string[];
+  USERS_TESTER: string[];
+  USERS_GRANTED_FROM_DIFF: string[];
+  USERS_GRANTED_VIEW_ALL: string[];
+  USERS_GRANTED_BATCH: string[];
+  USERS_GRANTED_CANCEL_ANY: string[];
+  USERS_GRANTED_RETRY_ANY: string[];
+  RATE_LIMIT_JOBS_PER_HOUR: number;
+  RATE_LIMIT_TESTER_JOBS_PER_HOUR: number;
+}
+
+export interface RuntimeAuthzResponse {
+  config: RuntimeAuthzConfig;
+  can_edit: boolean;
+  editable_keys: string[];
+}
+
 // ------------------------
 // INITIAL PROPS
 // ------------------------
@@ -122,6 +141,33 @@ export async function searchTitles(
   return (d?.[1] ?? []).map((t: string) => ({
     label: t,
     value: t,
+  }));
+}
+
+export async function searchUsernames(
+  value: string
+): Promise<Array<{ label: string; value: string }>> {
+  const query = value.trim();
+  if (!query) return [];
+
+  const r = await fetch(
+    mwApi(
+      "action=query" +
+        "&list=allusers" +
+        "&aulimit=10" +
+        "&auprefix=" +
+        encodeURIComponent(query)
+    )
+  );
+
+  if (!r.ok) throw new Error(`User search failed: ${r.status}`);
+
+  const data = await r.json();
+  const users = data?.query?.allusers ?? [];
+
+  return users.map((u: { name: string }) => ({
+    label: u.name,
+    value: u.name,
   }));
 }
 
@@ -271,4 +317,31 @@ export async function createJob(payload: {
     ok: r.ok,
     result,
   };
+}
+
+export async function fetchRuntimeAuthzConfig(): Promise<RuntimeAuthzResponse> {
+  const r = await fetch("/api/v1/config/authz");
+
+  if (!r.ok) throw new Error(`Failed to fetch runtime config: ${r.status}`);
+
+  return r.json();
+}
+
+export async function updateRuntimeAuthzConfig(
+  config: Partial<RuntimeAuthzConfig>
+): Promise<RuntimeAuthzResponse> {
+  const r = await fetch("/api/v1/config/authz", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ config }),
+  });
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to save runtime config: ${r.status}`);
+  }
+
+  return data;
 }

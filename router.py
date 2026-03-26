@@ -25,7 +25,7 @@ from flask import (
 from app import BOT_ADMIN_ACCOUNTS, MAX_JOB_ITEMS, flask_app as app, is_maintainer
 from redis_state import get_progress, r
 from rollback_queue import process_rollback_job
-from toolsdb import get_conn
+from toolsdb import get_conn, get_runtime_config, upsert_runtime_config
 
 ALLOWED_GROUPS = {"sysop", "rollbacker"}
 GROUP_CACHE_TTL = 300
@@ -70,6 +70,187 @@ RATE_LIMIT_JOBS_PER_HOUR: int = int(os.getenv("RATE_LIMIT_JOBS_PER_HOUR", "0"))
 RATE_LIMIT_TESTER_JOBS_PER_HOUR: int = int(
     os.getenv("RATE_LIMIT_TESTER_JOBS_PER_HOUR", str(RATE_LIMIT_JOBS_PER_HOUR))
 )
+
+_CONFIG_EDIT_PRIMARY_ACCOUNT = os.getenv("CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot").strip().lower()
+
+_USER_SET_CONFIG_KEYS = {
+    "EXTRA_AUTHORIZED_USERS",
+    "USERS_READ_ONLY",
+    "USERS_TESTER",
+    "USERS_GRANTED_FROM_DIFF",
+    "USERS_GRANTED_VIEW_ALL",
+    "USERS_GRANTED_BATCH",
+    "USERS_GRANTED_CANCEL_ANY",
+    "USERS_GRANTED_RETRY_ANY",
+}
+
+_INT_CONFIG_KEYS = {
+    "RATE_LIMIT_JOBS_PER_HOUR",
+    "RATE_LIMIT_TESTER_JOBS_PER_HOUR",
+}
+
+_RUNTIME_AUTHZ_ALLOWED_KEYS = sorted(_USER_SET_CONFIG_KEYS | _INT_CONFIG_KEYS)
+_RUNTIME_AUTHZ_CACHE_TTL = 60
+_runtime_authz_cache = None
+_runtime_authz_cache_expiry = 0.0
+
+
+def _parse_user_csv(raw_value: str) -> set[str]:
+    return {u.strip().lower() for u in (raw_value or "").split(",") if u.strip()}
+
+
+def _parse_nonnegative_int(value, fallback: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+    if parsed < 0:
+        return fallback
+
+    return parsed
+
+
+def _runtime_authz_defaults() -> dict:
+    return {
+        "EXTRA_AUTHORIZED_USERS": set(EXTRA_AUTHORIZED_USERS),
+        "USERS_READ_ONLY": set(USERS_READ_ONLY),
+        "USERS_TESTER": set(USERS_TESTER),
+        "USERS_GRANTED_FROM_DIFF": set(USERS_GRANTED_FROM_DIFF),
+        "USERS_GRANTED_VIEW_ALL": set(USERS_GRANTED_VIEW_ALL),
+        "USERS_GRANTED_BATCH": set(USERS_GRANTED_BATCH),
+        "USERS_GRANTED_CANCEL_ANY": set(USERS_GRANTED_CANCEL_ANY),
+        "USERS_GRANTED_RETRY_ANY": set(USERS_GRANTED_RETRY_ANY),
+        "RATE_LIMIT_JOBS_PER_HOUR": int(RATE_LIMIT_JOBS_PER_HOUR),
+        "RATE_LIMIT_TESTER_JOBS_PER_HOUR": int(RATE_LIMIT_TESTER_JOBS_PER_HOUR),
+    }
+
+
+def _invalidate_runtime_authz_cache() -> None:
+    global _runtime_authz_cache, _runtime_authz_cache_expiry
+    _runtime_authz_cache = None
+    _runtime_authz_cache_expiry = 0.0
+
+
+def _load_runtime_authz_overrides() -> dict:
+    global _runtime_authz_cache, _runtime_authz_cache_expiry
+
+    now = time.time()
+    if _runtime_authz_cache is not None and now < _runtime_authz_cache_expiry:
+        return _runtime_authz_cache
+
+    overrides = {}
+    defaults = _runtime_authz_defaults()
+
+    try:
+        rows = get_runtime_config(_RUNTIME_AUTHZ_ALLOWED_KEYS)
+    except Exception:
+        app.logger.warning("Failed to load runtime authz config; using env defaults.")
+        rows = {}
+
+    for key, raw_value in rows.items():
+        if key in _USER_SET_CONFIG_KEYS:
+            overrides[key] = _parse_user_csv(raw_value)
+            continue
+
+        if key in _INT_CONFIG_KEYS:
+            overrides[key] = _parse_nonnegative_int(raw_value, defaults[key])
+
+    _runtime_authz_cache = overrides
+    _runtime_authz_cache_expiry = now + _RUNTIME_AUTHZ_CACHE_TTL
+    return overrides
+
+
+def _effective_runtime_authz_config() -> dict:
+    cfg = _runtime_authz_defaults()
+    cfg.update(_load_runtime_authz_overrides())
+    return cfg
+
+
+def _serialize_runtime_authz_config(config: dict) -> dict:
+    output = {}
+    for key in _RUNTIME_AUTHZ_ALLOWED_KEYS:
+        value = config.get(key)
+        if key in _USER_SET_CONFIG_KEYS:
+            output[key] = sorted(value or set())
+        else:
+            output[key] = int(value or 0)
+    return output
+
+
+def _normalize_user_list_input(value, key: str) -> list[str]:
+    if isinstance(value, str):
+        candidates = [part.strip() for part in value.replace("\n", ",").split(",")]
+    elif isinstance(value, list):
+        candidates = [str(part).strip() for part in value]
+    else:
+        raise ValueError(f"{key} must be a comma-separated string or a string list")
+
+    normalized = []
+    seen = set()
+    for item in candidates:
+        if not item:
+            continue
+        lowered = item.lower()
+        if len(lowered) > 85:
+            raise ValueError(f"{key} has a username longer than 85 characters")
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(lowered)
+
+    if len(normalized) > 500:
+        raise ValueError(f"{key} cannot contain more than 500 users")
+
+    return sorted(normalized)
+
+
+def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
+    normalized = {}
+    errors = []
+
+    for key, value in payload.items():
+        if key not in _RUNTIME_AUTHZ_ALLOWED_KEYS:
+            errors.append(f"Unknown config key: {key}")
+            continue
+
+        if key in _USER_SET_CONFIG_KEYS:
+            try:
+                normalized[key] = _normalize_user_list_input(value, key)
+            except ValueError as exc:
+                errors.append(str(exc))
+            continue
+
+        if key in _INT_CONFIG_KEYS:
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                errors.append(f"{key} must be an integer")
+                continue
+
+            if parsed < 0:
+                errors.append(f"{key} must be >= 0")
+                continue
+
+            if parsed > 100000:
+                errors.append(f"{key} must be <= 100000")
+                continue
+
+            normalized[key] = parsed
+
+    return normalized, errors
+
+
+def _persist_runtime_authz_updates(updates: dict, updated_by: str) -> None:
+    rows = {}
+    for key, value in updates.items():
+        if key in _USER_SET_CONFIG_KEYS:
+            rows[key] = ",".join(value)
+        else:
+            rows[key] = str(value)
+
+    upsert_runtime_config(rows, updated_by=updated_by)
+    _invalidate_runtime_authz_cache()
 
 _DIFF_PAYLOAD_TTL = 7 * 24 * 3600
 _MW_DEBUG_MAX_ENTRIES = 25
@@ -767,10 +948,12 @@ def is_authorized(username):
     if not username:
         return False
 
+    config = _effective_runtime_authz_config()
+
     if is_maintainer(username):
         return True
 
-    if username.lower() in EXTRA_AUTHORIZED_USERS:
+    if username.lower() in config["EXTRA_AUTHORIZED_USERS"]:
         return True
 
     groups = get_user_groups(username)
@@ -794,6 +977,21 @@ def is_bot_admin(username: str) -> bool:
     return username.strip().lower() in BOT_ADMIN_ACCOUNTS
 
 
+def _can_view_runtime_config(username: str) -> bool:
+    if not username:
+        return False
+    return is_bot_admin(username)
+
+
+def _can_edit_runtime_config(username: str) -> bool:
+    if not username:
+        return False
+    return (
+        is_bot_admin(username)
+        and username.strip().lower() == _CONFIG_EDIT_PRIMARY_ACCOUNT
+    )
+
+
 def is_tester(username: str) -> bool:
     """Return True if the user is in the USERS_TESTER env-var list.
 
@@ -803,7 +1001,8 @@ def is_tester(username: str) -> bool:
     """
     if not username:
         return False
-    return username.strip().lower() in USERS_TESTER
+    config = _effective_runtime_authz_config()
+    return username.strip().lower() in config["USERS_TESTER"]
 
 
 def _user_permissions(username: str) -> frozenset:
@@ -830,14 +1029,17 @@ def _user_permissions(username: str) -> frozenset:
     retry_any              — retry any user's job
     cancel_admin_jobs      — cancel a Commons admin (sysop) user's job; all maintainers
     cancel_maintainer_jobs — cancel a maintainer's job; only bot admins possess this
+    config_view            — view runtime config editor/API; bot admins only
+    config_edit            — edit runtime config; primary account only (default: chuckbot)
     """
     if not username:
         return frozenset()
 
     lower = username.lower()
+    config = _effective_runtime_authz_config()
 
     # Read-only users may only view their own jobs.
-    if lower in USERS_READ_ONLY:
+    if lower in config["USERS_READ_ONLY"]:
         return frozenset({"read_own"})
 
     # Base permissions granted to every authenticated user.
@@ -854,16 +1056,22 @@ def _user_permissions(username: str) -> frozenset:
         perms |= {"read_all", "from_diff", "batch"}
     else:
         # Per-user grants for non-maintainer, non-tester accounts.
-        if lower in USERS_GRANTED_FROM_DIFF:
+        if lower in config["USERS_GRANTED_FROM_DIFF"]:
             perms.add("from_diff")
-        if lower in USERS_GRANTED_VIEW_ALL:
+        if lower in config["USERS_GRANTED_VIEW_ALL"]:
             perms.add("read_all")
-        if lower in USERS_GRANTED_BATCH:
+        if lower in config["USERS_GRANTED_BATCH"]:
             perms.add("batch")
-        if lower in USERS_GRANTED_CANCEL_ANY:
+        if lower in config["USERS_GRANTED_CANCEL_ANY"]:
             perms.add("cancel_any")
-        if lower in USERS_GRANTED_RETRY_ANY:
+        if lower in config["USERS_GRANTED_RETRY_ANY"]:
             perms.add("retry_any")
+
+    if _can_view_runtime_config(username):
+        perms.add("config_view")
+
+    if _can_edit_runtime_config(username):
+        perms.add("config_edit")
 
     return frozenset(perms)
 
@@ -885,10 +1093,12 @@ def _check_rate_limit(username: str) -> bool:
     if is_maintainer(username):
         return True
 
+    config = _effective_runtime_authz_config()
+
     limit = (
-        RATE_LIMIT_TESTER_JOBS_PER_HOUR
+        int(config["RATE_LIMIT_TESTER_JOBS_PER_HOUR"])
         if is_tester(username)
-        else RATE_LIMIT_JOBS_PER_HOUR
+        else int(config["RATE_LIMIT_JOBS_PER_HOUR"])
     )
 
     if limit <= 0:
@@ -1046,6 +1256,11 @@ def goto():
         if "from_diff" not in _user_permissions(username):
             abort(403)
         return redirect("/rollback-from-diff")
+
+    if tab == "rollback-config":
+        if not _can_view_runtime_config(username):
+            abort(403)
+        return redirect("/rollback-config")
 
     if tab == "documentation":
         return redirect(
@@ -1335,6 +1550,82 @@ def rollback_batch():
         "batch_rollback.html",
         username=username,
         type="batch-rollback",
+    )
+
+
+@app.route("/rollback-config")
+def rollback_config_ui():
+    username = session.get("username")
+
+    if not username:
+        abort(401)
+
+    if not _can_view_runtime_config(username):
+        abort(403)
+
+    return render_template(
+        "runtime_config.html",
+        username=username,
+        can_edit_config=_can_edit_runtime_config(username),
+        type="runtime-config",
+    )
+
+
+@app.route("/api/v1/config/authz", methods=["GET"])
+def get_runtime_authz_api():
+    username = session.get("username")
+
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    if not _can_view_runtime_config(username):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    config = _effective_runtime_authz_config()
+    return jsonify(
+        {
+            "config": _serialize_runtime_authz_config(config),
+            "can_edit": _can_edit_runtime_config(username),
+            "editable_keys": _RUNTIME_AUTHZ_ALLOWED_KEYS,
+        }
+    )
+
+
+@app.route("/api/v1/config/authz", methods=["PUT"])
+def update_runtime_authz_api():
+    username = session.get("username")
+
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    if not _can_edit_runtime_config(username):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"detail": "Invalid payload"}), 400
+
+    updates = payload.get("config", payload)
+    if not isinstance(updates, dict):
+        return jsonify({"detail": "config must be an object"}), 400
+
+    normalized_updates, errors = _normalize_runtime_authz_updates(updates)
+    if errors:
+        return jsonify({"detail": "; ".join(errors)}), 400
+
+    if not normalized_updates:
+        return jsonify({"detail": "No valid config keys supplied"}), 400
+
+    _persist_runtime_authz_updates(normalized_updates, updated_by=username)
+    effective = _effective_runtime_authz_config()
+
+    return jsonify(
+        {
+            "ok": True,
+            "config": _serialize_runtime_authz_config(effective),
+            "can_edit": _can_edit_runtime_config(username),
+            "editable_keys": _RUNTIME_AUTHZ_ALLOWED_KEYS,
+        }
     )
 
 

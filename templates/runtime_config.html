@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Runtime authorization config</h2>
+<p>Manage granular authorization and rate-limit settings without redeploying.</p>
+
+<script id="runtime-config-props" type="application/json">
+{{ {
+  "username": username,
+  "can_edit_config": can_edit_config
+}|tojson }}
+</script>
+
+{% endblock %}

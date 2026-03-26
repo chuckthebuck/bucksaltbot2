@@ -78,6 +78,17 @@
           </a>
           {% endif %}
 
+          {% if is_bot_admin %}
+          <a
+            class="cdx-tabs__list__item"
+            role="tab"
+            aria-selected="{% if type == 'runtime-config' %}true{% else %}false{% endif %}"
+            href="/goto?tab=rollback-config"
+          >
+            Runtime Config
+          </a>
+          {% endif %}
+
           <a
             class="cdx-tabs__list__item"
             role="tab"

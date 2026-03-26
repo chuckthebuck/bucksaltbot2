@@ -987,6 +987,21 @@ def test_goto_from_diff_tab_returns_403_for_non_maintainer(client):
     assert resp.status_code == 403
 
 
+def test_goto_runtime_config_tab_redirects_for_bot_admin(client):
+    _set_session(client, "chuckbot")
+    with patch("router.is_bot_admin", return_value=True):
+        resp = client.get("/goto?tab=rollback-config")
+    assert resp.status_code == 302
+    assert "/rollback-config" in resp.headers["Location"]
+
+
+def test_goto_runtime_config_tab_returns_403_for_non_bot_admin(client):
+    _set_session(client, "alice")
+    with patch("router.is_bot_admin", return_value=False):
+        resp = client.get("/goto?tab=rollback-config")
+    assert resp.status_code == 403
+
+
 # ── EXTRA_AUTHORIZED_USERS ────────────────────────────────────────────────────
 
 
@@ -1797,3 +1812,112 @@ def test_cancel_job_allowed_for_cancel_any_user_on_regular_users_job(client):
 
     assert resp.status_code == 200
     assert resp.get_json()["status"] == "canceled"
+
+
+# ── runtime config permissions and API ───────────────────────────────────────
+
+
+def test_user_permissions_config_view_for_bot_admin_and_config_edit_for_chuckbot_only():
+    import router
+
+    defaults = router._runtime_authz_defaults()
+
+    with (
+        patch("router._effective_runtime_authz_config", return_value=defaults),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_tester", return_value=False),
+        patch("router.is_bot_admin", return_value=True),
+        patch.object(router, "_CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot"),
+    ):
+        other_bot_perms = router._user_permissions("otherbot")
+        chuckbot_perms = router._user_permissions("chuckbot")
+
+    assert "config_view" in other_bot_perms
+    assert "config_edit" not in other_bot_perms
+    assert "config_view" in chuckbot_perms
+    assert "config_edit" in chuckbot_perms
+
+
+def test_get_runtime_authz_api_returns_401_when_not_authenticated(client):
+    resp = client.get("/api/v1/config/authz")
+    assert resp.status_code == 401
+
+
+def test_get_runtime_authz_api_returns_403_for_non_bot_admin(client):
+    _set_session(client, "alice")
+    with patch("router.is_bot_admin", return_value=False):
+        resp = client.get("/api/v1/config/authz")
+    assert resp.status_code == 403
+
+
+def test_get_runtime_authz_api_returns_config_for_bot_admin(client):
+    import router
+
+    _set_session(client, "otherbot")
+    with (
+        patch("router.is_bot_admin", return_value=True),
+        patch.object(router, "_CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot"),
+        patch("router.get_runtime_config", return_value={}),
+    ):
+        resp = client.get("/api/v1/config/authz")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["can_edit"] is False
+    assert "config" in data
+    assert "RATE_LIMIT_JOBS_PER_HOUR" in data["config"]
+    assert "USERS_GRANTED_FROM_DIFF" in data["config"]
+
+
+def test_update_runtime_authz_api_returns_403_for_non_chuckbot_bot_admin(client):
+    _set_session(client, "otherbot")
+    with (
+        patch("router.is_bot_admin", return_value=True),
+        patch("router.get_runtime_config", return_value={}),
+    ):
+        resp = client.put(
+            "/api/v1/config/authz",
+            json={"config": {"RATE_LIMIT_JOBS_PER_HOUR": 20}},
+        )
+
+    assert resp.status_code == 403
+
+
+def test_update_runtime_authz_api_rejects_unknown_key(client):
+    _set_session(client, "chuckbot")
+    with patch("router.is_bot_admin", return_value=True):
+        resp = client.put(
+            "/api/v1/config/authz",
+            json={"config": {"NOT_A_REAL_KEY": "x"}},
+        )
+
+    assert resp.status_code == 400
+    assert "Unknown config key" in resp.get_json().get("detail", "")
+
+
+def test_update_runtime_authz_api_persists_for_chuckbot(client):
+    import router
+
+    _set_session(client, "chuckbot")
+    default_cfg = router._runtime_authz_defaults()
+
+    with (
+        patch("router.is_bot_admin", return_value=True),
+        patch("router._persist_runtime_authz_updates") as mock_persist,
+        patch("router._effective_runtime_authz_config", return_value=default_cfg),
+    ):
+        resp = client.put(
+            "/api/v1/config/authz",
+            json={
+                "config": {
+                    "EXTRA_AUTHORIZED_USERS": ["TestBot", "AnotherBot"],
+                    "RATE_LIMIT_JOBS_PER_HOUR": 42,
+                }
+            },
+        )
+
+    assert resp.status_code == 200
+    mock_persist.assert_called_once()
+    persisted_updates = mock_persist.call_args.args[0]
+    assert persisted_updates["EXTRA_AUTHORIZED_USERS"] == ["anotherbot", "testbot"]
+    assert persisted_updates["RATE_LIMIT_JOBS_PER_HOUR"] == 42
