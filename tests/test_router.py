@@ -260,11 +260,17 @@ def test_from_diff_api_returns_401_when_not_authenticated(client):
     assert resp.status_code == 401
 
 
-def test_from_diff_api_returns_403_for_non_maintainer(client):
+def test_from_diff_api_allows_request_submission_for_non_maintainer(client):
     _set_session(client, "alice")
-    with patch("router.is_maintainer", return_value=False):
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.lastrowid = 91
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch("router.get_conn", return_value=mock_conn),
+    ):
         resp = client.post("/api/v1/rollback/from-diff", json={"diff": 1})
-    assert resp.status_code == 403
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "pending_approval"
 
 
 def test_from_diff_api_rejects_invalid_limit(client):
@@ -300,8 +306,8 @@ def test_from_diff_api_passes_limit_to_creation_helper(client):
     assert data["dry_run"] is True
     assert data["diff"] == 999
     assert data["job_id"] == 11
-    assert data["status"] == "resolving"
-    mock_resolve.delay.assert_called_once_with(11)
+    assert data["status"] == "pending_approval"
+    mock_resolve.delay.assert_not_called()
 
 
 def test_from_diff_api_accepts_diff_url(client):
@@ -325,9 +331,9 @@ def test_from_diff_api_accepts_diff_url(client):
 
     assert resp.status_code == 200
     data = resp.get_json()
-    assert data["status"] == "resolving"
+    assert data["status"] == "pending_approval"
     assert "oldid=123456" in data["diff"]
-    mock_resolve.delay.assert_called_once_with(11)
+    mock_resolve.delay.assert_not_called()
 
 
 def test_from_account_api_returns_401_when_not_authenticated(client):
@@ -335,14 +341,21 @@ def test_from_account_api_returns_401_when_not_authenticated(client):
     assert resp.status_code == 401
 
 
-def test_from_account_api_returns_403_for_non_maintainer(client):
+def test_from_account_api_allows_request_submission_for_non_maintainer(client):
     _set_session(client, "alice")
-    with patch("router.is_maintainer", return_value=False):
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.lastrowid = 92
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch("router._user_permissions", return_value=frozenset({"write"})),
+        patch("router.get_conn", return_value=mock_conn),
+    ):
         resp = client.post(
             "/api/v1/rollback/from-account",
             json={"target_user": "BadUser"},
         )
-    assert resp.status_code == 403
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "pending_approval"
 
 
 def test_from_account_api_rejects_missing_target_user(client):
@@ -1103,7 +1116,8 @@ def test_goto_from_diff_tab_returns_403_for_non_maintainer(client):
     _set_session(client, "alice")
     with patch("router.is_maintainer", return_value=False):
         resp = client.get("/goto?tab=rollback-from-diff")
-    assert resp.status_code == 403
+    assert resp.status_code == 302
+    assert "/rollback-from-diff" in resp.headers["Location"]
 
 
 def test_goto_account_tab_redirects_for_maintainer(client):
@@ -1118,7 +1132,8 @@ def test_goto_account_tab_returns_403_for_non_maintainer(client):
     _set_session(client, "alice")
     with patch("router.is_maintainer", return_value=False):
         resp = client.get("/goto?tab=rollback-account")
-    assert resp.status_code == 403
+    assert resp.status_code == 302
+    assert "/rollback-account" in resp.headers["Location"]
 
 
 def test_goto_runtime_config_tab_redirects_for_bot_admin(client):
@@ -1642,18 +1657,12 @@ def test_from_diff_api_allowed_for_granted_user(client):
         )
 
     assert resp.status_code == 200
-    assert resp.get_json()["status"] == "resolving"
+    assert resp.get_json()["status"] == "pending_approval"
 
 
 def test_from_diff_api_still_denied_without_grant(client):
-    """A non-maintainer user without USERS_GRANTED_FROM_DIFF cannot use the from-diff API."""
-    import router
-
     _set_session(client, "alice")
-    with (
-        patch("router.is_maintainer", return_value=False),
-        patch.object(router, "USERS_GRANTED_FROM_DIFF", set()),
-    ):
+    with patch("router._user_permissions", return_value=frozenset({"read_own"})):
         resp = client.post(
             "/api/v1/rollback/from-diff",
             json={"diff": 999},
@@ -2201,6 +2210,7 @@ def test_from_diff_api_allows_dry_run_for_dry_run_only_right(client):
 
     assert resp.status_code == 200
     assert resp.get_json()["dry_run"] is True
+    assert resp.get_json()["status"] == "pending_approval"
 
 
 def test_get_runtime_authz_user_grants_returns_payload_for_bot_admin(client):

@@ -196,7 +196,7 @@ def test_process_rollback_job_live_run_obtains_mw_rollback_token():
         title="File:A.jpg",
         user="Vandal",
         token="TOKEN+\\",
-        summary="Custom summary",
+        summary="Custom summary; requested-by=alice",
         markbot=1,
         bot=1,
     )
