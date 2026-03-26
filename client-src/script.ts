@@ -6,6 +6,7 @@ import App from "./App.vue";
 import BatchApp from "./BatchApp.vue";
 import AllJobsApp from "./AllJobsApp.vue";
 import FromDiffApp from "./FromDiffApp.vue";
+import AccountRollbackApp from "./AccountRollbackApp.vue";
 import ConfigApp from "./ConfigApp.vue";
 
 if (document.getElementById("batch-props")) {
@@ -14,6 +15,8 @@ if (document.getElementById("batch-props")) {
   createApp(AllJobsApp).mount("#app");
 } else if (document.getElementById("from-diff-props")) {
   createApp(FromDiffApp).mount("#app");
+} else if (document.getElementById("from-account-props")) {
+  createApp(AccountRollbackApp).mount("#app");
 } else if (document.getElementById("runtime-config-props")) {
   createApp(ConfigApp).mount("#app");
 } else if (document.getElementById("rollback-queue-props")) {

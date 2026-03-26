@@ -476,6 +476,7 @@ _MW_DEBUG_MAX_ENTRIES = 25
 _MW_DEBUG_BODY_MAX = 1200
 _RESOLVING_TIMEOUT_SECONDS = int(os.getenv("RESOLVING_TIMEOUT_SECONDS", "1800"))
 _ROLLBACKABLE_WINDOW_LIMIT = 500
+_ACCOUNT_ROLLBACK_MAX_LIMIT = 500
 
 
 def _diff_payload_key(job_id: int) -> str:
@@ -606,6 +607,21 @@ def _extract_oldid(diff_value):
     raise ValueError("diff must be a revision id or URL containing oldid")
 
 
+def _normalize_target_user_input(raw_value):
+    cleaned = str(raw_value or "").strip()
+
+    if cleaned.lower().startswith("user:"):
+        cleaned = cleaned[5:].strip()
+
+    if len(cleaned) >= 2 and (
+        (cleaned[0] == '"' and cleaned[-1] == '"')
+        or (cleaned[0] == "'" and cleaned[-1] == "'")
+    ):
+        cleaned = cleaned[1:-1].strip()
+
+    return " ".join(cleaned.replace("_", " ").split())
+
+
 def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
     url = "https://commons.wikimedia.org/w/api.php"
     params = {
@@ -727,6 +743,69 @@ def fetch_rollbackable_window_end_timestamp(
 
     oldest = contribs[-1].get("timestamp")
     return oldest or None
+
+
+def fetch_recent_rollbackable_contribs(
+    target_user,
+    limit=_ACCOUNT_ROLLBACK_MAX_LIMIT,
+    debug_callback=None,
+):
+    """Return latest rollbackable contributions for a target account.
+
+    This powers account-wide rollback requests and is hard-capped at 500 items
+    to match Action API ``usercontribs`` constraints.
+    """
+    url = "https://commons.wikimedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "list": "usercontribs",
+        "ucuser": target_user,
+        "uclimit": str(min(_ACCOUNT_ROLLBACK_MAX_LIMIT, int(limit))),
+        "ucprop": "ids|title|timestamp",
+        "ucshow": "top",
+        "ucstart": _utc_now_iso(),
+        "ucdir": "older",
+        "format": "json",
+    }
+
+    started = time.perf_counter()
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if callable(debug_callback):
+            debug_callback(
+                {
+                    "kind": "usercontribs-account",
+                    "params": params,
+                    "status_code": resp.status_code,
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "response_snippet": resp.text[:_MW_DEBUG_BODY_MAX],
+                }
+            )
+    except requests.RequestException as e:
+        if callable(debug_callback):
+            debug_callback(
+                {
+                    "kind": "usercontribs-account",
+                    "params": params,
+                    "error": f"{type(e).__name__}: {e}",
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                }
+            )
+        raise ValueError(f"Failed to fetch recent rollbackable contributions: {e}") from e
+
+    contribs = data.get("query", {}).get("usercontribs", [])
+    results = []
+
+    for edit in contribs:
+        title = edit.get("title")
+        if not title:
+            continue
+        results.append({"title": title, "user": target_user})
+
+    return results
 
 
 def iter_contribs_after_timestamp(
@@ -1494,6 +1573,11 @@ def goto():
             abort(403)
         return redirect("/rollback-from-diff")
 
+    if tab == "rollback-account":
+        if "from_diff" not in _user_permissions(username):
+            abort(403)
+        return redirect("/rollback-account")
+
     if tab == "rollback-config":
         if not _can_view_runtime_config(username):
             abort(403)
@@ -1693,6 +1777,153 @@ def rollback_from_diff_api():
     )
 
 
+@app.route("/api/v1/rollback/from-account", methods=["POST"])
+def rollback_from_account_api():
+    username = session.get("username")
+
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    perms = _user_permissions(username)
+
+    if "from_diff" not in perms:
+        return jsonify({"detail": "Forbidden"}), 403
+
+    payload = request.get_json(silent=True) or {}
+
+    target_user_raw = (
+        request.args.get("target_user")
+        if request.args.get("target_user") is not None
+        else payload.get("target_user", request.form.get("target_user"))
+    )
+    if target_user_raw in (None, ""):
+        target_user_raw = (
+            request.args.get("user")
+            if request.args.get("user") is not None
+            else payload.get("user", request.form.get("user"))
+        )
+    if target_user_raw in (None, ""):
+        target_user_raw = (
+            request.args.get("account")
+            if request.args.get("account") is not None
+            else payload.get("account", request.form.get("account"))
+        )
+
+    summary = (
+        request.args.get("summary")
+        or payload.get("summary")
+        or request.form.get("summary")
+        or ""
+    )
+    dry_run_raw = (
+        request.args.get("dry_run")
+        if request.args.get("dry_run") is not None
+        else payload.get("dry_run", request.form.get("dry_run"))
+    )
+    limit_raw = (
+        request.args.get("limit")
+        if request.args.get("limit") is not None
+        else payload.get("limit", request.form.get("limit"))
+    )
+
+    target_user = _normalize_target_user_input(target_user_raw)
+    if not target_user:
+        return jsonify({"detail": "Missing required parameter: target_user"}), 400
+
+    if len(target_user) > 85:
+        return jsonify({"detail": "target_user is too long"}), 400
+
+    dry_run = _parse_bool(dry_run_raw, default=False)
+
+    if "from_diff_dry_run_only" in perms and not dry_run:
+        return jsonify({"detail": "Forbidden: from-diff access is limited to dry-run mode"}), 403
+
+    limit = _ACCOUNT_ROLLBACK_MAX_LIMIT
+    if limit_raw not in (None, ""):
+        try:
+            limit = int(limit_raw)
+        except (TypeError, ValueError):
+            return jsonify({"detail": "limit must be an integer"}), 400
+
+        if limit <= 0:
+            return jsonify({"detail": "limit must be a positive integer"}), 400
+
+        if limit > _ACCOUNT_ROLLBACK_MAX_LIMIT:
+            return jsonify({"detail": f"limit must be <= {_ACCOUNT_ROLLBACK_MAX_LIMIT}"}), 400
+
+    try:
+        items = fetch_recent_rollbackable_contribs(target_user, limit=limit)
+
+        if not items:
+            return jsonify({"detail": "No rollbackable contributions found for this account"}), 400
+
+        batch_id = int(time.time() * 1000)
+        job_ids = []
+
+        with get_conn() as conn:
+            with conn.cursor() as cursor:
+                for i in range(0, len(items), MAX_JOB_ITEMS):
+                    chunk = items[i : i + MAX_JOB_ITEMS]
+
+                    cursor.execute(
+                        """
+                        INSERT INTO rollback_jobs
+                        (requested_by, status, dry_run, batch_id)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (username, "queued", 1 if dry_run else 0, batch_id),
+                    )
+
+                    job_id = cursor.lastrowid
+                    job_ids.append(job_id)
+
+                    for item in chunk:
+                        cursor.execute(
+                            """
+                            INSERT INTO rollback_job_items
+                            (job_id, file_title, target_user, summary, status)
+                            VALUES (%s, %s, %s, %s, %s)
+                            """,
+                            (
+                                job_id,
+                                item["title"],
+                                item["user"],
+                                summary or None,
+                                "queued",
+                            ),
+                        )
+            conn.commit()
+
+        for jid in job_ids:
+            process_rollback_job.delay(jid)
+
+        status_updater.update_wiki_status(
+            editing="Actively editing",
+            current_job=f"Queued account rollback for {target_user}",
+            details=f"{len(items)} items queued across {len(job_ids)} job(s)",
+        )
+
+    except ValueError as e:
+        return jsonify({"detail": str(e)}), 400
+    except Exception as e:
+        logging.exception("Error in rollback_from_account_api")
+        return jsonify({"detail": "Failed to create rollback jobs: " + str(e)}), 500
+
+    return jsonify(
+        {
+            "job_id": job_ids[0],
+            "job_ids": job_ids,
+            "chunks": len(job_ids),
+            "batch_id": batch_id,
+            "total_items": len(items),
+            "status": "queued",
+            "resolved_user": target_user,
+            "dry_run": dry_run,
+            "limit": limit,
+        }
+    )
+
+
 @app.route("/rollback-from-diff")
 def rollback_from_diff_page():
     username = session.get("username")
@@ -1712,6 +1943,28 @@ def rollback_from_diff_page():
         default_limit=100,
         from_diff_dry_run_only=bool("from_diff_dry_run_only" in perms),
         type="rollback-from-diff",
+    )
+
+
+@app.route("/rollback-account")
+def rollback_account_page():
+    username = session.get("username")
+
+    if not username:
+        abort(401)
+
+    perms = _user_permissions(username)
+
+    if "from_diff" not in perms:
+        abort(403)
+
+    return render_template(
+        "rollback_account.html",
+        username=username,
+        max_limit=_ACCOUNT_ROLLBACK_MAX_LIMIT,
+        default_limit=_ACCOUNT_ROLLBACK_MAX_LIMIT,
+        from_diff_dry_run_only=bool("from_diff_dry_run_only" in perms),
+        type="rollback-account",
     )
 
 

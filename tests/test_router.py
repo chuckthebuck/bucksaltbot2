@@ -330,6 +330,74 @@ def test_from_diff_api_accepts_diff_url(client):
     mock_resolve.delay.assert_called_once_with(11)
 
 
+def test_from_account_api_returns_401_when_not_authenticated(client):
+    resp = client.post("/api/v1/rollback/from-account", json={"target_user": "BadUser"})
+    assert resp.status_code == 401
+
+
+def test_from_account_api_returns_403_for_non_maintainer(client):
+    _set_session(client, "alice")
+    with patch("router.is_maintainer", return_value=False):
+        resp = client.post(
+            "/api/v1/rollback/from-account",
+            json={"target_user": "BadUser"},
+        )
+    assert resp.status_code == 403
+
+
+def test_from_account_api_rejects_missing_target_user(client):
+    _set_session(client, "alice")
+    with patch("router.is_maintainer", return_value=True):
+        resp = client.post("/api/v1/rollback/from-account", json={})
+    assert resp.status_code == 400
+    assert "target_user" in resp.get_json().get("detail", "")
+
+
+def test_from_account_api_rejects_limit_above_500(client):
+    _set_session(client, "alice")
+    with patch("router.is_maintainer", return_value=True):
+        resp = client.post(
+            "/api/v1/rollback/from-account",
+            json={"target_user": "BadUser", "limit": 501},
+        )
+    assert resp.status_code == 400
+    assert "<= 500" in resp.get_json().get("detail", "")
+
+
+def test_from_account_api_queues_jobs_from_recent_contribs(client):
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.lastrowid = 42
+
+    with (
+        patch("router.is_maintainer", return_value=True),
+        patch(
+            "router.fetch_recent_rollbackable_contribs",
+            return_value=[
+                {"title": "File:One.jpg", "user": "BadUser"},
+                {"title": "File:Two.jpg", "user": "BadUser"},
+            ],
+        ),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
+        patch("router.status_updater.update_wiki_status"),
+    ):
+        mock_task.delay = MagicMock()
+        resp = client.post(
+            "/api/v1/rollback/from-account",
+            json={"target_user": "BadUser", "limit": 2, "dry_run": True},
+        )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "queued"
+    assert data["resolved_user"] == "BadUser"
+    assert data["total_items"] == 2
+    assert data["dry_run"] is True
+    assert data["limit"] == 2
+    mock_task.delay.assert_called_once_with(42)
+
+
 def test_fetch_contribs_after_timestamp_requests_timestamp_and_filters_strictly():
     import router
 
@@ -431,6 +499,35 @@ def test_fetch_rollbackable_window_end_timestamp_returns_none_when_empty():
         )
 
     assert end_ts is None
+
+
+def test_fetch_recent_rollbackable_contribs_uses_top_and_limit_cap():
+    import router
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {
+        "query": {
+            "usercontribs": [
+                {"title": "File:One.jpg", "timestamp": "2024-01-01T00:00:01Z"},
+                {"title": "File:Two.jpg", "timestamp": "2024-01-01T00:00:02Z"},
+            ]
+        }
+    }
+    mock_resp.text = "{}"
+    mock_resp.status_code = 200
+
+    with patch("router.requests.get", return_value=mock_resp) as mock_get:
+        items = router.fetch_recent_rollbackable_contribs("BadUser", limit=999)
+
+    assert items == [
+        {"title": "File:One.jpg", "user": "BadUser"},
+        {"title": "File:Two.jpg", "user": "BadUser"},
+    ]
+    params = mock_get.call_args.kwargs["params"]
+    assert params["ucshow"] == "top"
+    assert params["ucdir"] == "older"
+    assert int(params["uclimit"]) == 500
 
 
 def test_fetch_diff_author_and_timestamp_handles_network_error():
@@ -1009,6 +1106,21 @@ def test_goto_from_diff_tab_returns_403_for_non_maintainer(client):
     assert resp.status_code == 403
 
 
+def test_goto_account_tab_redirects_for_maintainer(client):
+    _set_session(client, "alice")
+    with patch("router.is_maintainer", return_value=True):
+        resp = client.get("/goto?tab=rollback-account")
+    assert resp.status_code == 302
+    assert "/rollback-account" in resp.headers["Location"]
+
+
+def test_goto_account_tab_returns_403_for_non_maintainer(client):
+    _set_session(client, "alice")
+    with patch("router.is_maintainer", return_value=False):
+        resp = client.get("/goto?tab=rollback-account")
+    assert resp.status_code == 403
+
+
 def test_goto_runtime_config_tab_redirects_for_bot_admin(client):
     _set_session(client, "chuckbot")
     with patch("router.is_bot_admin", return_value=True):
@@ -1581,6 +1693,21 @@ def test_goto_from_diff_tab_allowed_for_granted_user(client):
 
     assert resp.status_code == 302
     assert "/rollback-from-diff" in resp.headers["Location"]
+
+
+def test_goto_account_tab_allowed_for_granted_user(client):
+    """A non-maintainer user with from_diff grant can access the account rollback tab."""
+    import router
+
+    _set_session(client, "alice")
+    with (
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
+    ):
+        resp = client.get("/goto?tab=rollback-account")
+
+    assert resp.status_code == 302
+    assert "/rollback-account" in resp.headers["Location"]
 
 
 # ── is_bot_admin ──────────────────────────────────────────────────────────────

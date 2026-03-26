@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Rollback by account</h2>
+<p>Queue rollback jobs for a target account's latest rollbackable edits.</p>
+
+<script id="from-account-props" type="application/json">
+{{ {
+  "username": username,
+  "default_limit": default_limit,
+  "max_limit": max_limit,
+  "from_diff_dry_run_only": from_diff_dry_run_only
+}|tojson }}
+</script>
+
+{% endblock %}

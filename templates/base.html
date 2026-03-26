@@ -76,6 +76,15 @@
           >
             From Diff
           </a>
+
+          <a
+            class="cdx-tabs__list__item"
+            role="tab"
+            aria-selected="{% if type == 'rollback-account' %}true{% else %}false{% endif %}"
+            href="/goto?tab=rollback-account"
+          >
+            Account Rollback
+          </a>
           {% endif %}
 
           {% if is_bot_admin %}
