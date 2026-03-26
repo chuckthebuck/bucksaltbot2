@@ -2813,8 +2813,8 @@ def retry_job(job_id):
                 if "retry_any" not in _user_permissions(actor):
                     return jsonify({"detail": "Forbidden"}), 403
 
-            current_status = str(job[1] or "")
-            request_type = _normalize_request_type(job[2])
+            current_status = str(job[1] or "") if len(job) > 1 else ""
+            request_type = _normalize_request_type(job[2]) if len(job) > 2 else _REQUEST_TYPE_QUEUE
 
             if current_status == _REQUEST_STATUS_PENDING_APPROVAL:
                 return jsonify({"detail": "This request is pending approval and cannot be retried yet"}), 409
