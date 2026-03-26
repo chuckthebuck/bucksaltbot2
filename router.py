@@ -191,7 +191,25 @@ def _normalize_user_list_input(value, key: str) -> list[str]:
     for item in candidates:
         if not item:
             continue
-        lowered = item.lower()
+
+        cleaned = item.strip()
+
+        if cleaned.lower().startswith("user:"):
+            cleaned = cleaned[5:].strip()
+
+        if len(cleaned) >= 2 and (
+            (cleaned[0] == '"' and cleaned[-1] == '"')
+            or (cleaned[0] == "'" and cleaned[-1] == "'")
+        ):
+            cleaned = cleaned[1:-1].strip()
+
+        cleaned = " ".join(cleaned.replace("_", " ").split())
+
+        lowered = cleaned.lower()
+
+        if not lowered:
+            continue
+
         if len(lowered) > 85:
             raise ValueError(f"{key} has a username longer than 85 characters")
         if lowered in seen:

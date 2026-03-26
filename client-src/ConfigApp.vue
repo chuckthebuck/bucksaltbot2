@@ -137,7 +137,26 @@ function normalizeUserList(raw: string): string[] {
   const users = raw
     .replace(/\n/g, ",")
     .split(",")
-    .map((part) => part.trim().toLowerCase())
+    .map((part) => part.trim())
+    .map((part) => {
+      let cleaned = part;
+
+      if (cleaned.toLowerCase().startsWith("user:")) {
+        cleaned = cleaned.slice(5).trim();
+      }
+
+      if (
+        cleaned.length >= 2 &&
+        ((cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+          (cleaned.startsWith("'") && cleaned.endsWith("'")))
+      ) {
+        cleaned = cleaned.slice(1, -1).trim();
+      }
+
+      cleaned = cleaned.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+
+      return cleaned.toLowerCase();
+    })
     .filter((part) => part.length > 0);
 
   return [...new Set(users)].sort();

@@ -1921,3 +1921,31 @@ def test_update_runtime_authz_api_persists_for_chuckbot(client):
     persisted_updates = mock_persist.call_args.args[0]
     assert persisted_updates["EXTRA_AUTHORIZED_USERS"] == ["anotherbot", "testbot"]
     assert persisted_updates["RATE_LIMIT_JOBS_PER_HOUR"] == 42
+
+
+def test_update_runtime_authz_api_normalizes_quoted_and_prefixed_usernames(client):
+    import router
+
+    _set_session(client, "chuckbot")
+    default_cfg = router._runtime_authz_defaults()
+
+    with (
+        patch("router.is_bot_admin", return_value=True),
+        patch("router._persist_runtime_authz_updates") as mock_persist,
+        patch("router._effective_runtime_authz_config", return_value=default_cfg),
+    ):
+        resp = client.put(
+            "/api/v1/config/authz",
+            json={
+                "config": {
+                    "EXTRA_AUTHORIZED_USERS": [
+                        '"Chaotic enby"',
+                        "User:Luni_Zunie",
+                    ]
+                }
+            },
+        )
+
+    assert resp.status_code == 200
+    persisted_updates = mock_persist.call_args.args[0]
+    assert persisted_updates["EXTRA_AUTHORIZED_USERS"] == ["chaotic enby", "luni zunie"]
