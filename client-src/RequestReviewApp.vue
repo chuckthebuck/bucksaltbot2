@@ -5,6 +5,9 @@ import {
   approveJob,
   fetchRollbackRequestPreview,
   fetchRollbackRequests,
+  forceDryRunRequest,
+  rejectRollbackRequest,
+  runJobLive,
   type RollbackRequestPreview,
   type RollbackRequestRow,
 } from "./api";
@@ -26,14 +29,42 @@ const requests = ref<RollbackRequestRow[]>([]);
 const previewByJob = ref<Record<number, RollbackRequestPreview>>({});
 const previewLoading = ref<Record<number, boolean>>({});
 const approveLoading = ref<Record<number, boolean>>({});
+const rejectLoading = ref<Record<number, boolean>>({});
+const forceDryRunLoading = ref<Record<number, boolean>>({});
+const runLiveLoading = ref<Record<number, boolean>>({});
 
 const pendingRequests = computed(() =>
   requests.value.filter((r) => r.status === "pending_approval")
 );
 
+function isAccountStyleRequest(row: RollbackRequestRow): boolean {
+  return row.request_type === "diff" && row.requested_endpoint === "from_account";
+}
+
+function canUseFromDiffEndpoint(row: RollbackRequestRow): boolean {
+  return row.request_type === "diff" && !isAccountStyleRequest(row);
+}
+
+function requestTypeLabel(row: RollbackRequestRow): string {
+  if (isAccountStyleRequest(row)) {
+    return "account";
+  }
+  return row.request_type;
+}
+
 function canApproveRequest(row: RollbackRequestRow): boolean {
   if (row.status !== "pending_approval") {
     return false;
+  }
+
+  return canReviewDecision(row);
+}
+
+function canReviewDecision(row: RollbackRequestRow): boolean {
+  if (row.status !== "pending_approval") {
+    if (row.requested_by === props.username) {
+      return true;
+    }
   }
 
   if (row.approval_required === "maintainer") {
@@ -53,6 +84,30 @@ function canApproveRequest(row: RollbackRequestRow): boolean {
   }
 
   return false;
+}
+
+function canRejectRequest(row: RollbackRequestRow): boolean {
+  return row.status === "pending_approval" && canReviewDecision(row);
+}
+
+function canForceDryRun(row: RollbackRequestRow): boolean {
+  return row.status === "pending_approval" && !row.dry_run && canReviewDecision(row);
+}
+
+function canRunLive(row: RollbackRequestRow): boolean {
+  if (row.status !== "completed" || !row.dry_run) {
+    return false;
+  }
+
+  if (row.requested_by === props.username) {
+    return true;
+  }
+
+  return canReviewDecision(row);
+}
+
+function dryRunLabel(row: RollbackRequestRow): string {
+  return row.dry_run ? "dry-run" : "live";
 }
 
 async function loadRequests() {
@@ -104,6 +159,54 @@ async function approve(row: RollbackRequestRow, endpoint?: string) {
   }
 }
 
+async function reject(row: RollbackRequestRow) {
+  rejectLoading.value[row.id] = true;
+  error.value = "";
+  notice.value = "";
+
+  try {
+    const result = await rejectRollbackRequest(row.id);
+    notice.value = `Request ${row.id} rejected: ${result.status}`;
+    await loadRequests();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Failed to reject request";
+  } finally {
+    rejectLoading.value[row.id] = false;
+  }
+}
+
+async function forceDryRun(row: RollbackRequestRow) {
+  forceDryRunLoading.value[row.id] = true;
+  error.value = "";
+  notice.value = "";
+
+  try {
+    const result = await forceDryRunRequest(row.id);
+    notice.value = `Request ${row.id} set to dry-run: ${result.status}`;
+    await loadRequests();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Failed to force dry-run";
+  } finally {
+    forceDryRunLoading.value[row.id] = false;
+  }
+}
+
+async function runLive(row: RollbackRequestRow) {
+  runLiveLoading.value[row.id] = true;
+  error.value = "";
+  notice.value = "";
+
+  try {
+    const result = await runJobLive(row.id);
+    notice.value = `Job ${row.id} moved to ${result.status} as live run`;
+    await loadRequests();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Failed to run job live";
+  } finally {
+    runLiveLoading.value[row.id] = false;
+  }
+}
+
 onMounted(async () => {
   await loadRequests();
 });
@@ -147,6 +250,7 @@ onMounted(async () => {
             <th>Type</th>
             <th>Endpoint</th>
             <th>Status</th>
+            <th>Mode</th>
             <th>Items</th>
             <th>Actions</th>
           </tr>
@@ -156,9 +260,10 @@ onMounted(async () => {
             <tr>
               <td>{{ row.id }}</td>
               <td>{{ row.requested_by }}</td>
-              <td>{{ row.request_type }}</td>
+              <td>{{ requestTypeLabel(row) }}</td>
               <td>{{ row.requested_endpoint || '-' }}</td>
               <td>{{ row.status }}</td>
+              <td>{{ dryRunLabel(row) }}</td>
               <td>{{ row.total }}</td>
               <td>
                 <div class="request-actions">
@@ -174,6 +279,7 @@ onMounted(async () => {
 
                   <template v-if="row.request_type === 'diff'">
                     <CdxButton
+                      v-if="canUseFromDiffEndpoint(row)"
                       size="small"
                       action="default"
                       weight="quiet"
@@ -208,6 +314,7 @@ onMounted(async () => {
 
                     <template v-else-if="row.request_type === 'diff'">
                       <CdxButton
+                        v-if="canUseFromDiffEndpoint(row)"
                         size="small"
                         action="progressive"
                         weight="primary"
@@ -219,21 +326,54 @@ onMounted(async () => {
 
                       <CdxButton
                         size="small"
-                        action="default"
-                        weight="quiet"
+                        :action="canUseFromDiffEndpoint(row) ? 'default' : 'progressive'"
+                        :weight="canUseFromDiffEndpoint(row) ? 'quiet' : 'primary'"
                         :disabled="approveLoading[row.id]"
                         @click="approve(row, 'from_account')"
                       >
-                        Approve as account
+                        {{ canUseFromDiffEndpoint(row) ? 'Approve as account' : 'Approve account rollback' }}
                       </CdxButton>
                     </template>
                   </template>
+
+                  <CdxButton
+                    v-if="canForceDryRun(row)"
+                    size="small"
+                    action="default"
+                    weight="quiet"
+                    :disabled="forceDryRunLoading[row.id]"
+                    @click="forceDryRun(row)"
+                  >
+                    {{ forceDryRunLoading[row.id] ? 'Updating...' : 'Force dry-run' }}
+                  </CdxButton>
+
+                  <CdxButton
+                    v-if="canRejectRequest(row)"
+                    size="small"
+                    action="destructive"
+                    weight="quiet"
+                    :disabled="rejectLoading[row.id]"
+                    @click="reject(row)"
+                  >
+                    {{ rejectLoading[row.id] ? 'Rejecting...' : 'Reject' }}
+                  </CdxButton>
+
+                  <CdxButton
+                    v-if="canRunLive(row)"
+                    size="small"
+                    action="progressive"
+                    weight="quiet"
+                    :disabled="runLiveLoading[row.id]"
+                    @click="runLive(row)"
+                  >
+                    {{ runLiveLoading[row.id] ? 'Queueing...' : 'Run live now' }}
+                  </CdxButton>
                 </div>
               </td>
             </tr>
 
             <tr v-if="previewByJob[row.id]">
-              <td colspan="7">
+              <td colspan="8">
                 <div class="request-preview">
                   <div>
                     <b>Preview endpoint:</b> {{ previewByJob[row.id].endpoint }}

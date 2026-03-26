@@ -393,6 +393,75 @@ export async function approveJob(id: number, endpoint?: string): Promise<any> {
   return data;
 }
 
+export async function rejectRollbackRequest(id: number): Promise<any> {
+  const r = await fetch(`/api/v1/rollback/jobs/${id}/reject`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+
+  let data: any = null;
+  try {
+    data = await r.json();
+  } catch {
+    data = null;
+  }
+
+  if (!r.ok) {
+    throw new Error(String(data?.detail || `Reject failed for job ${id}: ${r.status}`));
+  }
+
+  return data;
+}
+
+export async function forceDryRunRequest(id: number): Promise<any> {
+  const r = await fetch(`/api/v1/rollback/jobs/${id}/force-dry-run`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+
+  let data: any = null;
+  try {
+    data = await r.json();
+  } catch {
+    data = null;
+  }
+
+  if (!r.ok) {
+    throw new Error(String(data?.detail || `Force dry-run failed for job ${id}: ${r.status}`));
+  }
+
+  return data;
+}
+
+export async function runJobLive(id: number): Promise<any> {
+  const r = await fetch(`/api/v1/rollback/jobs/${id}/run-live`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+
+  let data: any = null;
+  try {
+    data = await r.json();
+  } catch {
+    data = null;
+  }
+
+  if (!r.ok) {
+    throw new Error(String(data?.detail || `Run live failed for job ${id}: ${r.status}`));
+  }
+
+  return data;
+}
+
 export async function cancelJob(id: number, token?: string): Promise<void> {
   const headers: Record<string, string> = {};
 

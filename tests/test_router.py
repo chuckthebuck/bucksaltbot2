@@ -210,6 +210,100 @@ def test_approve_batch_request_by_admin_queues_all_pending_jobs_in_batch(client)
     assert mock_task.delay.call_count == 2
 
 
+def test_reject_pending_diff_request_marks_canceled(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (
+        1,
+        "bob",
+        "pending_approval",
+        12345,
+        "diff",
+        "from_diff",
+        "maintainer",
+    )
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=True),
+    ):
+        resp = client.post("/api/v1/rollback/jobs/1/reject", json={})
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "canceled"
+    assert data["rejected_job_ids"] == [1]
+
+
+def test_force_dry_run_pending_diff_request_sets_dry_run(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (
+        1,
+        "pending_approval",
+        12345,
+        "diff",
+        "from_diff",
+        "maintainer",
+    )
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=True),
+        patch("router._update_diff_payload") as mock_update_payload,
+    ):
+        resp = client.post("/api/v1/rollback/jobs/1/force-dry-run", json={})
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["dry_run"] is True
+    assert data["status"] == "pending_approval"
+    mock_update_payload.assert_called_once_with(1, {"dry_run": True})
+
+
+def test_run_live_completed_dry_run_queues_job(client):
+    _set_session(client, "alice")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.side_effect = [
+        ("alice", "completed", 1, "diff", "from_diff", "maintainer"),
+        (2,),
+    ]
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
+    ):
+        mock_task.delay = MagicMock()
+        resp = client.post("/api/v1/rollback/jobs/1/run-live", json={})
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "queued"
+    assert data["dry_run"] is False
+    mock_task.delay.assert_called_once_with(1)
+
+
+def test_run_live_completed_dry_run_forbidden_without_rights(client):
+    _set_session(client, "mallory")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (
+        "alice",
+        "completed",
+        1,
+        "diff",
+        "from_diff",
+        "maintainer",
+    )
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_run_live", return_value=False),
+    ):
+        resp = client.post("/api/v1/rollback/jobs/1/run-live", json={})
+
+    assert resp.status_code == 403
+
+
 def test_request_preview_from_diff_full_loads_all_items(client):
     _set_session(client, "maintainer")
     mock_conn, mock_cursor = _make_mock_conn()
@@ -249,6 +343,51 @@ def test_request_preview_from_diff_full_loads_all_items(client):
     assert data["total_items"] == 2
     assert data["full_from_diff"] is True
     assert mock_iter.call_args.kwargs["limit"] is None
+
+
+def test_request_preview_from_account_rejects_from_diff_without_anchor(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "alice", "diff", "from_account")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_review_requests", return_value=True),
+        patch(
+            "router._load_diff_payload",
+            return_value={"target_user": "BadUser", "requested_endpoint": "from_account"},
+        ),
+    ):
+        resp = client.get("/api/v1/rollback/requests/1/preview?endpoint=from_diff&full=1")
+
+    assert resp.status_code == 400
+    assert "diff anchor" in resp.get_json().get("detail", "")
+
+
+def test_approve_diff_request_rejects_from_diff_without_anchor(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (
+        1,
+        "bob",
+        "pending_approval",
+        1,
+        12345,
+        "diff",
+        "from_account",
+        None,
+        "maintainer",
+    )
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=True),
+        patch("router._load_diff_payload", return_value={"target_user": "BadUser"}),
+    ):
+        resp = client.post("/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_diff"})
+
+    assert resp.status_code == 400
+    assert "diff anchor" in resp.get_json().get("detail", "")
 
 
 def test_create_job_dry_run_flag_persisted(client):

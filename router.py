@@ -1716,6 +1716,44 @@ def _can_review_requests(username: str) -> bool:
     return is_maintainer(username) or is_admin_user(username)
 
 
+def _can_run_live(actor: str, requested_by: str, approval_required: str | None) -> bool:
+    """Return whether *actor* may re-run a completed dry-run job live."""
+    if not actor:
+        return False
+
+    if actor == requested_by:
+        return True
+
+    if _can_actor_approve(actor, approval_required):
+        return True
+
+    return "retry_any" in _user_permissions(actor)
+
+
+def _pending_batch_request_job_ids(cursor, batch_id: int, request_type: str) -> list[int]:
+    cursor.execute(
+        """
+        SELECT id
+        FROM rollback_jobs
+        WHERE batch_id=%s AND request_type=%s AND status=%s
+        ORDER BY id ASC
+        """,
+        (batch_id, request_type, _REQUEST_STATUS_PENDING_APPROVAL),
+    )
+    return [int(row[0]) for row in cursor.fetchall()]
+
+
+def _request_payload_has_diff_anchor(payload: dict | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+
+    for key in ("diff", "oldid", "resolved_timestamp"):
+        if payload.get(key) not in (None, ""):
+            return True
+
+    return False
+
+
 def _compute_diff_request_preview(
     job_id: int,
     payload: dict,
@@ -2466,6 +2504,9 @@ def rollback_request_preview_api(job_id: int):
     if endpoint not in _ALLOWED_DIFF_REQUEST_ENDPOINTS:
         return jsonify({"detail": "Invalid endpoint"}), 400
 
+    if endpoint == _ENDPOINT_FROM_DIFF and not _request_payload_has_diff_anchor(payload):
+        return jsonify({"detail": "This request does not include a diff anchor for endpoint=from_diff"}), 400
+
     try:
         preview = _compute_diff_request_preview(
             job_id,
@@ -3060,6 +3101,15 @@ def approve_rollback_job(job_id: int):
                         }
                     ), 400
 
+                if approved_endpoint == _ENDPOINT_FROM_DIFF:
+                    request_payload = _load_diff_payload(job_id)
+                    if not _request_payload_has_diff_anchor(request_payload):
+                        return jsonify(
+                            {
+                                "detail": "This request does not include a diff anchor for endpoint=from_diff"
+                            }
+                        ), 400
+
                 cursor.execute(
                     """
                     UPDATE rollback_jobs
@@ -3154,6 +3204,277 @@ def approve_rollback_job(job_id: int):
             "approved_by": actor,
             "approved_endpoint": _ENDPOINT_BATCH,
             "status": "queued",
+        }
+    )
+
+
+@app.route("/api/v1/rollback/jobs/<int:job_id>/reject", methods=["POST"])
+def reject_rollback_request(job_id: int):
+    actor = _rollback_api_actor()
+
+    if actor is None:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    requested_by,
+                    status,
+                    batch_id,
+                    request_type,
+                    requested_endpoint,
+                    approval_required
+                FROM rollback_jobs
+                WHERE id=%s
+                """,
+                (job_id,),
+            )
+            row = cursor.fetchone()
+
+            if not row:
+                return jsonify({"detail": "Job not found"}), 404
+
+            (
+                _id,
+                _requested_by,
+                status,
+                batch_id,
+                request_type,
+                requested_endpoint,
+                approval_required,
+            ) = row
+
+            request_type = _normalize_request_type(request_type)
+            requested_endpoint = str(requested_endpoint or "").strip().lower() or None
+            approval_required = approval_required or _approval_requirement_for_request(
+                request_type, requested_endpoint
+            )
+
+            if status != _REQUEST_STATUS_PENDING_APPROVAL:
+                return jsonify({"detail": f"Job is not pending approval (status={status})"}), 409
+
+            if not _can_actor_approve(actor, approval_required):
+                return jsonify({"detail": "Forbidden: insufficient approval rights"}), 403
+
+            rejected_job_ids = [job_id]
+            if request_type == _REQUEST_TYPE_BATCH and batch_id is not None:
+                rejected_job_ids = _pending_batch_request_job_ids(cursor, batch_id, _REQUEST_TYPE_BATCH)
+                if not rejected_job_ids:
+                    rejected_job_ids = [job_id]
+
+            for rejected_job_id in rejected_job_ids:
+                cursor.execute(
+                    """
+                    UPDATE rollback_jobs
+                    SET status=%s, approved_by=%s, approved_at=CURRENT_TIMESTAMP
+                    WHERE id=%s
+                    """,
+                    ("canceled", actor, rejected_job_id),
+                )
+                cursor.execute(
+                    """
+                    UPDATE rollback_job_items
+                    SET status=%s, error=%s
+                    WHERE job_id=%s AND status=%s
+                    """,
+                    ("canceled", "Rejected by approver", rejected_job_id, _REQUEST_STATUS_PENDING_APPROVAL),
+                )
+
+        conn.commit()
+
+    return jsonify(
+        {
+            "job_id": job_id,
+            "batch_id": batch_id,
+            "rejected_job_ids": rejected_job_ids,
+            "rejected_by": actor,
+            "status": "canceled",
+        }
+    )
+
+
+@app.route("/api/v1/rollback/jobs/<int:job_id>/force-dry-run", methods=["POST"])
+def force_dry_run_rollback_request(job_id: int):
+    actor = _rollback_api_actor()
+
+    if actor is None:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    status,
+                    batch_id,
+                    request_type,
+                    requested_endpoint,
+                    approval_required
+                FROM rollback_jobs
+                WHERE id=%s
+                """,
+                (job_id,),
+            )
+            row = cursor.fetchone()
+
+            if not row:
+                return jsonify({"detail": "Job not found"}), 404
+
+            (
+                _id,
+                status,
+                batch_id,
+                request_type,
+                requested_endpoint,
+                approval_required,
+            ) = row
+
+            request_type = _normalize_request_type(request_type)
+            requested_endpoint = str(requested_endpoint or "").strip().lower() or None
+            approval_required = approval_required or _approval_requirement_for_request(
+                request_type, requested_endpoint
+            )
+
+            if status != _REQUEST_STATUS_PENDING_APPROVAL:
+                return jsonify({"detail": f"Job is not pending approval (status={status})"}), 409
+
+            if not _can_actor_approve(actor, approval_required):
+                return jsonify({"detail": "Forbidden: insufficient approval rights"}), 403
+
+            updated_job_ids = [job_id]
+            if request_type == _REQUEST_TYPE_BATCH and batch_id is not None:
+                updated_job_ids = _pending_batch_request_job_ids(cursor, batch_id, _REQUEST_TYPE_BATCH)
+                if not updated_job_ids:
+                    updated_job_ids = [job_id]
+
+            for updated_job_id in updated_job_ids:
+                cursor.execute(
+                    "UPDATE rollback_jobs SET dry_run=1 WHERE id=%s",
+                    (updated_job_id,),
+                )
+                if request_type == _REQUEST_TYPE_DIFF:
+                    _update_diff_payload(updated_job_id, {"dry_run": True})
+
+        conn.commit()
+
+    return jsonify(
+        {
+            "job_id": job_id,
+            "batch_id": batch_id,
+            "updated_job_ids": updated_job_ids,
+            "updated_by": actor,
+            "dry_run": True,
+            "status": _REQUEST_STATUS_PENDING_APPROVAL,
+        }
+    )
+
+
+@app.route("/api/v1/rollback/jobs/<int:job_id>/run-live", methods=["POST"])
+def run_dry_run_job_live(job_id: int):
+    actor = _rollback_api_actor()
+
+    if actor is None:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    queue_status = "queued"
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    requested_by,
+                    status,
+                    dry_run,
+                    request_type,
+                    requested_endpoint,
+                    approval_required
+                FROM rollback_jobs
+                WHERE id=%s
+                """,
+                (job_id,),
+            )
+            row = cursor.fetchone()
+
+            if not row:
+                return jsonify({"detail": "Job not found"}), 404
+
+            (
+                requested_by,
+                status,
+                dry_run,
+                request_type,
+                requested_endpoint,
+                approval_required,
+            ) = row
+
+            request_type = _normalize_request_type(request_type)
+            requested_endpoint = str(requested_endpoint or "").strip().lower() or None
+            approval_required = approval_required or _approval_requirement_for_request(
+                request_type, requested_endpoint
+            )
+
+            if status != "completed":
+                return jsonify({"detail": f"Job is not completed (status={status})"}), 409
+
+            if not bool(dry_run):
+                return jsonify({"detail": "Job is already configured for live execution"}), 409
+
+            if not _can_run_live(actor, requested_by, approval_required):
+                return jsonify({"detail": "Forbidden"}), 403
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM rollback_job_items WHERE job_id=%s",
+                (job_id,),
+            )
+            item_count_row = cursor.fetchone()
+            item_count = int(item_count_row[0]) if item_count_row else 0
+
+            if item_count == 0 and request_type == _REQUEST_TYPE_DIFF:
+                payload = _load_diff_payload(job_id)
+                if not payload:
+                    return jsonify({"detail": "Cannot re-run this request without saved payload"}), 400
+
+                if not _request_payload_has_diff_anchor(payload):
+                    return jsonify({"detail": "Cannot run live from this request because it has no diff anchor"}), 400
+
+                cursor.execute(
+                    "UPDATE rollback_jobs SET dry_run=0, status='resolving' WHERE id=%s",
+                    (job_id,),
+                )
+                conn.commit()
+
+                _update_diff_payload(job_id, {"dry_run": False, "run_live_by": actor})
+                _set_diff_error(job_id, None)
+                resolve_diff_rollback_job.delay(job_id)
+                queue_status = "resolving"
+            else:
+                cursor.execute(
+                    "UPDATE rollback_jobs SET dry_run=0, status='queued' WHERE id=%s",
+                    (job_id,),
+                )
+                cursor.execute(
+                    """
+                    UPDATE rollback_job_items
+                    SET status='queued', error=NULL
+                    WHERE job_id=%s
+                    """,
+                    (job_id,),
+                )
+                conn.commit()
+                process_rollback_job.delay(job_id)
+
+    return jsonify(
+        {
+            "job_id": job_id,
+            "status": queue_status,
+            "dry_run": False,
+            "requested_by": requested_by,
+            "run_live_by": actor,
         }
     )
 
