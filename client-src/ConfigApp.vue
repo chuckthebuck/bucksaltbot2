@@ -130,6 +130,7 @@ const config = ref<RuntimeAuthzConfig>({
 const listText = ref<Record<string, string>>({});
 const lookupMenuItems = ref<Record<string, Array<{ label: string; value: string }>>>({});
 const lookupSelected = ref<Record<string, string | number | null>>({});
+const lookupInputValue = ref<Record<string, string>>({});
 const lookupRequestIds: Record<string, number> = {};
 
 function normalizeUserList(raw: string): string[] {
@@ -166,6 +167,7 @@ function onNumberInput(key: NumberConfigKey, event: Event): void {
 
 async function onLookupInput(key: ListConfigKey, value: string | number): Promise<void> {
   const query = String(value || "").trim();
+  lookupInputValue.value[key] = query;
   const requestId = (lookupRequestIds[key] || 0) + 1;
   lookupRequestIds[key] = requestId;
 
@@ -184,11 +186,19 @@ async function onLookupInput(key: ListConfigKey, value: string | number): Promis
   }
 }
 
-function addLookupSelection(key: ListConfigKey): void {
+async function addLookupSelection(key: ListConfigKey): Promise<void> {
   const selected = lookupSelected.value[key];
-  if (selected === null || selected === undefined) return;
+  const typed = (lookupInputValue.value[key] || "").trim();
 
-  const candidate = String(selected).trim().toLowerCase();
+  // Codex lookup sets "selected" only when a menu item is chosen.
+  // If the user types a complete username and clicks Add directly,
+  // use the typed value so the button still performs the expected action.
+  const rawCandidate =
+    selected !== null && selected !== undefined && String(selected).trim()
+      ? String(selected).trim()
+      : typed;
+
+  const candidate = rawCandidate.toLowerCase();
   if (!candidate) return;
 
   const next = new Set(config.value[key] || []);
@@ -197,7 +207,24 @@ function addLookupSelection(key: ListConfigKey): void {
   listText.value[key] = config.value[key].join(", ");
 
   lookupSelected.value[key] = null;
+  lookupInputValue.value[key] = "";
   lookupMenuItems.value[key] = [];
+
+  // Persist immediately for button-driven adds so the backend table updates
+  // without requiring a separate click on the global Save button.
+  if (!canEdit.value) return;
+
+  try {
+    const response = await updateRuntimeAuthzConfig({
+      [key]: config.value[key],
+    });
+    applyServerConfig(response.config);
+    successMessage.value = `Updated ${key}.`;
+    errorMessage.value = "";
+  } catch (err) {
+    errorMessage.value = err instanceof Error ? err.message : "Failed to save config";
+    successMessage.value = "";
+  }
 }
 
 function applyServerConfig(nextConfig: RuntimeAuthzConfig): void {
@@ -288,7 +315,7 @@ onMounted(() => {
         </CdxField>
 
         <div class="runtime-config-actions">
-          <CdxButton type="button" :disabled="!canEdit" @click="addLookupSelection(field.key)">
+          <CdxButton type="button" :disabled="!canEdit" @click="() => void addLookupSelection(field.key)">
             Add selected user
           </CdxButton>
         </div>
