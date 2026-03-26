@@ -2150,12 +2150,30 @@ def rollback_queue_all_jobs_ui():
                     j.status,
                     j.dry_run,
                     j.created_at,
+                    j.request_type,
+                    j.requested_endpoint,
+                    j.approved_endpoint,
+                    j.approval_required,
+                    j.approved_by,
+                    j.approved_at,
                     COUNT(i.id) AS total_items,
                     COALESCE(SUM(CASE WHEN i.status='completed' THEN 1 ELSE 0 END), 0) AS completed_items,
                     COALESCE(SUM(CASE WHEN i.status='failed' THEN 1 ELSE 0 END), 0) AS failed_items
                 FROM rollback_jobs j
                 LEFT JOIN rollback_job_items i ON i.job_id = j.id
-                GROUP BY j.id, j.batch_id, j.requested_by, j.status, j.dry_run, j.created_at
+                GROUP BY
+                    j.id,
+                    j.batch_id,
+                    j.requested_by,
+                    j.status,
+                    j.dry_run,
+                    j.created_at,
+                    j.request_type,
+                    j.requested_endpoint,
+                    j.approved_endpoint,
+                    j.approval_required,
+                    j.approved_by,
+                    j.approved_at
                 ORDER BY COALESCE(j.batch_id, j.id) DESC, j.id DESC
                 """
             )
@@ -2165,7 +2183,23 @@ def rollback_queue_all_jobs_ui():
     if request.args.get("format") == "json":
         jobs_for_output = []
         for row in jobs:
-            job_id, batch_id, requested_by, status, dry_run, created_at, total, completed, failed = row
+            (
+                job_id,
+                batch_id,
+                requested_by,
+                status,
+                dry_run,
+                created_at,
+                request_type,
+                requested_endpoint,
+                approved_endpoint,
+                approval_required,
+                approved_by,
+                approved_at,
+                total,
+                completed,
+                failed,
+            ) = row
             if _maybe_mark_stale_resolving_job_failed(job_id, status, created_at):
                 status = "failed"
 
@@ -2186,6 +2220,12 @@ def rollback_queue_all_jobs_ui():
                     "status": status,
                     "dry_run": bool(dry_run),
                     "created_at": str(created_at),
+                    "request_type": request_type,
+                    "requested_endpoint": requested_endpoint,
+                    "approved_endpoint": approved_endpoint,
+                    "approval_required": approval_required,
+                    "approved_by": approved_by,
+                    "approved_at": str(approved_at) if approved_at else None,
                     "total": int(total or 0),
                     "completed": int(completed or 0),
                     "failed": int(failed or 0),
@@ -2395,7 +2435,18 @@ def list_rollback_jobs():
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, requested_by, status, dry_run, created_at
+                SELECT
+                    id,
+                    requested_by,
+                    status,
+                    dry_run,
+                    created_at,
+                    request_type,
+                    requested_endpoint,
+                    approved_endpoint,
+                    approval_required,
+                    approved_by,
+                    approved_at
                 FROM rollback_jobs
                 WHERE requested_by=%s
                                     AND (
@@ -2420,6 +2471,12 @@ def list_rollback_jobs():
                     "status": row[2],
                     "dry_run": bool(row[3]),
                     "created_at": str(row[4]),
+                    "request_type": row[5],
+                    "requested_endpoint": row[6],
+                    "approved_endpoint": row[7],
+                    "approval_required": row[8],
+                    "approved_by": row[9],
+                    "approved_at": str(row[10]) if row[10] else None,
                 }
                 for row in jobs
             ]
@@ -2436,7 +2493,7 @@ def create_rollback_job():
 
     perms = _user_permissions(actor)
 
-    if "write" not in perms and "from_diff" not in perms:
+    if "write" not in perms:
         return jsonify({"detail": "Forbidden: write access required"}), 403
 
     if not _check_rate_limit(actor):
@@ -2447,6 +2504,7 @@ def create_rollback_job():
     requested_by = payload.get("requested_by") or actor
     items = payload.get("items") or payload.get("files") or []
     dry_run = _parse_bool(payload.get("dry_run", False), default=False)
+    request_type = _normalize_request_type(payload.get("request_type"))
 
     raw_batch_id = payload.get("batch_id")
 
@@ -2470,6 +2528,19 @@ def create_rollback_job():
     if len(items) > 1000:
         return jsonify({"detail": "Too many rollback items"}), 400
 
+    requested_endpoint = _ENDPOINT_BATCH if request_type == _REQUEST_TYPE_BATCH else _REQUEST_TYPE_QUEUE
+    approval_required = _approval_requirement_for_request(request_type, requested_endpoint)
+    initial_status = (
+        _REQUEST_STATUS_PENDING_APPROVAL
+        if request_type == _REQUEST_TYPE_BATCH
+        else "queued"
+    )
+    item_initial_status = (
+        _REQUEST_STATUS_PENDING_APPROVAL
+        if request_type == _REQUEST_TYPE_BATCH
+        else "queued"
+    )
+
     job_ids = []
 
     with get_conn() as conn:
@@ -2480,10 +2551,28 @@ def create_rollback_job():
                 cursor.execute(
                     """
                     INSERT INTO rollback_jobs
-                    (requested_by, status, dry_run, batch_id)
-                    VALUES (%s, %s, %s, %s)
+                    (
+                        requested_by,
+                        status,
+                        dry_run,
+                        batch_id,
+                        request_type,
+                        requested_endpoint,
+                        approved_endpoint,
+                        approval_required
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (requested_by, "queued", 1 if dry_run else 0, batch_id),
+                    (
+                        requested_by,
+                        initial_status,
+                        1 if dry_run else 0,
+                        batch_id,
+                        request_type,
+                        requested_endpoint,
+                        None,
+                        approval_required,
+                    ),
                 )
 
                 job_id = cursor.lastrowid
@@ -2503,7 +2592,7 @@ def create_rollback_job():
                         (job_id, file_title, target_user, summary, status)
                         VALUES (%s, %s, %s, %s, %s)
                         """,
-                        (job_id, title, user, summary, "queued"),
+                        (job_id, title, user, summary, item_initial_status),
                     )
 
         conn.commit()
@@ -2511,16 +2600,192 @@ def create_rollback_job():
     if not job_ids:
         return jsonify({"detail": "No valid items to process"}), 400
 
-    for jid in job_ids:
-        process_rollback_job.delay(jid)
+    if request_type != _REQUEST_TYPE_BATCH:
+        for jid in job_ids:
+            process_rollback_job.delay(jid)
 
     return jsonify(
         {
             "job_id": job_ids[0],
-            "status": "queued",
+            "status": initial_status,
             "batch_id": batch_id,
             "job_ids": job_ids,
             "chunks": len(job_ids),
+            "request_type": request_type,
+            "requested_endpoint": requested_endpoint,
+            "approval_required": approval_required,
+        }
+    )
+
+
+@app.route("/api/v1/rollback/jobs/<int:job_id>/approve", methods=["POST"])
+def approve_rollback_job(job_id: int):
+    actor = _rollback_api_actor()
+
+    if actor is None:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    payload = request.get_json(silent=True) or {}
+    endpoint_override = str(payload.get("endpoint") or "").strip().lower() or None
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    requested_by,
+                    status,
+                    dry_run,
+                    batch_id,
+                    request_type,
+                    requested_endpoint,
+                    approved_endpoint,
+                    approval_required
+                FROM rollback_jobs
+                WHERE id=%s
+                """,
+                (job_id,),
+            )
+            job = cursor.fetchone()
+
+            if not job:
+                return jsonify({"detail": "Job not found"}), 404
+
+            (
+                _id,
+                requested_by,
+                status,
+                dry_run,
+                batch_id,
+                request_type,
+                requested_endpoint,
+                approved_endpoint,
+                approval_required,
+            ) = job
+
+            request_type = _normalize_request_type(request_type)
+            requested_endpoint = str(requested_endpoint or "").strip().lower() or None
+            approval_required = approval_required or _approval_requirement_for_request(
+                request_type, requested_endpoint
+            )
+
+            if not approval_required:
+                return jsonify({"detail": "This job does not require approval"}), 400
+
+            if status != _REQUEST_STATUS_PENDING_APPROVAL:
+                return jsonify({"detail": f"Job is not pending approval (status={status})"}), 409
+
+            if not _can_actor_approve(actor, approval_required):
+                return jsonify({"detail": "Forbidden: insufficient approval rights"}), 403
+
+            approved_endpoint = endpoint_override or requested_endpoint
+
+            if request_type == _REQUEST_TYPE_DIFF:
+                if approved_endpoint not in _ALLOWED_DIFF_REQUEST_ENDPOINTS:
+                    return jsonify(
+                        {
+                            "detail": (
+                                "endpoint must be one of: "
+                                + ", ".join(sorted(_ALLOWED_DIFF_REQUEST_ENDPOINTS))
+                            )
+                        }
+                    ), 400
+
+                cursor.execute(
+                    """
+                    UPDATE rollback_jobs
+                    SET
+                        status=%s,
+                        approved_endpoint=%s,
+                        approved_by=%s,
+                        approved_at=CURRENT_TIMESTAMP
+                    WHERE id=%s
+                    """,
+                    ("resolving", approved_endpoint, actor, job_id),
+                )
+                conn.commit()
+
+                _update_diff_payload(
+                    job_id,
+                    {
+                        "approved_endpoint": approved_endpoint,
+                        "approved_by": actor,
+                        "approved_at": _utc_now_iso(),
+                    },
+                )
+                _set_diff_error(job_id, None)
+                resolve_diff_rollback_job.delay(job_id)
+
+                return jsonify(
+                    {
+                        "job_id": job_id,
+                        "requested_by": requested_by,
+                        "approved_by": actor,
+                        "approved_endpoint": approved_endpoint,
+                        "dry_run": bool(dry_run),
+                        "status": "resolving",
+                    }
+                )
+
+            if request_type != _REQUEST_TYPE_BATCH:
+                return jsonify({"detail": f"Unsupported request_type: {request_type}"}), 400
+
+            if approved_endpoint not in (None, "", _ENDPOINT_BATCH):
+                return jsonify({"detail": "Batch requests can only use endpoint=batch"}), 400
+
+            approved_job_ids = []
+
+            if batch_id is not None:
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM rollback_jobs
+                    WHERE batch_id=%s AND request_type=%s AND status=%s
+                    ORDER BY id ASC
+                    """,
+                    (batch_id, _REQUEST_TYPE_BATCH, _REQUEST_STATUS_PENDING_APPROVAL),
+                )
+                approved_job_ids = [int(row[0]) for row in cursor.fetchall()]
+
+            if not approved_job_ids:
+                approved_job_ids = [job_id]
+
+            for approved_job_id in approved_job_ids:
+                cursor.execute(
+                    """
+                    UPDATE rollback_jobs
+                    SET
+                        status=%s,
+                        approved_endpoint=%s,
+                        approved_by=%s,
+                        approved_at=CURRENT_TIMESTAMP
+                    WHERE id=%s
+                    """,
+                    ("queued", _ENDPOINT_BATCH, actor, approved_job_id),
+                )
+                cursor.execute(
+                    """
+                    UPDATE rollback_job_items
+                    SET status=%s
+                    WHERE job_id=%s AND status=%s
+                    """,
+                    ("queued", approved_job_id, _REQUEST_STATUS_PENDING_APPROVAL),
+                )
+
+        conn.commit()
+
+    for approved_job_id in approved_job_ids:
+        process_rollback_job.delay(approved_job_id)
+
+    return jsonify(
+        {
+            "job_id": job_id,
+            "batch_id": batch_id,
+            "approved_job_ids": approved_job_ids,
+            "approved_by": actor,
+            "approved_endpoint": _ENDPOINT_BATCH,
+            "status": "queued",
         }
     )
 
@@ -2535,7 +2800,7 @@ def retry_job(job_id):
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT requested_by FROM rollback_jobs WHERE id=%s",
+                "SELECT requested_by, status, request_type FROM rollback_jobs WHERE id=%s",
                 (job_id,),
             )
 
@@ -2548,6 +2813,12 @@ def retry_job(job_id):
                 if "retry_any" not in _user_permissions(actor):
                     return jsonify({"detail": "Forbidden"}), 403
 
+            current_status = str(job[1] or "")
+            request_type = _normalize_request_type(job[2])
+
+            if current_status == _REQUEST_STATUS_PENDING_APPROVAL:
+                return jsonify({"detail": "This request is pending approval and cannot be retried yet"}), 409
+
             cursor.execute(
                 "SELECT COUNT(*) FROM rollback_job_items WHERE job_id=%s",
                 (job_id,),
@@ -2559,6 +2830,9 @@ def retry_job(job_id):
                 payload = _load_diff_payload(job_id)
                 if not payload:
                     return jsonify({"detail": "Cannot retry this job without saved diff payload"}), 400
+
+                if request_type == _REQUEST_TYPE_DIFF and current_status == _REQUEST_STATUS_PENDING_APPROVAL:
+                    return jsonify({"detail": "Diff request is still pending approval"}), 409
 
                 cursor.execute(
                     "UPDATE rollback_jobs SET status='resolving' WHERE id=%s",
@@ -2656,9 +2930,18 @@ def cancel_rollback_job(job_id):
                 """
                 UPDATE rollback_job_items
                 SET status=%s, error=%s
-                WHERE job_id=%s AND status IN (%s, %s, %s, %s)
+                WHERE job_id=%s AND status IN (%s, %s, %s, %s, %s)
                 """,
-                ("canceled", "Canceled by requester", job_id, "queued", "running", "resolving", "staging"),
+                (
+                    "canceled",
+                    "Canceled by requester",
+                    job_id,
+                    "queued",
+                    "running",
+                    "resolving",
+                    "staging",
+                    _REQUEST_STATUS_PENDING_APPROVAL,
+                ),
             )
 
         conn.commit()
@@ -2683,7 +2966,18 @@ def get_rollback_job(job_id):
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, requested_by, status, dry_run, created_at
+                SELECT
+                    id,
+                    requested_by,
+                    status,
+                    dry_run,
+                    created_at,
+                    request_type,
+                    requested_endpoint,
+                    approved_endpoint,
+                    approval_required,
+                    approved_by,
+                    approved_at
                 FROM rollback_jobs
                 WHERE id=%s
                 """,
@@ -2711,7 +3005,19 @@ def get_rollback_job(job_id):
             items = cursor.fetchall()
 
     if _maybe_mark_stale_resolving_job_failed(job[0], job[2], job[4]):
-        job = (job[0], job[1], "failed", job[3], job[4])
+        job = (
+            job[0],
+            job[1],
+            "failed",
+            job[3],
+            job[4],
+            job[5],
+            job[6],
+            job[7],
+            job[8],
+            job[9],
+            job[10],
+        )
 
     if request.args.get("format") == "log":
         lines = []
@@ -2740,6 +3046,12 @@ def get_rollback_job(job_id):
             "status": job[2],
             "dry_run": bool(job[3]),
             "created_at": str(job[4]),
+            "request_type": job[5],
+            "requested_endpoint": job[6],
+            "approved_endpoint": job[7],
+            "approval_required": job[8],
+            "approved_by": job[9],
+            "approved_at": str(job[10]) if job[10] else None,
             "total": len(items),
             "completed": len([x for x in items if x[4] == "completed"]),
             "failed": len([x for x in items if x[4] == "failed"]),
