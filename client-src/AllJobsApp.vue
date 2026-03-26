@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { CdxButton } from "@wikimedia/codex";
 import {
   approveJob,
@@ -115,15 +115,22 @@ const actionNotice = ref("");
 const details = ref<Record<string, string>>({});
 const openRows = ref<Record<string, boolean>>({});
 const pendingApprove = ref<Record<number, boolean>>({});
+const pollingTimer = ref<number | null>(null);
+const refreshing = ref(false);
 
 const canApproveDiff = computed(() => Boolean(pageProps.can_approve_diff));
 const canApproveBatch = computed(() => Boolean(pageProps.can_approve_batch));
 
 async function loadAllJobsRows() {
-  const rows = await fetchAllJobs();
-  jobs.value = (rows as ApiAllJobsRow[])
-    .map((j) => normalizeAllJobsRow(j))
-    .filter((j): j is AllJobsRow => j !== null);
+  refreshing.value = true;
+  try {
+    const rows = await fetchAllJobs();
+    jobs.value = (rows as ApiAllJobsRow[])
+      .map((j) => normalizeAllJobsRow(j))
+      .filter((j): j is AllJobsRow => j !== null);
+  } finally {
+    refreshing.value = false;
+  }
 }
 
 onMounted(async () => {
@@ -135,7 +142,39 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
+
+  if (!document.hidden) startPolling();
+  document.addEventListener("visibilitychange", onVisibilityChange);
 });
+
+onBeforeUnmount(() => {
+  stopPolling();
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+});
+
+function startPolling() {
+  if (pollingTimer.value !== null) return;
+
+  pollingTimer.value = window.setInterval(() => {
+    if (refreshing.value) return;
+    void loadAllJobsRows();
+  }, 5000);
+}
+
+function stopPolling() {
+  if (pollingTimer.value === null) return;
+  clearInterval(pollingTimer.value);
+  pollingTimer.value = null;
+}
+
+function onVisibilityChange() {
+  if (document.hidden) {
+    stopPolling();
+  } else {
+    void loadAllJobsRows();
+    startPolling();
+  }
+}
 
 function progressText(row: ProgressRow): string {
   const done = (row.completed || 0) + (row.failed || 0);
@@ -361,6 +400,17 @@ const displayedRows = computed<DisplayRow[]>(() => {
   <div class="all-jobs-table-wrap">
     <div v-if="actionNotice" class="all-jobs-action all-jobs-action--ok">{{ actionNotice }}</div>
     <div v-if="actionError" class="all-jobs-action all-jobs-action--error">{{ actionError }}</div>
+    <div class="all-jobs-table__toolbar">
+      <CdxButton
+        action="default"
+        weight="quiet"
+        size="small"
+        :disabled="refreshing"
+        @click="loadAllJobsRows"
+      >
+        {{ refreshing ? 'Refreshing...' : 'Refresh list' }}
+      </CdxButton>
+    </div>
 
     <div v-if="loading" class="all-jobs-table__empty">Loading jobs...</div>
     <div v-else-if="error" class="all-jobs-table__empty">{{ error }}</div>
@@ -467,6 +517,10 @@ const displayedRows = computed<DisplayRow[]>(() => {
 .all-jobs-table-wrap {
   width: 100%;
   overflow-x: auto;
+}
+
+.all-jobs-table__toolbar {
+  margin-bottom: 10px;
 }
 
 .all-jobs-action {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { CdxButton, CdxMessage } from "@wikimedia/codex";
 import {
   approveJob,
@@ -32,6 +32,7 @@ const approveLoading = ref<Record<number, boolean>>({});
 const rejectLoading = ref<Record<number, boolean>>({});
 const forceDryRunLoading = ref<Record<number, boolean>>({});
 const runLiveLoading = ref<Record<number, boolean>>({});
+const pollingTimer = ref<number | null>(null);
 
 const pendingRequests = computed(() =>
   requests.value.filter((r) => r.status === "pending_approval")
@@ -209,7 +210,39 @@ async function runLive(row: RollbackRequestRow) {
 
 onMounted(async () => {
   await loadRequests();
+
+  if (!document.hidden) startPolling();
+  document.addEventListener("visibilitychange", onVisibilityChange);
 });
+
+onBeforeUnmount(() => {
+  stopPolling();
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+});
+
+function startPolling() {
+  if (pollingTimer.value !== null) return;
+
+  pollingTimer.value = window.setInterval(() => {
+    if (loading.value) return;
+    void loadRequests();
+  }, 5000);
+}
+
+function stopPolling() {
+  if (pollingTimer.value === null) return;
+  clearInterval(pollingTimer.value);
+  pollingTimer.value = null;
+}
+
+function onVisibilityChange() {
+  if (document.hidden) {
+    stopPolling();
+  } else {
+    void loadRequests();
+    startPolling();
+  }
+}
 </script>
 
 <template>
