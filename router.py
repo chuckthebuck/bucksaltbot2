@@ -1947,8 +1947,11 @@ def rollback_from_account_api():
 
     perms = _user_permissions(username)
 
-    if "from_diff" not in perms:
-        return jsonify({"detail": "Forbidden"}), 403
+    if "write" not in perms and "from_diff" not in perms:
+        return jsonify({"detail": "Forbidden: write access required"}), 403
+
+    if not _check_rate_limit(username):
+        return jsonify({"detail": "Rate limit exceeded; try again later"}), 429
 
     payload = request.get_json(silent=True) or {}
 
@@ -2013,55 +2016,49 @@ def rollback_from_account_api():
             return jsonify({"detail": f"limit must be <= {_ACCOUNT_ROLLBACK_MAX_LIMIT}"}), 400
 
     try:
-        items = fetch_recent_rollbackable_contribs(target_user, limit=limit)
-
-        if not items:
-            return jsonify({"detail": "No rollbackable contributions found for this account"}), 400
-
         batch_id = int(time.time() * 1000)
-        job_ids = []
 
         with get_conn() as conn:
             with conn.cursor() as cursor:
-                for i in range(0, len(items), MAX_JOB_ITEMS):
-                    chunk = items[i : i + MAX_JOB_ITEMS]
-
-                    cursor.execute(
-                        """
-                        INSERT INTO rollback_jobs
-                        (requested_by, status, dry_run, batch_id)
-                        VALUES (%s, %s, %s, %s)
-                        """,
-                        (username, "queued", 1 if dry_run else 0, batch_id),
+                cursor.execute(
+                    """
+                    INSERT INTO rollback_jobs
+                    (
+                        requested_by,
+                        status,
+                        dry_run,
+                        batch_id,
+                        request_type,
+                        requested_endpoint,
+                        approved_endpoint,
+                        approval_required
                     )
-
-                    job_id = cursor.lastrowid
-                    job_ids.append(job_id)
-
-                    for item in chunk:
-                        cursor.execute(
-                            """
-                            INSERT INTO rollback_job_items
-                            (job_id, file_title, target_user, summary, status)
-                            VALUES (%s, %s, %s, %s, %s)
-                            """,
-                            (
-                                job_id,
-                                item["title"],
-                                item["user"],
-                                summary or None,
-                                "queued",
-                            ),
-                        )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        username,
+                        _REQUEST_STATUS_PENDING_APPROVAL,
+                        1 if dry_run else 0,
+                        batch_id,
+                        _REQUEST_TYPE_DIFF,
+                        _ENDPOINT_FROM_ACCOUNT,
+                        None,
+                        _APPROVAL_REQUIRED_MAINTAINER,
+                    ),
+                )
+                job_id = cursor.lastrowid
             conn.commit()
 
-        for jid in job_ids:
-            process_rollback_job.delay(jid)
-
-        status_updater.update_wiki_status(
-            editing="Actively editing",
-            current_job=f"Queued account rollback for {target_user}",
-            details=f"{len(items)} items queued across {len(job_ids)} job(s)",
+        _store_diff_payload(
+            job_id,
+            {
+                "target_user": target_user,
+                "summary": summary,
+                "requested_by": username,
+                "dry_run": dry_run,
+                "limit": limit,
+                "requested_endpoint": _ENDPOINT_FROM_ACCOUNT,
+            },
         )
 
     except ValueError as e:
@@ -2072,15 +2069,18 @@ def rollback_from_account_api():
 
     return jsonify(
         {
-            "job_id": job_ids[0],
-            "job_ids": job_ids,
-            "chunks": len(job_ids),
+            "job_id": job_id,
+            "job_ids": [job_id],
+            "chunks": 1,
             "batch_id": batch_id,
-            "total_items": len(items),
-            "status": "queued",
+            "total_items": 0,
+            "status": _REQUEST_STATUS_PENDING_APPROVAL,
             "resolved_user": target_user,
             "dry_run": dry_run,
             "limit": limit,
+            "request_type": _REQUEST_TYPE_DIFF,
+            "requested_endpoint": _ENDPOINT_FROM_ACCOUNT,
+            "approval_required": _APPROVAL_REQUIRED_MAINTAINER,
         }
     )
 
