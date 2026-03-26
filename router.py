@@ -9,7 +9,6 @@ import mwoauth
 import mwoauth.flask
 import requests
 import logging
-from celery import shared_task
 
 import status_updater
 from flask import (
@@ -24,7 +23,7 @@ from flask import (
 )
 from app import BOT_ADMIN_ACCOUNTS, MAX_JOB_ITEMS, flask_app as app, is_maintainer
 from redis_state import get_progress, r
-from rollback_queue import process_rollback_job
+from rollback_queue import process_rollback_job, resolve_diff_rollback_job_task as resolve_diff_rollback_job
 from toolsdb import get_conn, get_runtime_config, upsert_runtime_config
 
 ALLOWED_GROUPS = {"sysop", "rollbacker"}
@@ -710,8 +709,7 @@ def create_rollback_jobs_from_diff(
     }
 
 
-@shared_task(ignore_result=True)
-def resolve_diff_rollback_job(job_id: int):
+def resolve_diff_rollback_job_impl(job_id: int):
     payload = _load_diff_payload(job_id)
 
     if not payload:
@@ -924,8 +922,6 @@ def resolve_diff_rollback_job(job_id: int):
             last_job=f"Failed to resolve diff for job {job_id}",
             details=str(e)[:200],
         )
-
-
 if not os.environ.get("NOTDEV"):
     from dotenv import load_dotenv
 

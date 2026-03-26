@@ -311,3 +311,23 @@ def process_rollback_job(job_id: int):
         )
 
         raise
+
+
+@shared_task(name="buckbot.resolve_diff_rollback_job", ignore_result=True)
+def resolve_diff_rollback_job_task(job_id: int):
+    """Resolve a from-diff job into rollback_job_items.
+
+    This task lives in rollback_queue.py because the worker always imports this
+    module at startup. That guarantees registration of the task name used by
+    web requests, even when route modules are not loaded in a particular
+    worker process.
+    """
+    from router import resolve_diff_rollback_job_impl
+
+    resolve_diff_rollback_job_impl(job_id)
+
+
+@shared_task(name="router.resolve_diff_rollback_job", ignore_result=True)
+def resolve_diff_rollback_job_task_legacy(job_id: int):
+    """Legacy task-name alias for already-queued resolver messages."""
+    resolve_diff_rollback_job_task(job_id)
