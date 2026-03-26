@@ -2183,23 +2183,32 @@ def rollback_queue_all_jobs_ui():
     if request.args.get("format") == "json":
         jobs_for_output = []
         for row in jobs:
-            (
-                job_id,
-                batch_id,
-                requested_by,
-                status,
-                dry_run,
-                created_at,
-                request_type,
-                requested_endpoint,
-                approved_endpoint,
-                approval_required,
-                approved_by,
-                approved_at,
-                total,
-                completed,
-                failed,
-            ) = row
+            if len(row) >= 15:
+                (
+                    job_id,
+                    batch_id,
+                    requested_by,
+                    status,
+                    dry_run,
+                    created_at,
+                    request_type,
+                    requested_endpoint,
+                    approved_endpoint,
+                    approval_required,
+                    approved_by,
+                    approved_at,
+                    total,
+                    completed,
+                    failed,
+                ) = row
+            else:
+                job_id, batch_id, requested_by, status, dry_run, created_at, total, completed, failed = row
+                request_type = None
+                requested_endpoint = None
+                approved_endpoint = None
+                approval_required = None
+                approved_by = None
+                approved_at = None
             if _maybe_mark_stale_resolving_job_failed(job_id, status, created_at):
                 status = "failed"
 
@@ -2471,12 +2480,12 @@ def list_rollback_jobs():
                     "status": row[2],
                     "dry_run": bool(row[3]),
                     "created_at": str(row[4]),
-                    "request_type": row[5],
-                    "requested_endpoint": row[6],
-                    "approved_endpoint": row[7],
-                    "approval_required": row[8],
-                    "approved_by": row[9],
-                    "approved_at": str(row[10]) if row[10] else None,
+                    "request_type": row[5] if len(row) > 5 else None,
+                    "requested_endpoint": row[6] if len(row) > 6 else None,
+                    "approved_endpoint": row[7] if len(row) > 7 else None,
+                    "approval_required": row[8] if len(row) > 8 else None,
+                    "approved_by": row[9] if len(row) > 9 else None,
+                    "approved_at": (str(row[10]) if len(row) > 10 and row[10] else None),
                 }
                 for row in jobs
             ]
@@ -3005,19 +3014,22 @@ def get_rollback_job(job_id):
             items = cursor.fetchall()
 
     if _maybe_mark_stale_resolving_job_failed(job[0], job[2], job[4]):
-        job = (
-            job[0],
-            job[1],
-            "failed",
-            job[3],
-            job[4],
-            job[5],
-            job[6],
-            job[7],
-            job[8],
-            job[9],
-            job[10],
-        )
+        if len(job) >= 11:
+            job = (
+                job[0],
+                job[1],
+                "failed",
+                job[3],
+                job[4],
+                job[5],
+                job[6],
+                job[7],
+                job[8],
+                job[9],
+                job[10],
+            )
+        else:
+            job = (job[0], job[1], "failed", job[3], job[4])
 
     if request.args.get("format") == "log":
         lines = []
@@ -3046,12 +3058,12 @@ def get_rollback_job(job_id):
             "status": job[2],
             "dry_run": bool(job[3]),
             "created_at": str(job[4]),
-            "request_type": job[5],
-            "requested_endpoint": job[6],
-            "approved_endpoint": job[7],
-            "approval_required": job[8],
-            "approved_by": job[9],
-            "approved_at": str(job[10]) if job[10] else None,
+            "request_type": job[5] if len(job) > 5 else None,
+            "requested_endpoint": job[6] if len(job) > 6 else None,
+            "approved_endpoint": job[7] if len(job) > 7 else None,
+            "approval_required": job[8] if len(job) > 8 else None,
+            "approved_by": job[9] if len(job) > 9 else None,
+            "approved_at": (str(job[10]) if len(job) > 10 and job[10] else None),
             "total": len(items),
             "completed": len([x for x in items if x[4] == "completed"]),
             "failed": len([x for x in items if x[4] == "failed"]),
