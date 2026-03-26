@@ -335,7 +335,7 @@ def resolve_diff_rollback_job_task(job_id: int):
     web requests, even when route modules are not loaded in a particular
     worker process.
     """
-    from router import resolve_diff_rollback_job_impl
+    from router.jobs import resolve_diff_rollback_job_impl
 
     resolve_diff_rollback_job_impl(job_id)
 

@@ -143,10 +143,11 @@ def admin_client(live_client, monkeypatch):
     never consulted during the test.  The username is taken from the
     ``LIVE_TEST_USER`` environment variable (default: ``live-test-admin``).
     """
-    import router as _router
+    import router as _router  # noqa: F401 – ensures routes are registered
+    import router.permissions as _router_permissions
 
     test_user = os.environ.get("LIVE_TEST_USER", "live-test-admin")
-    monkeypatch.setattr(_router, "is_maintainer", lambda _u: True)
+    monkeypatch.setattr(_router_permissions, "is_maintainer", lambda _u: True)
 
     with live_client.session_transaction() as sess:
         sess["username"] = test_user
