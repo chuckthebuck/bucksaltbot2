@@ -377,20 +377,13 @@ def test_from_account_api_rejects_limit_above_500(client):
     assert "<= 500" in resp.get_json().get("detail", "")
 
 
-def test_from_account_api_queues_jobs_from_recent_contribs(client):
+def test_from_account_api_creates_pending_approval_request(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 42
 
     with (
         patch("router.is_maintainer", return_value=True),
-        patch(
-            "router.fetch_recent_rollbackable_contribs",
-            return_value=[
-                {"title": "File:One.jpg", "user": "BadUser"},
-                {"title": "File:Two.jpg", "user": "BadUser"},
-            ],
-        ),
         patch("router.get_conn", return_value=mock_conn),
         patch("router.process_rollback_job") as mock_task,
         patch("router.status_updater.update_wiki_status"),
@@ -403,12 +396,12 @@ def test_from_account_api_queues_jobs_from_recent_contribs(client):
 
     assert resp.status_code == 200
     data = resp.get_json()
-    assert data["status"] == "queued"
+    assert data["status"] == "pending_approval"
     assert data["resolved_user"] == "BadUser"
-    assert data["total_items"] == 2
+    assert data["total_items"] == 0
     assert data["dry_run"] is True
     assert data["limit"] == 2
-    mock_task.delay.assert_called_once_with(42)
+    mock_task.delay.assert_not_called()
 
 
 def test_fetch_contribs_after_timestamp_requests_timestamp_and_filters_strictly():
