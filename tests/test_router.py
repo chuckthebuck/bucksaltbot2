@@ -210,6 +210,46 @@ def test_approve_batch_request_by_admin_queues_all_pending_jobs_in_batch(client)
     assert mock_task.delay.call_count == 2
 
 
+def test_request_preview_from_diff_full_loads_all_items(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "alice", "diff", "from_diff")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch(
+            "router._load_diff_payload",
+            return_value={"diff": "123", "limit": 5, "requested_by": "alice"},
+        ),
+        patch("router._store_diff_payload"),
+        patch(
+            "router.fetch_diff_author_and_timestamp",
+            return_value={"user": "BadUser", "timestamp": "2026-03-26T00:00:00Z"},
+        ),
+        patch(
+            "router.fetch_rollbackable_window_end_timestamp",
+            return_value="2026-03-26T01:00:00Z",
+        ),
+        patch(
+            "router.iter_contribs_after_timestamp",
+            return_value=iter(
+                [
+                    {"title": "File:One.jpg", "user": "BadUser"},
+                    {"title": "File:Two.jpg", "user": "BadUser"},
+                ]
+            ),
+        ) as mock_iter,
+    ):
+        resp = client.get("/api/v1/rollback/requests/1/preview?endpoint=from_diff&full=1")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["endpoint"] == "from_diff"
+    assert data["total_items"] == 2
+    assert data["full_from_diff"] is True
+    assert mock_iter.call_args.kwargs["limit"] is None
+
+
 def test_create_job_dry_run_flag_persisted(client):
     """dry_run=True is recorded and the task is still enqueued."""
     _set_session(client, "alice")
