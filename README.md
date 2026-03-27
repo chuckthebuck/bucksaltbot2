@@ -4,18 +4,18 @@ Buckbot is a distributed rollback orchestration system for Wikimedia projects, d
 
 It is built to handle burst workloads (including tens of thousands of edits) while maintaining control, observability, and reliability.
 
----
 
 ##  Overview
 
 Buckbot is at its heart an attempt at improving a rollback script to clean up a malfunctioning bot the grew wildly out of hand. 
 
----
 
 ##  Core Concepts
 
 ### tasks
+
 a task is an action you need chuckbot to do, and are created by the rollback* APIs (the names start with rollback, such as "api/v1/rollback from diff", ) and take many different forms and inputs, with a focus on keeping calls from the web API lightweight, with as much processing being done by chuckbot as possible. Hence why there's 2 different ways to rollback massive amounts of user contribs with tiny api calls. 
+
 ---
 ### Job Items
 the Job Item is the smallest unit of organisation within chuckbot. They are stored in a seprate table in mariaDB, and the rows unique within chuckbot, but the content's might not be (so the same page might be in the table many times.)
@@ -30,20 +30,16 @@ A **job item** represents a single rollback action:
 A Job item's data populates the mediawiki rollback command. 
 
 
----
+
 ### Jobs
 Jobs are the primary working unit of chuckbot. Jobs are a collection of job items that are processed sequentially within the job by a celery worker. Multiple jobs can makeup a batch, 
 Stored in `rollback_jobs`
 
 A **job** represents a logical request, such as:
-> “Rollback all edits from a specific user or diff”
-however, there exists 2 classes of jobs: rollback and prep jobs.
-rollback jobs are a list of job with a length defined by an envvar. they contain paramiters like who requested the job, it's staus, and if it's a dry run or not. It also can contain a batch number. 
-**JOBS OCCASIONALLY ARE PERFORMED SEQUENTIALLY, BUT THIS IS NOT ENFORCED OR GUARANTEED** each job is put into a queue, where a worker will pick it up as soon as it can, and processing time does vary. a job with 1 item is much faster than 500 items. 
+“Rollback all edits from a specific user or diff”
+however, there exists 2 classes of jobs: rollback and prep jobs. Prep jobs create rollback jobs based on some input, normally a user and some filtering criteria, that then creates all the rollback jobs for that task and batch. Rollback jobs are a list of job with a length defined by an envvar. they contain paramiters like who requested the job, it's staus, and if it's a dry run or not. It also can contain a batch number. 
+**JOBS WITHIN A BATCH OCCASIONALLY ARE PERFORMED SEQUENTIALLY, BUT THIS IS NOT ENFORCED OR GUARANTEED** each job is put into a queue, where a worker will pick it up as soon as it can, and processing time does vary. a job with 1 item is much faster than 500 items. Jobs are orchestration units,  they do not directly execute actions.
 
-Jobs are orchestration units — they do not directly execute actions.
-
----
 
 ### Batches (`batch_id`)
 
@@ -56,7 +52,7 @@ Used for:
 - UI display
 - Notifications
 - Aggregated status
-every time you start a task, it's actions are put under one batch per request, so when you create a prep job, all rollback jobs created by it go under one batch. For a 100k edit task, that's 200 jobs of 500 items each. 
+every time you start a task, it's actions are put under one batch per request, so when you create a prep job, all rollback jobs created by it go under one batch. For a 100k edit task, that's 200 jobs of 500 items each. Batchs don't have a definied size limit as batches are just defined as all jobs with the same batch ID entry in the jobs table. 
 ---
 
 ##  Lifecycle
@@ -116,9 +112,9 @@ Expansion:
 → 5,000 edits
 
 Chunking:
-→ Job A (1000 items)
-→ Job B (1000 items)
-→ Job C (1000 items)
+→ Job A (5000 items)
+→ Job B (5000 items)
+→ Job C (5000 items)
 
 All share:
 batch_id = 1773857907459
@@ -197,9 +193,14 @@ Buckbot integrates with Wikimedia workflows:
 
 Buckbot runs on Toolforge and consists of:
 
+### Web UI
+-Gunicorn running a vue app for codex support. 
+-Uses codex to create the UI, hence why we need to build node and python. 
+(yes, the entire reason we build node.js and have to call NPM is because codex doesn't have native HTML support. no idea why, but at least node.js is the one language that can be added onto another language buildpack in heroku.)
+
 ### API Layer
 - Flask application
-- Handles authentication, validation, job creation
+- Handles authentication, validation, job creation and web routing 
 
 ### Queue
 - Celery + Redis
