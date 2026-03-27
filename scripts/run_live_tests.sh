@@ -27,4 +27,4 @@ echo "Working directory: $(pwd)"
 echo "Python: $(python --version 2>&1)"
 echo ""
 
-python -m pytest tests/live/ -v --tb=short "$@"
+python3 -m pytest tests/live/ -v --tb=short "$@"
