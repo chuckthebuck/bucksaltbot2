@@ -10,6 +10,7 @@ skipped automatically when the worker heartbeat is absent or stale.
 
 from __future__ import annotations
 
+import os
 import time
 
 import pytest
@@ -255,6 +256,11 @@ class TestJobPipeline:
         self, admin_client, db_conn, live_redis
     ):
         """Canceling a running job causes items to be marked ``canceled``."""
+        if not os.environ.get("LIVE_TEST_ALLOW_CANCEL"):
+            pytest.skip(
+                "Skipping self-cancel live test; set LIVE_TEST_ALLOW_CANCEL=1 to enable"
+            )
+
         _require_worker(live_redis)
         client, user = admin_client
 
