@@ -22,6 +22,9 @@ import os
 import pathlib
 import sys
 
+# Live tests should exercise end-to-end execution without manual approval clicks.
+os.environ.setdefault("LIVE_TEST_AUTO_APPROVE_REQUESTS", "1")
+
 import pytest
 
 # ── Path setup ────────────────────────────────────────────────────────────────

@@ -1793,6 +1793,24 @@ def _can_run_live(actor: str, requested_by: str, approval_required: str | None) 
     return "retry_any" in _user_permissions(actor)
 
 
+def _should_autoapprove_request(actor: str, required_level: str | None) -> bool:
+    """Return True when test-mode requests should skip manual approval.
+
+    This is intentionally restricted to test runs with an explicit opt-in env var
+    to avoid changing production approval workflows.
+    """
+    if not actor or not required_level:
+        return False
+
+    if not app.config.get("TESTING"):
+        return False
+
+    if not _parse_bool(os.environ.get("LIVE_TEST_AUTO_APPROVE_REQUESTS"), default=False):
+        return False
+
+    return _can_actor_approve(actor, required_level)
+
+
 def _pending_batch_request_job_ids(
     cursor, batch_id: int, request_type: str
 ) -> list[int]:
@@ -2103,6 +2121,7 @@ def rollback_from_diff_api():
         ), 403
 
     batch_id = int(time.time() * 1000)
+    autoapproved = False
 
     try:
         with get_conn() as conn:
@@ -2134,6 +2153,24 @@ def rollback_from_diff_api():
                     ),
                 )
                 job_id = cursor.lastrowid
+
+                autoapproved = _should_autoapprove_request(
+                    username,
+                    _APPROVAL_REQUIRED_MAINTAINER,
+                )
+                if autoapproved:
+                    cursor.execute(
+                        """
+                        UPDATE rollback_jobs
+                        SET
+                            status=%s,
+                            approved_endpoint=%s,
+                            approved_by=%s,
+                            approved_at=CURRENT_TIMESTAMP
+                        WHERE id=%s
+                        """,
+                        ("resolving", _ENDPOINT_FROM_DIFF, username, job_id),
+                    )
             conn.commit()
 
         _store_diff_payload(
@@ -2145,8 +2182,15 @@ def rollback_from_diff_api():
                 "dry_run": dry_run,
                 "limit": limit,
                 "requested_endpoint": _ENDPOINT_FROM_DIFF,
+                "approved_endpoint": _ENDPOINT_FROM_DIFF if autoapproved else None,
+                "approved_by": username if autoapproved else None,
+                "approved_at": _utc_now_iso() if autoapproved else None,
             },
         )
+
+        if autoapproved:
+            _set_diff_error(job_id, None)
+            resolve_diff_rollback_job.delay(job_id)
     except Exception as e:
         logging.exception("Error in rollback_from_diff_api")
         return jsonify({"detail": "Failed to create rollback jobs: " + str(e)}), 500
@@ -2158,12 +2202,14 @@ def rollback_from_diff_api():
             "chunks": 1,
             "batch_id": batch_id,
             "total_items": 0,
-            "status": _REQUEST_STATUS_PENDING_APPROVAL,
+            "status": "resolving" if autoapproved else _REQUEST_STATUS_PENDING_APPROVAL,
             "diff": diff,
             "dry_run": dry_run,
             "limit": limit,
             "request_type": _REQUEST_TYPE_DIFF,
             "requested_endpoint": _ENDPOINT_FROM_DIFF,
+            "approved_endpoint": _ENDPOINT_FROM_DIFF if autoapproved else None,
+            "approved_by": username if autoapproved else None,
             "approval_required": _APPROVAL_REQUIRED_MAINTAINER,
         }
     )
@@ -2252,6 +2298,7 @@ def rollback_from_account_api():
 
     try:
         batch_id = int(time.time() * 1000)
+        autoapproved = False
 
         with get_conn() as conn:
             with conn.cursor() as cursor:
@@ -2282,6 +2329,24 @@ def rollback_from_account_api():
                     ),
                 )
                 job_id = cursor.lastrowid
+
+                autoapproved = _should_autoapprove_request(
+                    username,
+                    _APPROVAL_REQUIRED_MAINTAINER,
+                )
+                if autoapproved:
+                    cursor.execute(
+                        """
+                        UPDATE rollback_jobs
+                        SET
+                            status=%s,
+                            approved_endpoint=%s,
+                            approved_by=%s,
+                            approved_at=CURRENT_TIMESTAMP
+                        WHERE id=%s
+                        """,
+                        ("resolving", _ENDPOINT_FROM_ACCOUNT, username, job_id),
+                    )
             conn.commit()
 
         _store_diff_payload(
@@ -2293,8 +2358,15 @@ def rollback_from_account_api():
                 "dry_run": dry_run,
                 "limit": limit,
                 "requested_endpoint": _ENDPOINT_FROM_ACCOUNT,
+                "approved_endpoint": _ENDPOINT_FROM_ACCOUNT if autoapproved else None,
+                "approved_by": username if autoapproved else None,
+                "approved_at": _utc_now_iso() if autoapproved else None,
             },
         )
+
+        if autoapproved:
+            _set_diff_error(job_id, None)
+            resolve_diff_rollback_job.delay(job_id)
 
     except ValueError as e:
         return jsonify({"detail": str(e)}), 400
@@ -2309,12 +2381,14 @@ def rollback_from_account_api():
             "chunks": 1,
             "batch_id": batch_id,
             "total_items": 0,
-            "status": _REQUEST_STATUS_PENDING_APPROVAL,
+            "status": "resolving" if autoapproved else _REQUEST_STATUS_PENDING_APPROVAL,
             "resolved_user": target_user,
             "dry_run": dry_run,
             "limit": limit,
             "request_type": _REQUEST_TYPE_DIFF,
             "requested_endpoint": _ENDPOINT_FROM_ACCOUNT,
+            "approved_endpoint": _ENDPOINT_FROM_ACCOUNT if autoapproved else None,
+            "approved_by": username if autoapproved else None,
             "approval_required": _APPROVAL_REQUIRED_MAINTAINER,
         }
     )

@@ -174,8 +174,8 @@ class TestFromDiffInputValidation:
         )
         assert resp.status_code == 400
 
-    def test_valid_diff_id_creates_pending_approval_job(self, admin_client, db_conn):
-        """A valid diff ID creates a request in ``pending_approval`` status."""
+    def test_valid_diff_id_creates_resolving_job(self, admin_client, db_conn):
+        """A valid diff ID is auto-approved in live tests and starts ``resolving``."""
         client, _user = admin_client
         resp = client.post(
             "/api/v1/rollback/from-diff",
@@ -183,7 +183,7 @@ class TestFromDiffInputValidation:
         )
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["status"] == "pending_approval"
+        assert data["status"] == "resolving"
         assert "job_id" in data
 
         # Clean up the created job record.
