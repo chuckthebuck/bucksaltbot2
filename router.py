@@ -1750,6 +1750,11 @@ def _normalize_request_type(raw_value) -> str:
     return _REQUEST_TYPE_QUEUE
 
 
+def _normalize_request_endpoint(raw_value) -> str | None:
+    value = str(raw_value or "").strip().lower().replace("-", "_")
+    return value or None
+
+
 def _approval_requirement_for_request(
     request_type: str, requested_endpoint: str | None
 ) -> str | None:
@@ -2595,7 +2600,7 @@ def rollback_request_preview_api(job_id: int):
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
 
-    requested_endpoint = str(request.args.get("endpoint") or "").strip().lower() or None
+    requested_endpoint = _normalize_request_endpoint(request.args.get("endpoint"))
     full_from_diff = _parse_bool(request.args.get("full"), default=True)
 
     with get_conn() as conn:
@@ -2662,11 +2667,9 @@ def rollback_request_preview_api(job_id: int):
 
     endpoint = (
         requested_endpoint
-        or str(
+        or _normalize_request_endpoint(
             stored_endpoint or payload.get("requested_endpoint") or _ENDPOINT_FROM_DIFF
         )
-        .strip()
-        .lower()
     )
     if endpoint not in _ALLOWED_DIFF_REQUEST_ENDPOINTS:
         return jsonify({"detail": "Invalid endpoint"}), 400
@@ -3222,7 +3225,7 @@ def approve_rollback_job(job_id: int):
         return jsonify({"detail": "Not authenticated"}), 401
 
     payload = request.get_json(silent=True) or {}
-    endpoint_override = str(payload.get("endpoint") or "").strip().lower() or None
+    endpoint_override = _normalize_request_endpoint(payload.get("endpoint"))
 
     with get_conn() as conn:
         with conn.cursor() as cursor:
@@ -3261,7 +3264,7 @@ def approve_rollback_job(job_id: int):
             ) = job
 
             request_type = _normalize_request_type(request_type)
-            requested_endpoint = str(requested_endpoint or "").strip().lower() or None
+            requested_endpoint = _normalize_request_endpoint(requested_endpoint)
             approval_required = approval_required or _approval_requirement_for_request(
                 request_type, requested_endpoint
             )
@@ -3454,7 +3457,7 @@ def reject_rollback_request(job_id: int):
             ) = row
 
             request_type = _normalize_request_type(request_type)
-            requested_endpoint = str(requested_endpoint or "").strip().lower() or None
+            requested_endpoint = _normalize_request_endpoint(requested_endpoint)
             approval_required = approval_required or _approval_requirement_for_request(
                 request_type, requested_endpoint
             )
@@ -3551,7 +3554,7 @@ def force_dry_run_rollback_request(job_id: int):
             ) = row
 
             request_type = _normalize_request_type(request_type)
-            requested_endpoint = str(requested_endpoint or "").strip().lower() or None
+            requested_endpoint = _normalize_request_endpoint(requested_endpoint)
             approval_required = approval_required or _approval_requirement_for_request(
                 request_type, requested_endpoint
             )
@@ -3636,7 +3639,7 @@ def run_dry_run_job_live(job_id: int):
             ) = row
 
             request_type = _normalize_request_type(request_type)
-            requested_endpoint = str(requested_endpoint or "").strip().lower() or None
+            requested_endpoint = _normalize_request_endpoint(requested_endpoint)
             approval_required = approval_required or _approval_requirement_for_request(
                 request_type, requested_endpoint
             )

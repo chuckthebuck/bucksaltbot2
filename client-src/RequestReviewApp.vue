@@ -40,6 +40,12 @@ const pendingRequests = computed(() =>
   requests.value.filter((r) => r.status === "pending_approval")
 );
 
+const actionableRequests = computed(() =>
+  requests.value.filter(
+    (r) => r.status === "pending_approval" || (r.status === "completed" && r.dry_run)
+  )
+);
+
 function normalizeEndpoint(endpoint?: string | null): string | null {
   if (!endpoint) return null;
   const normalized = String(endpoint).trim().toLowerCase().replace(/-/g, "_");
@@ -283,7 +289,7 @@ function onVisibilityChange() {
 
     <div v-if="loading">Loading requests...</div>
 
-    <div v-else-if="!requests.length" class="request-empty">
+    <div v-else-if="!actionableRequests.length" class="request-empty">
       No rollback requests found.
     </div>
 
@@ -304,7 +310,7 @@ function onVisibilityChange() {
           </tr>
         </thead>
         <tbody>
-          <template v-for="row in requests" :key="row.id">
+          <template v-for="row in actionableRequests" :key="row.id">
             <tr>
               <td>{{ row.id }}</td>
               <td>{{ row.requested_by }}</td>
