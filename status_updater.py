@@ -146,6 +146,8 @@ def _get_authenticated_site() -> pywikibot.Site:
 
 def _is_live() -> bool:
     """Return True when running in production (``NOTDEV`` is set)."""
+    if os.environ.get("LIVE_TEST_DISABLE_STATUS_UPDATES"):
+        return False
     return bool(os.environ.get("NOTDEV"))
 
 

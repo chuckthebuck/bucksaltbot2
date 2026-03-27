@@ -24,6 +24,8 @@ import sys
 
 # Live tests should exercise end-to-end execution without manual approval clicks.
 os.environ.setdefault("LIVE_TEST_AUTO_APPROVE_REQUESTS", "1")
+# Avoid writing production on-wiki status pages during integration tests.
+os.environ.setdefault("LIVE_TEST_DISABLE_STATUS_UPDATES", "1")
 
 import pytest
 
