@@ -78,30 +78,77 @@ _CONFIG_EDIT_PRIMARY_ACCOUNT = (
 )
 
 _USER_GRANT_RIGHTS = {
-    "from_diff",
-    "batch",
+    "rollback_diff",
+    "rollback_account",
+    "rollback_batch",
+    "rollback_diff_dry_run_only",
+    "approve_jobs",
+    "autoapprove_jobs",
+    "force_dry_run",
     "view_all",
+    "edit_config",
+    "manage_user_grants",
     "cancel_any",
     "retry_any",
-    "from_diff_dry_run_only",
 }
 
 _USER_GRANT_GROUPS = {
     "viewer": {"view_all"},
-    "diff": {"from_diff"},
-    "diff_dry_run": {"from_diff", "from_diff_dry_run_only"},
-    "batch": {"batch"},
-    "support": {"view_all", "retry_any"},
-    "operator": {"view_all", "from_diff", "batch", "cancel_any", "retry_any"},
+    "rollbacker": {"rollback_diff", "rollback_account"},
+    "rollbacker_dry_run": {
+        "rollback_diff",
+        "rollback_account",
+        "rollback_diff_dry_run_only",
+    },
+    "batch_runner": {"rollback_batch"},
+    "jobs_moderator": {
+        "approve_jobs",
+        "force_dry_run",
+        "cancel_any",
+        "retry_any",
+    },
+    "admin": {
+        "view_all",
+        "rollback_diff",
+        "rollback_account",
+        "rollback_batch",
+        "approve_jobs",
+        "autoapprove_jobs",
+        "force_dry_run",
+        "cancel_any",
+        "retry_any",
+        "edit_config",
+        "manage_user_grants",
+    },
+}
+
+_LEGACY_RIGHT_ALIASES = {
+    "from_diff": "rollback_diff",
+    "batch": "rollback_batch",
+    "from_diff_dry_run_only": "rollback_diff_dry_run_only",
+    "read_all": "view_all",
+}
+
+_LEGACY_GROUP_ALIASES = {
+    "diff": "rollbacker",
+    "diff_dry_run": "rollbacker_dry_run",
+    "batch": "batch_runner",
+    "support": "jobs_moderator",
+    "operator": "admin",
 }
 
 _USER_IMPLICIT_FLAGS = (
+    "authenticated",
     "bot_admin",
     "maintainer",
+    "commons_admin",
+    "commons_rollbacker",
     "tester",
     "read_only",
     "extra_authorized",
 )
+
+_AUTO_GRANT_ROLE_KEYS = set(_USER_IMPLICIT_FLAGS)
 
 _USER_SET_CONFIG_KEYS = {
     "EXTRA_AUTHORIZED_USERS",
@@ -121,6 +168,7 @@ _INT_CONFIG_KEYS = {
 
 _JSON_CONFIG_KEYS = {
     "USER_GRANTS_JSON",
+    "AUTO_GRANTS_JSON",
 }
 
 _RUNTIME_AUTHZ_ALLOWED_KEYS = sorted(
@@ -153,8 +201,12 @@ def _normalize_username(raw_value: str) -> str:
 
 def _normalize_grant_atom(atom: str) -> str:
     normalized = str(atom or "").strip().lower().replace(" ", "_")
-    if normalized == "read_all":
-        return "view_all"
+    if normalized.startswith("group:"):
+        group_name = normalized.split(":", 1)[1]
+        group_name = _LEGACY_GROUP_ALIASES.get(group_name, group_name)
+        return f"group:{group_name}"
+
+    normalized = _LEGACY_RIGHT_ALIASES.get(normalized, normalized)
     return normalized
 
 
@@ -254,7 +306,135 @@ def _expand_user_grants(config: dict, username: str) -> set[str]:
     return expanded
 
 
-def _get_user_grants_payload(target_username: str, config: dict) -> dict:
+def _implicit_role_flags(
+    config: dict, username: str, commons_groups: set[str] | None = None
+) -> dict[str, bool]:
+    normalized_username = _normalize_username(username)
+    if not normalized_username:
+        return {role: False for role in _USER_IMPLICIT_FLAGS}
+
+    groups = set(commons_groups if commons_groups is not None else get_user_groups(normalized_username))
+
+    return {
+        "authenticated": True,
+        "bot_admin": bool(is_bot_admin(normalized_username)),
+        "maintainer": bool(is_maintainer(normalized_username)),
+        "commons_admin": bool("sysop" in groups),
+        "commons_rollbacker": bool("rollbacker" in groups),
+        "tester": bool(normalized_username in config["USERS_TESTER"]),
+        "read_only": bool(normalized_username in config["USERS_READ_ONLY"]),
+        "extra_authorized": bool(normalized_username in config["EXTRA_AUTHORIZED_USERS"]),
+    }
+
+
+def _normalize_auto_grants_map_input(value, key: str) -> dict:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{key} must be valid JSON") from exc
+
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be an object mapping role names to grants")
+
+    normalized = {}
+
+    for raw_role, raw_grants in value.items():
+        role_name = str(raw_role or "").strip().lower().replace(" ", "_")
+        if not role_name:
+            continue
+
+        if role_name not in _AUTO_GRANT_ROLE_KEYS:
+            raise ValueError(f"Unknown auto-grant role '{role_name}'")
+
+        atoms = []
+        if isinstance(raw_grants, dict):
+            rights = raw_grants.get("rights", [])
+            groups = raw_grants.get("groups", [])
+            if isinstance(rights, str):
+                rights = [part.strip() for part in rights.split(",") if part.strip()]
+            if isinstance(groups, str):
+                groups = [part.strip() for part in groups.split(",") if part.strip()]
+            if isinstance(groups, list):
+                atoms.extend([f"group:{g}" for g in groups])
+            if isinstance(rights, list):
+                atoms.extend([str(r) for r in rights])
+        elif isinstance(raw_grants, list):
+            atoms = [str(item) for item in raw_grants]
+        elif isinstance(raw_grants, str):
+            atoms = [part.strip() for part in raw_grants.replace("\n", ",").split(",")]
+        else:
+            raise ValueError(f"{key}.{role_name} must be a list/string/object")
+
+        role_atoms = set()
+        for atom in atoms:
+            normalized_atom = _normalize_grant_atom(atom)
+            if not normalized_atom:
+                continue
+
+            if normalized_atom.startswith("group:"):
+                group_name = normalized_atom.split(":", 1)[1]
+                if group_name not in _USER_GRANT_GROUPS:
+                    raise ValueError(f"Unknown grant group '{group_name}' for role {role_name}")
+                role_atoms.add(normalized_atom)
+                continue
+
+            if normalized_atom in _USER_GRANT_GROUPS:
+                role_atoms.add(f"group:{normalized_atom}")
+                continue
+
+            if normalized_atom not in _USER_GRANT_RIGHTS:
+                raise ValueError(f"Unknown right '{normalized_atom}' for role {role_name}")
+
+            role_atoms.add(normalized_atom)
+
+        normalized[role_name] = sorted(role_atoms)
+
+    return normalized
+
+
+def _expand_auto_grants(config: dict, username: str) -> set[str]:
+    role_map = config.get("AUTO_GRANTS_JSON") or {}
+    if not isinstance(role_map, dict):
+        return set()
+
+    implicit_flags = _implicit_role_flags(config, username)
+    expanded = set()
+
+    for role, enabled in implicit_flags.items():
+        if not enabled:
+            continue
+
+        role_atoms = role_map.get(role) or []
+        for raw_atom in role_atoms:
+            atom = _normalize_grant_atom(raw_atom)
+            if not atom:
+                continue
+
+            if atom.startswith("group:"):
+                group_name = atom.split(":", 1)[1]
+                expanded |= _USER_GRANT_GROUPS.get(group_name, set())
+                continue
+
+            if atom in _USER_GRANT_GROUPS:
+                expanded |= _USER_GRANT_GROUPS[atom]
+                continue
+
+            if atom in _USER_GRANT_RIGHTS:
+                expanded.add(atom)
+
+    return expanded
+
+
+def _expand_all_grants(config: dict, username: str) -> set[str]:
+    return _expand_user_grants(config, username) | _expand_auto_grants(config, username)
+
+
+def _get_user_grants_payload(
+    target_username: str,
+    config: dict,
+    commons_groups: set[str] | None = None,
+) -> dict:
     normalized_username = _normalize_username(target_username)
     grants_map = config.get("USER_GRANTS_JSON") or {}
     atoms = list(grants_map.get(normalized_username, []))
@@ -265,15 +445,10 @@ def _get_user_grants_payload(target_username: str, config: dict) -> dict:
     rights = sorted([atom for atom in atoms if not atom.startswith("group:")])
     expanded_rights = sorted(_expand_user_grants(config, normalized_username))
 
-    implicit = {
-        "bot_admin": bool(is_bot_admin(normalized_username)),
-        "maintainer": bool(is_maintainer(normalized_username)),
-        "tester": bool(normalized_username in config["USERS_TESTER"]),
-        "read_only": bool(normalized_username in config["USERS_READ_ONLY"]),
-        "extra_authorized": bool(
-            normalized_username in config["EXTRA_AUTHORIZED_USERS"]
-        ),
-    }
+    resolved_groups = set(
+        commons_groups if commons_groups is not None else get_user_groups(normalized_username)
+    )
+    implicit = _implicit_role_flags(config, normalized_username, commons_groups=resolved_groups)
 
     return {
         "username": target_username,
@@ -283,6 +458,7 @@ def _get_user_grants_payload(target_username: str, config: dict) -> dict:
         "rights": rights,
         "expanded_rights": expanded_rights,
         "implicit": implicit,
+        "commons_groups": sorted(resolved_groups),
     }
 
 
@@ -328,6 +504,9 @@ def _runtime_authz_defaults() -> dict:
         "RATE_LIMIT_JOBS_PER_HOUR": int(RATE_LIMIT_JOBS_PER_HOUR),
         "RATE_LIMIT_TESTER_JOBS_PER_HOUR": int(RATE_LIMIT_TESTER_JOBS_PER_HOUR),
         "USER_GRANTS_JSON": _parse_user_grants_env(os.getenv("USER_GRANTS_JSON", "")),
+        "AUTO_GRANTS_JSON": _normalize_auto_grants_map_input(
+            os.getenv("AUTO_GRANTS_JSON", "{}"), "AUTO_GRANTS_JSON"
+        ),
     }
 
 
@@ -364,7 +543,10 @@ def _load_runtime_authz_overrides() -> dict:
 
         if key in _JSON_CONFIG_KEYS:
             try:
-                overrides[key] = _normalize_user_grants_map_input(raw_value, key)
+                if key == "AUTO_GRANTS_JSON":
+                    overrides[key] = _normalize_auto_grants_map_input(raw_value, key)
+                else:
+                    overrides[key] = _normalize_user_grants_map_input(raw_value, key)
             except ValueError:
                 overrides[key] = defaults.get(key, {})
 
@@ -460,7 +642,10 @@ def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
 
         if key in _JSON_CONFIG_KEYS:
             try:
-                normalized[key] = _normalize_user_grants_map_input(value, key)
+                if key == "AUTO_GRANTS_JSON":
+                    normalized[key] = _normalize_auto_grants_map_input(value, key)
+                else:
+                    normalized[key] = _normalize_user_grants_map_input(value, key)
             except ValueError as exc:
                 errors.append(str(exc))
 
@@ -1358,11 +1543,11 @@ if not os.environ.get("NOTDEV"):
     load_dotenv()
 
 
-def get_user_groups(username):
+def get_user_groups(username, force_refresh: bool = False):
     now = time.time()
 
     cached = _group_cache.get(username)
-    if cached and (now - cached["ts"] < GROUP_CACHE_TTL):
+    if not force_refresh and cached and (now - cached["ts"] < GROUP_CACHE_TTL):
         return cached["groups"]
 
     url = "https://commons.wikimedia.org/w/api.php"
@@ -1424,23 +1609,52 @@ def is_bot_admin(username: str) -> bool:
 def _can_view_runtime_config(username: str) -> bool:
     if not username:
         return False
-    return is_bot_admin(username)
+    if is_bot_admin(username):
+        return True
+
+    if is_maintainer(username):
+        return True
+
+    config = _effective_runtime_authz_config()
+    grants = _expand_all_grants(config, username)
+    return "edit_config" in grants or "manage_user_grants" in grants
 
 
 def _can_edit_runtime_config(username: str) -> bool:
     if not username:
         return False
+
     return (
         is_bot_admin(username)
         and username.strip().lower() == _CONFIG_EDIT_PRIMARY_ACCOUNT
-    )
+    ) or _user_has_grant_right(username, "edit_config")
+
+
+def _can_manage_user_grants(username: str) -> bool:
+    if not username:
+        return False
+
+    if is_bot_admin(username):
+        return True
+
+    return _user_has_grant_right(username, "manage_user_grants")
+
+
+def _user_has_grant_right(username: str, right: str) -> bool:
+    normalized_right = _normalize_grant_atom(right)
+    if normalized_right not in _USER_GRANT_RIGHTS:
+        return False
+
+    config = _effective_runtime_authz_config()
+    grants = _expand_all_grants(config, username)
+    return normalized_right in grants
 
 
 def is_tester(username: str) -> bool:
     """Return True if the user is in the USERS_TESTER env-var list.
 
-    Testers sit between regular users and maintainers: they have access to all
-    tools (from_diff, batch, read_all) and a higher rate limit, but no
+    Testers sit between regular users and maintainers: they have rollback
+    access plus read-all and a higher rate limit, but no
     cross-user cancel or retry privileges.
     """
     if not username:
@@ -1460,23 +1674,31 @@ def _user_permissions(username: str) -> frozenset:
     admin (Commons sysop)            — can log in; base perms only
     regular user (rollbacker/sysop)  — rollback queue only
 
-    Permission strings
-    ------------------
-    read_own               — view the user's own jobs
-    write                  — submit new rollback jobs
-    cancel_own             — cancel the user's own jobs
-    retry_own              — retry the user's own jobs
-    read_all               — view every user's jobs (all-jobs interface)
-    view_all               — alias for read_all (for grant semantics)
-    from_diff              — use the rollback-from-diff interface
-    from_diff_dry_run_only — can use from-diff only when dry_run=true
-    batch                  — use the batch rollback interface
-    cancel_any             — cancel any non-privileged (regular) user's job
-    retry_any              — retry any user's job
-    cancel_admin_jobs      — cancel a Commons admin (sysop) user's job; all maintainers
-    cancel_maintainer_jobs — cancel a maintainer's job; only bot admins possess this
-    config_view            — view runtime config editor/API; bot admins only
-    config_edit            — edit runtime config; primary account only (default: chuckbot)
+    Permission strings (canonical)
+    ------------------------------
+    read_own                     — view the user's own jobs
+    write                        — submit baseline queue rollback jobs
+    cancel_own                   — cancel the user's own jobs
+    retry_own                    — retry the user's own jobs
+    view_all                     — view every user's jobs (all-jobs interface)
+    rollback_diff                — submit diff-based rollback requests
+    rollback_account             — submit account-based rollback requests
+    rollback_batch               — submit batch rollback requests
+    rollback_diff_dry_run_only   — diff/account rollback access is dry-run only
+    approve_jobs                 — approve/reject pending requests
+    autoapprove_jobs             — auto-approve requests in test mode when enabled
+    force_dry_run                — force pending requests into dry-run mode
+    cancel_any                   — cancel any non-privileged (regular) user's job
+    retry_any                    — retry any user's job
+    edit_config                  — edit runtime config
+    manage_user_grants           — manage user-grant atoms in runtime config
+    cancel_admin_jobs            — cancel a Commons admin (sysop) user's job; all maintainers
+    cancel_maintainer_jobs       — cancel a maintainer's job; only bot admins possess this
+    config_view                  — view runtime config editor/API
+    config_edit                  — edit runtime config API
+
+    Compatibility aliases are also emitted for legacy checks/UI:
+    read_all, from_diff, from_diff_dry_run_only, batch.
     """
     if not username:
         return frozenset()
@@ -1494,56 +1716,98 @@ def _user_permissions(username: str) -> frozenset:
     if is_maintainer(username):
         # Maintainers are above admins: they can cancel any admin's job.
         perms |= {
-            "read_all",
-            "from_diff",
-            "batch",
+            "view_all",
+            "rollback_diff",
+            "rollback_account",
+            "rollback_batch",
+            "approve_jobs",
+            "autoapprove_jobs",
+            "force_dry_run",
             "cancel_any",
             "retry_any",
+            "edit_config",
+            "manage_user_grants",
             "cancel_admin_jobs",
         }
         # Bot admins (chuckbot) sit above all maintainers and can cancel their jobs too.
         if is_bot_admin(username):
             perms.add("cancel_maintainer_jobs")
     elif is_tester(username):
-        # Testers get access to all tool interfaces but no cross-user actions.
-        perms |= {"read_all", "from_diff", "batch"}
+        # Testers get rollback access but no cross-user actions.
+        perms |= {
+            "view_all",
+            "rollback_diff",
+            "rollback_account",
+            "rollback_batch",
+        }
     else:
         # Legacy per-right grants for non-maintainer, non-tester accounts.
         if lower in config["USERS_GRANTED_FROM_DIFF"]:
-            perms.add("from_diff")
+            perms |= {"rollback_diff", "rollback_account"}
         if lower in config["USERS_GRANTED_VIEW_ALL"]:
-            perms.add("read_all")
+            perms.add("view_all")
         if lower in config["USERS_GRANTED_BATCH"]:
-            perms.add("batch")
+            perms.add("rollback_batch")
         if lower in config["USERS_GRANTED_CANCEL_ANY"]:
             perms.add("cancel_any")
         if lower in config["USERS_GRANTED_RETRY_ANY"]:
             perms.add("retry_any")
 
         # User-centric grants (MediaWiki-style): username -> rights/groups.
-        expanded_grants = _expand_user_grants(config, lower)
-        if "from_diff_dry_run_only" in expanded_grants:
-            # Dry-run-only implies from_diff access but only in dry-run mode.
-            perms |= {"from_diff", "from_diff_dry_run_only"}
-        if "from_diff" in expanded_grants:
-            perms.add("from_diff")
+        expanded_grants = _expand_all_grants(config, lower)
+        if "rollback_diff_dry_run_only" in expanded_grants:
+            # Dry-run-only implies diff/account rollback access.
+            perms |= {
+                "rollback_diff",
+                "rollback_account",
+                "rollback_diff_dry_run_only",
+            }
+        if "rollback_diff" in expanded_grants:
+            perms.add("rollback_diff")
+        if "rollback_account" in expanded_grants:
+            perms.add("rollback_account")
         if "view_all" in expanded_grants:
-            perms |= {"read_all", "view_all"}
-        if "batch" in expanded_grants:
-            perms.add("batch")
+            perms.add("view_all")
+        if "rollback_batch" in expanded_grants:
+            perms.add("rollback_batch")
+        if "approve_jobs" in expanded_grants:
+            perms.add("approve_jobs")
+        if "autoapprove_jobs" in expanded_grants:
+            perms.add("autoapprove_jobs")
+        if "force_dry_run" in expanded_grants:
+            perms.add("force_dry_run")
+        if "edit_config" in expanded_grants:
+            perms.add("edit_config")
+        if "manage_user_grants" in expanded_grants:
+            perms.add("manage_user_grants")
         if "cancel_any" in expanded_grants:
             perms.add("cancel_any")
         if "retry_any" in expanded_grants:
             perms.add("retry_any")
 
-    if "read_all" in perms:
-        perms.add("view_all")
+    perms |= _expand_auto_grants(config, lower)
+
+    if "rollback_diff_dry_run_only" in perms:
+        perms |= {"rollback_diff", "rollback_account"}
+
+    # Compatibility aliases for existing checks/UI.
+    if "view_all" in perms:
+        perms.add("read_all")
+    if "rollback_diff" in perms:
+        perms.add("from_diff")
+    if "rollback_batch" in perms:
+        perms.add("batch")
+    if "rollback_diff_dry_run_only" in perms:
+        perms.add("from_diff_dry_run_only")
 
     if _can_view_runtime_config(username):
         perms.add("config_view")
 
     if _can_edit_runtime_config(username):
-        perms.add("config_edit")
+        perms |= {"config_edit", "edit_config"}
+
+    if _can_manage_user_grants(username):
+        perms.add("manage_user_grants")
 
     return frozenset(perms)
 
@@ -1769,6 +2033,9 @@ def _can_actor_approve(actor: str, required_level: str | None) -> bool:
     if not actor or not required_level:
         return False
 
+    if "approve_jobs" in _user_permissions(actor):
+        return True
+
     if required_level == _APPROVAL_REQUIRED_MAINTAINER:
         return is_maintainer(actor)
 
@@ -1811,6 +2078,9 @@ def _should_autoapprove_request(actor: str, required_level: str | None) -> bool:
         return False
 
     if not _parse_bool(os.environ.get("LIVE_TEST_AUTO_APPROVE_REQUESTS"), default=False):
+        return False
+
+    if "autoapprove_jobs" not in _user_permissions(actor):
         return False
 
     return _can_actor_approve(actor, required_level)
@@ -1944,11 +2214,13 @@ def goto():
     if not username:
         return redirect(url_for("login", referrer="/goto?tab=" + str(tab)))
 
+    perms = _user_permissions(username)
+
     if tab == "rollback-queue":
         return redirect("/rollback-queue")
 
     if tab == "rollback-batch":
-        if "write" not in _user_permissions(username):
+        if "rollback_batch" not in perms:
             abort(403)
         return redirect("/rollback_batch")
 
@@ -1960,12 +2232,12 @@ def goto():
         return redirect("/rollback-queue/all-jobs")
 
     if tab == "rollback-from-diff":
-        if "write" not in _user_permissions(username):
+        if "rollback_diff" not in perms:
             abort(403)
         return redirect("/rollback-from-diff")
 
     if tab == "rollback-account":
-        if "write" not in _user_permissions(username):
+        if "rollback_account" not in perms:
             abort(403)
         return redirect("/rollback-account")
 
@@ -2075,8 +2347,8 @@ def rollback_from_diff_api():
 
     perms = _user_permissions(username)
 
-    if "write" not in perms and "from_diff" not in perms:
-        return jsonify({"detail": "Forbidden: write access required"}), 403
+    if "rollback_diff" not in perms:
+        return jsonify({"detail": "Forbidden: rollback_diff right required"}), 403
 
     if not _check_rate_limit(username):
         return jsonify({"detail": "Rate limit exceeded; try again later"}), 429
@@ -2120,7 +2392,7 @@ def rollback_from_diff_api():
 
     dry_run = _parse_bool(dry_run_raw, default=False)
 
-    if "from_diff_dry_run_only" in perms and not dry_run:
+    if "rollback_diff_dry_run_only" in perms and not dry_run:
         return jsonify(
             {"detail": "Forbidden: from-diff access is limited to dry-run mode"}
         ), 403
@@ -2233,8 +2505,8 @@ def rollback_from_account_api():
 
     perms = _user_permissions(username)
 
-    if "write" not in perms and "from_diff" not in perms:
-        return jsonify({"detail": "Forbidden: write access required"}), 403
+    if "rollback_account" not in perms:
+        return jsonify({"detail": "Forbidden: rollback_account right required"}), 403
 
     if not _check_rate_limit(username):
         return jsonify({"detail": "Rate limit exceeded; try again later"}), 429
@@ -2285,7 +2557,7 @@ def rollback_from_account_api():
 
     dry_run = _parse_bool(dry_run_raw, default=False)
 
-    if "from_diff_dry_run_only" in perms and not dry_run:
+    if "rollback_diff_dry_run_only" in perms and not dry_run:
         return jsonify(
             {"detail": "Forbidden: from-diff access is limited to dry-run mode"}
         ), 403
@@ -2416,7 +2688,7 @@ def rollback_from_diff_page():
 
     perms = _user_permissions(username)
 
-    if "write" not in perms:
+    if "rollback_diff" not in perms:
         abort(403)
 
     return render_template(
@@ -2424,7 +2696,7 @@ def rollback_from_diff_page():
         username=username,
         max_limit=10000,
         default_limit=100,
-        from_diff_dry_run_only=bool("from_diff_dry_run_only" in perms),
+        from_diff_dry_run_only=bool("rollback_diff_dry_run_only" in perms),
         type="rollback-from-diff",
     )
 
@@ -2438,7 +2710,7 @@ def rollback_account_page():
 
     perms = _user_permissions(username)
 
-    if "write" not in perms:
+    if "rollback_account" not in perms:
         abort(403)
 
     return render_template(
@@ -2446,7 +2718,7 @@ def rollback_account_page():
         username=username,
         max_limit=_ACCOUNT_ROLLBACK_MAX_LIMIT,
         default_limit=_ACCOUNT_ROLLBACK_MAX_LIMIT,
-        from_diff_dry_run_only=bool("from_diff_dry_run_only" in perms),
+        from_diff_dry_run_only=bool("rollback_diff_dry_run_only" in perms),
         type="rollback-account",
     )
 
@@ -2846,7 +3118,7 @@ def rollback_batch():
     if not username:
         abort(401)
 
-    if "write" not in _user_permissions(username):
+    if "rollback_batch" not in _user_permissions(username):
         abort(403)
 
     return render_template(
@@ -2889,9 +3161,11 @@ def get_runtime_authz_api():
         {
             "config": _serialize_runtime_authz_config(config),
             "can_edit": _can_edit_runtime_config(username),
+            "can_manage_user_grants": _can_manage_user_grants(username),
             "editable_keys": _RUNTIME_AUTHZ_ALLOWED_KEYS,
             "grant_groups": sorted(_USER_GRANT_GROUPS.keys()),
             "grant_rights": sorted(_USER_GRANT_RIGHTS),
+            "auto_grant_roles": sorted(_AUTO_GRANT_ROLE_KEYS),
         }
     )
 
@@ -2929,9 +3203,11 @@ def update_runtime_authz_api():
             "ok": True,
             "config": _serialize_runtime_authz_config(effective),
             "can_edit": _can_edit_runtime_config(username),
+            "can_manage_user_grants": _can_manage_user_grants(username),
             "editable_keys": _RUNTIME_AUTHZ_ALLOWED_KEYS,
             "grant_groups": sorted(_USER_GRANT_GROUPS.keys()),
             "grant_rights": sorted(_USER_GRANT_RIGHTS),
+            "auto_grant_roles": sorted(_AUTO_GRANT_ROLE_KEYS),
         }
     )
 
@@ -2943,19 +3219,27 @@ def get_runtime_authz_user_grants(target_username: str):
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
 
-    if not _can_view_runtime_config(username):
+    if not _can_manage_user_grants(username):
         return jsonify({"detail": "Forbidden"}), 403
 
     normalized_target = _normalize_username(target_username)
     if not normalized_target:
         return jsonify({"detail": "Username is required"}), 400
 
+    refresh_commons = _parse_bool(
+        request.args.get("refresh_commons"), default=False
+    )
+
     config = _effective_runtime_authz_config()
-    payload = _get_user_grants_payload(normalized_target, config)
+    commons_groups = set(get_user_groups(normalized_target, force_refresh=refresh_commons))
+    payload = _get_user_grants_payload(
+        normalized_target, config, commons_groups=commons_groups
+    )
     payload["implicit_flag_order"] = list(_USER_IMPLICIT_FLAGS)
     payload["grant_groups"] = sorted(_USER_GRANT_GROUPS.keys())
     payload["grant_rights"] = sorted(_USER_GRANT_RIGHTS)
-    payload["can_edit"] = _can_edit_runtime_config(username)
+    payload["can_edit"] = _can_manage_user_grants(username)
+    payload["commons_groups_refreshed"] = bool(refresh_commons)
     return jsonify(payload)
 
 
@@ -2966,7 +3250,7 @@ def update_runtime_authz_user_grants(target_username: str):
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
 
-    if not _can_edit_runtime_config(username):
+    if not _can_manage_user_grants(username):
         return jsonify({"detail": "Forbidden"}), 403
 
     normalized_target = _normalize_username(target_username)
@@ -3014,7 +3298,7 @@ def update_runtime_authz_user_grants(target_username: str):
     updated_config = _effective_runtime_authz_config()
     response_payload = _get_user_grants_payload(normalized_target, updated_config)
     response_payload["ok"] = True
-    response_payload["can_edit"] = _can_edit_runtime_config(username)
+    response_payload["can_edit"] = _can_manage_user_grants(username)
     return jsonify(response_payload)
 
 
@@ -3100,6 +3384,9 @@ def create_rollback_job():
     items = payload.get("items") or payload.get("files") or []
     dry_run = _parse_bool(payload.get("dry_run", False), default=False)
     request_type = _normalize_request_type(payload.get("request_type"))
+
+    if request_type == _REQUEST_TYPE_BATCH and "rollback_batch" not in perms:
+        return jsonify({"detail": "Forbidden: rollback_batch right required"}), 403
 
     raw_batch_id = payload.get("batch_id")
 
@@ -3280,6 +3567,11 @@ def approve_rollback_job(job_id: int):
             if not _can_actor_approve(actor, approval_required):
                 return jsonify(
                     {"detail": "Forbidden: insufficient approval rights"}
+                ), 403
+
+            if "force_dry_run" not in _user_permissions(actor):
+                return jsonify(
+                    {"detail": "Forbidden: force_dry_run right required"}
                 ), 403
 
             approved_endpoint = endpoint_override or requested_endpoint

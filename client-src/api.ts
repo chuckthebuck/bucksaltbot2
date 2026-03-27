@@ -61,6 +61,7 @@ export interface RuntimeAuthzConfig {
   USERS_GRANTED_CANCEL_ANY: string[];
   USERS_GRANTED_RETRY_ANY: string[];
   USER_GRANTS_JSON: Record<string, string[]>;
+  AUTO_GRANTS_JSON: Record<string, string[]>;
   RATE_LIMIT_JOBS_PER_HOUR: number;
   RATE_LIMIT_TESTER_JOBS_PER_HOUR: number;
 }
@@ -68,9 +69,11 @@ export interface RuntimeAuthzConfig {
 export interface RuntimeAuthzResponse {
   config: RuntimeAuthzConfig;
   can_edit: boolean;
+  can_manage_user_grants?: boolean;
   editable_keys: string[];
   grant_groups?: string[];
   grant_rights?: string[];
+  auto_grant_roles?: string[];
 }
 
 export interface RuntimeUserGrantsResponse {
@@ -82,6 +85,8 @@ export interface RuntimeUserGrantsResponse {
   rights: string[];
   expanded_rights: string[];
   implicit: Record<string, boolean>;
+  commons_groups?: string[];
+  commons_groups_refreshed?: boolean;
   implicit_flag_order?: string[];
   grant_groups?: string[];
   grant_rights?: string[];
@@ -543,10 +548,18 @@ export async function updateRuntimeAuthzConfig(
 }
 
 export async function fetchRuntimeUserGrants(
-  username: string
+  username: string,
+  options?: { refreshCommons?: boolean }
 ): Promise<RuntimeUserGrantsResponse> {
   const normalized = username.trim();
-  const r = await fetch(`/api/v1/config/authz/user-grants/${encodeURIComponent(normalized)}`);
+  const params = new URLSearchParams();
+  if (options?.refreshCommons) {
+    params.set("refresh_commons", "1");
+  }
+
+  const query = params.toString();
+  const endpoint = `/api/v1/config/authz/user-grants/${encodeURIComponent(normalized)}${query ? `?${query}` : ""}`;
+  const r = await fetch(endpoint);
 
   const data = await r.json();
   if (!r.ok) {

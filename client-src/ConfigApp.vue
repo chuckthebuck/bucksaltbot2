@@ -1,6 +1,17 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { CdxButton, CdxField, CdxLookup, CdxMessage } from "@wikimedia/codex";
+import UnifiedTable from "./components/UnifiedTable.vue";
+import { type TableColumn } from "./components/unifiedTable";
+import {
+  buildSectionedToggleRows,
+  buildToggleRows,
+  filterToggleRowsBySection,
+  toggleCheckboxColumn,
+  toggleHelpColumn,
+  toggleLabelColumn,
+  type ToggleFieldRow,
+} from "./components/tableColumnFactories";
 import {
   fetchRuntimeAuthzConfig,
   fetchRuntimeUserGrants,
@@ -31,55 +42,146 @@ interface ConfigInitialProps {
 
 type GrantGroupKey =
   | "viewer"
-  | "diff"
-  | "diff_dry_run"
-  | "batch"
-  | "support"
-  | "operator";
+  | "rollbacker"
+  | "rollbacker_dry_run"
+  | "batch_runner"
+  | "jobs_moderator"
+  | "admin";
 
 type GrantRightKey =
   | "view_all"
-  | "from_diff"
-  | "from_diff_dry_run_only"
-  | "batch"
+  | "rollback_diff"
+  | "rollback_account"
+  | "rollback_batch"
+  | "rollback_diff_dry_run_only"
+  | "approve_jobs"
+  | "autoapprove_jobs"
+  | "force_dry_run"
+  | "edit_config"
+  | "manage_user_grants"
   | "cancel_any"
   | "retry_any";
 
 type ImplicitFlagKey =
+  | "authenticated"
   | "bot_admin"
   | "maintainer"
+  | "commons_admin"
+  | "commons_rollbacker"
+  | "tester"
+  | "read_only"
+  | "extra_authorized";
+
+type AutoGrantRoleKey =
+  | "authenticated"
+  | "bot_admin"
+  | "maintainer"
+  | "commons_admin"
+  | "commons_rollbacker"
   | "tester"
   | "read_only"
   | "extra_authorized";
 
 const userGrantGroupFields: Array<{ key: GrantGroupKey; label: string; help: string }> = [
   { key: "viewer", label: "viewer", help: "Can view all jobs." },
-  { key: "diff", label: "diff", help: "Can use from-diff." },
-  { key: "diff_dry_run", label: "diff_dry_run", help: "From-diff in dry-run mode only." },
-  { key: "batch", label: "batch", help: "Can use batch rollback." },
-  { key: "support", label: "support", help: "View-all + retry-any support role." },
-  { key: "operator", label: "operator", help: "Full operator rights." },
+  {
+    key: "rollbacker",
+    label: "rollbacker",
+    help: "Can submit rollback requests for diff and account endpoints.",
+  },
+  {
+    key: "rollbacker_dry_run",
+    label: "rollbacker_dry_run",
+    help: "Rollbacker rights with dry-run-only enforcement.",
+  },
+  { key: "batch_runner", label: "batch_runner", help: "Can submit batch rollback requests." },
+  {
+    key: "jobs_moderator",
+    label: "jobs_moderator",
+    help: "Can approve/review jobs and perform moderation actions.",
+  },
+  { key: "admin", label: "admin", help: "Broad rollback, jobs, and config rights." },
 ];
 
-const userGrantRightFields: Array<{ key: GrantRightKey; label: string; help: string }> = [
-  { key: "view_all", label: "view_all", help: "Read every user's jobs." },
-  { key: "from_diff", label: "from_diff", help: "Use rollback-from-diff." },
+const userGrantRightSections: Array<{
+  title: string;
+  fields: Array<{ key: GrantRightKey; label: string; help: string }>;
+}> = [
   {
-    key: "from_diff_dry_run_only",
-    label: "from_diff_dry_run_only",
-    help: "Allow from-diff only when dry_run=true.",
+    title: "Rollback rights",
+    fields: [
+      { key: "rollback_diff", label: "rollback_diff", help: "Use rollback-from-diff." },
+      {
+        key: "rollback_account",
+        label: "rollback_account",
+        help: "Use rollback-from-account.",
+      },
+      { key: "rollback_batch", label: "rollback_batch", help: "Submit batch rollback requests." },
+      {
+        key: "rollback_diff_dry_run_only",
+        label: "rollback_diff_dry_run_only",
+        help: "Enforce dry_run=true for diff/account rollback requests.",
+      },
+    ],
   },
-  { key: "batch", label: "batch", help: "Use batch rollback UI." },
-  { key: "cancel_any", label: "cancel_any", help: "Cancel regular users' jobs." },
-  { key: "retry_any", label: "retry_any", help: "Retry jobs across users." },
+  {
+    title: "Jobs rights",
+    fields: [
+      { key: "approve_jobs", label: "approve_jobs", help: "Approve or reject pending rollback requests." },
+      {
+        key: "autoapprove_jobs",
+        label: "autoapprove_jobs",
+        help: "Allow test-mode requests to auto-approve when enabled.",
+      },
+      { key: "force_dry_run", label: "force_dry_run", help: "Force pending requests to dry-run mode." },
+      { key: "cancel_any", label: "cancel_any", help: "Cancel regular users' jobs." },
+      { key: "retry_any", label: "retry_any", help: "Retry jobs across users." },
+    ],
+  },
+  {
+    title: "Administration rights",
+    fields: [
+      { key: "view_all", label: "view_all", help: "Read every user's jobs." },
+      { key: "edit_config", label: "edit_config", help: "Edit runtime authz config values." },
+      {
+        key: "manage_user_grants",
+        label: "manage_user_grants",
+        help: "Manage user-centric grant atoms and groups.",
+      },
+    ],
+  },
 ];
+
+const userGrantRightFields = userGrantRightSections.flatMap((section) => section.fields);
 
 const implicitFlagFields: Array<{ key: ImplicitFlagKey; label: string }> = [
+  { key: "authenticated", label: "authenticated" },
   { key: "bot_admin", label: "bot admin" },
   { key: "maintainer", label: "maintainer" },
+  { key: "commons_admin", label: "commons admin (sysop)" },
+  { key: "commons_rollbacker", label: "commons rollbacker" },
   { key: "tester", label: "tester" },
   { key: "read_only", label: "read only" },
   { key: "extra_authorized", label: "extra authorized" },
+];
+
+const autoGrantRoleFields: Array<{ key: AutoGrantRoleKey; label: string; help: string }> = [
+  { key: "authenticated", label: "authenticated", help: "Any logged-in user." },
+  { key: "bot_admin", label: "bot admin", help: "Hardcoded bot admin accounts." },
+  { key: "maintainer", label: "maintainer", help: "Tool maintainers." },
+  { key: "commons_admin", label: "commons admin", help: "Users in Commons sysop group." },
+  {
+    key: "commons_rollbacker",
+    label: "commons rollbacker",
+    help: "Users in Commons rollbacker group.",
+  },
+  { key: "tester", label: "tester", help: "Users in tester list." },
+  { key: "read_only", label: "read only", help: "Users in read-only list." },
+  {
+    key: "extra_authorized",
+    label: "extra authorized",
+    help: "Users in extra authorized list.",
+  },
 ];
 
 const listFields: Array<{ key: ListConfigKey; label: string; help: string }> = [
@@ -167,7 +269,8 @@ const loading = ref(true);
 const saving = ref(false);
 const errorMessage = ref("");
 const successMessage = ref("");
-const canEdit = ref(initialProps.can_edit_config);
+const canEditConfig = ref(initialProps.can_edit_config);
+const canManageUserGrants = ref(initialProps.can_edit_config);
 
 const config = ref<RuntimeAuthzConfig>({
   EXTRA_AUTHORIZED_USERS: [],
@@ -179,6 +282,7 @@ const config = ref<RuntimeAuthzConfig>({
   USERS_GRANTED_CANCEL_ANY: [],
   USERS_GRANTED_RETRY_ANY: [],
   USER_GRANTS_JSON: {},
+  AUTO_GRANTS_JSON: {},
   RATE_LIMIT_JOBS_PER_HOUR: 0,
   RATE_LIMIT_TESTER_JOBS_PER_HOUR: 0,
 });
@@ -198,33 +302,207 @@ const userSearchRequestId = ref(0);
 const selectedGrantUser = ref("");
 const userGrantLoaded = ref(false);
 const userGrantSaving = ref(false);
+const userGrantRefreshing = ref(false);
 const userGrantReason = ref("");
+const commonsGroups = ref<string[]>([]);
+const commonsGroupsFresh = ref(false);
+const selectedAutoGrantRole = ref<AutoGrantRoleKey>("commons_admin");
 
 const implicitFlags = ref<Record<ImplicitFlagKey, boolean>>({
+  authenticated: false,
   bot_admin: false,
   maintainer: false,
+  commons_admin: false,
+  commons_rollbacker: false,
   tester: false,
   read_only: false,
   extra_authorized: false,
 });
 
-const userGroupChecks = ref<Record<GrantGroupKey, boolean>>({
-  viewer: false,
-  diff: false,
-  diff_dry_run: false,
-  batch: false,
-  support: false,
-  operator: false,
-});
+function emptyGroupChecks(): Record<GrantGroupKey, boolean> {
+  return {
+    viewer: false,
+    rollbacker: false,
+    rollbacker_dry_run: false,
+    batch_runner: false,
+    jobs_moderator: false,
+    admin: false,
+  };
+}
 
-const userRightChecks = ref<Record<GrantRightKey, boolean>>({
-  view_all: false,
-  from_diff: false,
-  from_diff_dry_run_only: false,
-  batch: false,
-  cancel_any: false,
-  retry_any: false,
-});
+function emptyRightChecks(): Record<GrantRightKey, boolean> {
+  return {
+    view_all: false,
+    rollback_diff: false,
+    rollback_account: false,
+    rollback_diff_dry_run_only: false,
+    rollback_batch: false,
+    approve_jobs: false,
+    autoapprove_jobs: false,
+    force_dry_run: false,
+    edit_config: false,
+    manage_user_grants: false,
+    cancel_any: false,
+    retry_any: false,
+  };
+}
+
+const userGroupChecks = ref<Record<GrantGroupKey, boolean>>(emptyGroupChecks());
+const userRightChecks = ref<Record<GrantRightKey, boolean>>(emptyRightChecks());
+const autoGrantGroupChecks = ref<Record<GrantGroupKey, boolean>>(emptyGroupChecks());
+const autoGrantRightChecks = ref<Record<GrantRightKey, boolean>>(emptyRightChecks());
+
+const implicitFlagRows = computed<ToggleFieldRow<ImplicitFlagKey>[]>(() =>
+  buildToggleRows(implicitFlagFields)
+);
+const groupRows = computed<ToggleFieldRow<GrantGroupKey>[]>(() =>
+  buildToggleRows(userGrantGroupFields)
+);
+const rightRows = computed<ToggleFieldRow<GrantRightKey>[]>(() =>
+  buildSectionedToggleRows(userGrantRightSections)
+);
+const autoGrantRoleRows = computed<ToggleFieldRow<AutoGrantRoleKey>[]>(() =>
+  buildToggleRows(autoGrantRoleFields)
+);
+
+const implicitFlagColumns: TableColumn<ToggleFieldRow<ImplicitFlagKey>>[] = [
+  toggleLabelColumn("Flag"),
+  toggleCheckboxColumn(
+    "Enabled",
+    (row) => implicitFlags.value[row.key],
+    () => {
+      // implicit flags are read-only
+    },
+    () => true,
+  ),
+];
+
+const groupColumns: TableColumn<ToggleFieldRow<GrantGroupKey>>[] = [
+  toggleLabelColumn("Group"),
+  toggleHelpColumn("Description"),
+  toggleCheckboxColumn(
+    "Enabled",
+    (row) => userGroupChecks.value[row.key],
+    (row, checked) => {
+      userGroupChecks.value[row.key] = checked;
+    },
+    () => !canManageUserGrants.value || userGrantSaving.value,
+  ),
+];
+
+const rightColumns: TableColumn<ToggleFieldRow<GrantRightKey>>[] = [
+  toggleLabelColumn("Right"),
+  toggleHelpColumn("Description"),
+  toggleCheckboxColumn(
+    "Enabled",
+    (row) => userRightChecks.value[row.key],
+    (row, checked) => {
+      userRightChecks.value[row.key] = checked;
+    },
+    () => !canManageUserGrants.value || userGrantSaving.value,
+  ),
+];
+
+const autoGrantRoleColumns: TableColumn<ToggleFieldRow<AutoGrantRoleKey>>[] = [
+  toggleLabelColumn("Role"),
+  toggleHelpColumn("Meaning"),
+];
+
+const autoGroupColumns: TableColumn<ToggleFieldRow<GrantGroupKey>>[] = [
+  toggleLabelColumn("Group"),
+  toggleHelpColumn("Description"),
+  toggleCheckboxColumn(
+    "Auto-grant",
+    (row) => autoGrantGroupChecks.value[row.key],
+    (row, checked) => {
+      autoGrantGroupChecks.value[row.key] = checked;
+    },
+    () => !canEditConfig.value || saving.value,
+  ),
+];
+
+const autoRightColumns: TableColumn<ToggleFieldRow<GrantRightKey>>[] = [
+  toggleLabelColumn("Right"),
+  toggleHelpColumn("Description"),
+  toggleCheckboxColumn(
+    "Auto-grant",
+    (row) => autoGrantRightChecks.value[row.key],
+    (row, checked) => {
+      autoGrantRightChecks.value[row.key] = checked;
+    },
+    () => !canEditConfig.value || saving.value,
+  ),
+];
+
+function rightsRowsForSection(sectionTitle: string): ToggleFieldRow<GrantRightKey>[] {
+  return filterToggleRowsBySection(rightRows.value, sectionTitle);
+}
+
+function autoGrantRoleRowsForSelected(): ToggleFieldRow<AutoGrantRoleKey>[] {
+  return autoGrantRoleRows.value.filter((row) => row.key === selectedAutoGrantRole.value);
+}
+
+function clearAutoGrantChecks(): void {
+  autoGrantGroupChecks.value = emptyGroupChecks();
+  autoGrantRightChecks.value = emptyRightChecks();
+}
+
+function persistSelectedAutoGrantRoleChecks(): void {
+  const role = selectedAutoGrantRole.value;
+  const atoms: string[] = [];
+
+  for (const field of userGrantGroupFields) {
+    if (autoGrantGroupChecks.value[field.key]) {
+      atoms.push(`group:${field.key}`);
+    }
+  }
+
+  for (const field of userGrantRightFields) {
+    if (autoGrantRightChecks.value[field.key]) {
+      atoms.push(field.key);
+    }
+  }
+
+  const next = { ...(config.value.AUTO_GRANTS_JSON || {}) };
+  if (atoms.length > 0) {
+    next[role] = [...new Set(atoms)].sort();
+  } else {
+    delete next[role];
+  }
+
+  config.value.AUTO_GRANTS_JSON = next;
+}
+
+function loadSelectedAutoGrantRoleChecks(): void {
+  clearAutoGrantChecks();
+  const role = selectedAutoGrantRole.value;
+  const atoms = config.value.AUTO_GRANTS_JSON?.[role] || [];
+
+  for (const atom of atoms) {
+    const normalized = String(atom || "").trim().toLowerCase();
+    if (!normalized) continue;
+
+    if (normalized.startsWith("group:")) {
+      const groupName = normalized.split(":", 2)[1] as GrantGroupKey;
+      if (groupName in autoGrantGroupChecks.value) {
+        autoGrantGroupChecks.value[groupName] = true;
+      }
+      continue;
+    }
+
+    if (normalized in autoGrantRightChecks.value) {
+      autoGrantRightChecks.value[normalized as GrantRightKey] = true;
+    }
+  }
+}
+
+function onSelectedAutoGrantRoleChange(event: Event): void {
+  persistSelectedAutoGrantRoleChecks();
+  const target = event.target as HTMLSelectElement | null;
+  if (!target) return;
+  selectedAutoGrantRole.value = target.value as AutoGrantRoleKey;
+  loadSelectedAutoGrantRoleChecks();
+}
 
 function normalizeUserList(raw: string): string[] {
   const users = raw
@@ -324,7 +602,7 @@ async function addLookupSelection(key: ListConfigKey): Promise<void> {
 
   // Persist immediately for button-driven adds so the backend table updates
   // without requiring a separate click on the global Save button.
-  if (!canEdit.value) return;
+  if (!canEditConfig.value) return;
 
   try {
     const response = await updateRuntimeAuthzConfig({
@@ -377,6 +655,8 @@ function applyUserGrantPayload(payload: {
   rights: string[];
   implicit: Record<string, boolean>;
   atoms: string[];
+  commons_groups?: string[];
+  commons_groups_refreshed?: boolean;
 }): void {
   selectedGrantUser.value = payload.normalized_username;
   userGrantLoaded.value = true;
@@ -397,6 +677,9 @@ function applyUserGrantPayload(payload: {
   for (const field of implicitFlagFields) {
     implicitFlags.value[field.key] = !!payload.implicit?.[field.key];
   }
+
+  commonsGroups.value = [...(payload.commons_groups || [])];
+  commonsGroupsFresh.value = !!payload.commons_groups_refreshed;
 
   const nextMap = { ...(config.value.USER_GRANTS_JSON || {}) };
   nextMap[payload.normalized_username] = payload.atoms || [];
@@ -419,7 +702,7 @@ async function loadSelectedUserGrants(): Promise<void> {
   }
 
   try {
-    const payload = await fetchRuntimeUserGrants(rawUser);
+    const payload = await fetchRuntimeUserGrants(rawUser, { refreshCommons: true });
     applyUserGrantPayload(payload);
     successMessage.value = `Loaded rights for ${payload.normalized_username}.`;
     errorMessage.value = "";
@@ -429,8 +712,28 @@ async function loadSelectedUserGrants(): Promise<void> {
   }
 }
 
+async function refreshSelectedUserCommonsRights(): Promise<void> {
+  if (!selectedGrantUser.value) return;
+
+  userGrantRefreshing.value = true;
+  errorMessage.value = "";
+
+  try {
+    const payload = await fetchRuntimeUserGrants(selectedGrantUser.value, {
+      refreshCommons: true,
+    });
+    applyUserGrantPayload(payload);
+    successMessage.value = `Refreshed Commons rights for ${payload.normalized_username}.`;
+  } catch (err) {
+    errorMessage.value = err instanceof Error ? err.message : "Failed to refresh Commons rights";
+    successMessage.value = "";
+  } finally {
+    userGrantRefreshing.value = false;
+  }
+}
+
 async function saveSelectedUserGrants(): Promise<void> {
-  if (!canEdit.value || !selectedGrantUser.value) return;
+  if (!canManageUserGrants.value || !selectedGrantUser.value) return;
 
   userGrantSaving.value = true;
   errorMessage.value = "";
@@ -471,12 +774,14 @@ function applyServerConfig(nextConfig: RuntimeAuthzConfig): void {
     USERS_GRANTED_CANCEL_ANY: [...(nextConfig.USERS_GRANTED_CANCEL_ANY || [])],
     USERS_GRANTED_RETRY_ANY: [...(nextConfig.USERS_GRANTED_RETRY_ANY || [])],
     USER_GRANTS_JSON: { ...(nextConfig.USER_GRANTS_JSON || {}) },
+    AUTO_GRANTS_JSON: { ...(nextConfig.AUTO_GRANTS_JSON || {}) },
     RATE_LIMIT_JOBS_PER_HOUR: Number(nextConfig.RATE_LIMIT_JOBS_PER_HOUR || 0),
     RATE_LIMIT_TESTER_JOBS_PER_HOUR: Number(nextConfig.RATE_LIMIT_TESTER_JOBS_PER_HOUR || 0),
   };
 
   syncTextFromConfig();
   grantsJsonText.value = JSON.stringify(config.value.USER_GRANTS_JSON || {}, null, 2);
+  loadSelectedAutoGrantRoleChecks();
 }
 
 function parseUserGrantsJsonText(): Record<string, string[]> {
@@ -498,7 +803,8 @@ async function loadConfig(): Promise<void> {
   try {
     const response = await fetchRuntimeAuthzConfig();
     applyServerConfig(response.config);
-    canEdit.value = !!response.can_edit;
+    canEditConfig.value = !!response.can_edit;
+    canManageUserGrants.value = !!response.can_manage_user_grants;
   } catch (err) {
     errorMessage.value = err instanceof Error ? err.message : "Failed to load config";
   } finally {
@@ -507,7 +813,7 @@ async function loadConfig(): Promise<void> {
 }
 
 async function saveConfig(): Promise<void> {
-  if (!canEdit.value) return;
+  if (!canEditConfig.value) return;
 
   saving.value = true;
   errorMessage.value = "";
@@ -516,6 +822,7 @@ async function saveConfig(): Promise<void> {
   try {
     const parsedUserGrants = parseUserGrantsJsonText();
     config.value.USER_GRANTS_JSON = parsedUserGrants;
+    persistSelectedAutoGrantRoleChecks();
 
     const response = await updateRuntimeAuthzConfig(config.value);
     applyServerConfig(response.config);
@@ -534,8 +841,16 @@ onMounted(() => {
 
 <template>
   <div class="container runtime-config-container">
-    <CdxMessage v-if="!canEdit" type="warning" class="top-message">
+    <CdxMessage v-if="!canEditConfig" type="warning" class="top-message">
       You can view runtime settings, but only chuckbot can save changes.
+    </CdxMessage>
+
+    <CdxMessage
+      v-if="!canManageUserGrants"
+      type="warning"
+      class="top-message"
+    >
+      You can view grants, but need manage_user_grants to edit user-centric grants.
     </CdxMessage>
 
     <CdxMessage v-if="errorMessage" type="error" class="top-message">
@@ -560,61 +875,69 @@ onMounted(() => {
           <CdxLookup
             v-model:selected="userSearchSelected"
             :menu-items="userSearchLookupItems"
-            :disabled="!canEdit"
+            :disabled="!canManageUserGrants"
             placeholder="Search Commons username"
             @input="onUserSearchLookupInput"
           />
         </CdxField>
-        <CdxButton type="button" :disabled="!canEdit" @click="() => void loadSelectedUserGrants()">
+        <CdxButton
+          type="button"
+          :disabled="!canManageUserGrants"
+          @click="() => void loadSelectedUserGrants()"
+        >
           Load user rights
+        </CdxButton>
+        <CdxButton
+          type="button"
+          weight="quiet"
+          :disabled="!canManageUserGrants || !selectedGrantUser || userGrantRefreshing"
+          @click="() => void refreshSelectedUserCommonsRights()"
+        >
+          {{ userGrantRefreshing ? "Refreshing..." : "Refresh Commons rights" }}
         </CdxButton>
       </div>
 
       <div v-if="userGrantLoaded" class="runtime-rights-columns">
         <div>
+          <h4>Commons groups (live)</h4>
+          <p class="runtime-config-help">
+            {{ commonsGroups.length ? commonsGroups.join(", ") : "No explicit Commons groups found." }}
+            <span v-if="commonsGroupsFresh"> (freshly queried)</span>
+          </p>
+
           <h4>Groups you cannot change</h4>
-          <label
-            v-for="flag in implicitFlagFields"
-            :key="flag.key"
-            class="runtime-checkbox-row runtime-checkbox-row--disabled"
-          >
-            <input type="checkbox" :checked="implicitFlags[flag.key]" disabled>
-            <span>{{ flag.label }}</span>
-          </label>
+          <UnifiedTable
+            :rows="implicitFlagRows"
+            :columns="implicitFlagColumns"
+            row-key="key"
+            table-class="runtime-rights-table"
+          />
         </div>
 
         <div>
           <h4>Groups you can change</h4>
-          <label
-            v-for="group in userGrantGroupFields"
-            :key="group.key"
-            class="runtime-checkbox-row"
-          >
-            <input v-model="userGroupChecks[group.key]" type="checkbox" :disabled="!canEdit || userGrantSaving">
-            <span>
-              {{ group.label }}
-              <small>{{ group.help }}</small>
-            </span>
-          </label>
+          <UnifiedTable
+            :rows="groupRows"
+            :columns="groupColumns"
+            row-key="key"
+            table-class="runtime-rights-table"
+          />
 
-          <h4>Rights you can change</h4>
-          <label
-            v-for="right in userGrantRightFields"
-            :key="right.key"
-            class="runtime-checkbox-row"
-          >
-            <input v-model="userRightChecks[right.key]" type="checkbox" :disabled="!canEdit || userGrantSaving">
-            <span>
-              {{ right.label }}
-              <small>{{ right.help }}</small>
-            </span>
-          </label>
+          <div v-for="section in userGrantRightSections" :key="section.title">
+            <h4>{{ section.title }}</h4>
+            <UnifiedTable
+              :rows="rightsRowsForSection(section.title)"
+              :columns="rightColumns"
+              row-key="key"
+              table-class="runtime-rights-table"
+            />
+          </div>
 
           <label class="runtime-reason-label">Reason</label>
           <input
             v-model="userGrantReason"
             type="text"
-            :disabled="!canEdit || userGrantSaving"
+            :disabled="!canManageUserGrants || userGrantSaving"
             placeholder="Optional reason"
           >
 
@@ -623,7 +946,7 @@ onMounted(() => {
               action="progressive"
               weight="primary"
               type="button"
-              :disabled="!canEdit || userGrantSaving"
+              :disabled="!canManageUserGrants || userGrantSaving"
               @click="() => void saveSelectedUserGrants()"
             >
               {{ userGrantSaving ? "Saving..." : "Save user groups" }}
@@ -642,21 +965,25 @@ onMounted(() => {
           <CdxLookup
             v-model:selected="lookupSelected[field.key]"
             :menu-items="lookupMenuItems[field.key] || []"
-            :disabled="!canEdit"
+            :disabled="!canEditConfig"
             placeholder="Search Commons username"
             @input="(value) => onLookupInput(field.key, value)"
           />
         </CdxField>
 
         <div class="runtime-config-actions">
-          <CdxButton type="button" :disabled="!canEdit" @click="() => void addLookupSelection(field.key)">
+          <CdxButton
+            type="button"
+            :disabled="!canEditConfig"
+            @click="() => void addLookupSelection(field.key)"
+          >
             Add selected user
           </CdxButton>
         </div>
 
         <textarea
           :value="listText[field.key] || ''"
-          :disabled="!canEdit"
+          :disabled="!canEditConfig"
           rows="3"
           @input="(event) => onListInput(field.key, event)"
         />
@@ -668,14 +995,59 @@ onMounted(() => {
         <h3>User-centric grants (by username)</h3>
         <p class="runtime-config-help">
           Optional JSON map of username to grants. Supports rights and groups.
-          Rights: view_all, from_diff, from_diff_dry_run_only, batch, cancel_any, retry_any.
-          Groups: viewer, diff, diff_dry_run, batch, support, operator.
+          Rights are grouped into rollback, jobs, and administration categories.
+          Groups: viewer, rollbacker, rollbacker_dry_run, batch_runner, jobs_moderator, admin.
         </p>
         <textarea
           v-model="grantsJsonText"
-          :disabled="!canEdit"
+          :disabled="!canEditConfig"
           rows="8"
         />
+      </section>
+
+      <section class="runtime-config-card">
+        <h3>Auto grants by implicit role</h3>
+        <p class="runtime-config-help">
+          Configure grants automatically based on implicit roles.
+          Commons admin maps to Commons <b>sysop</b>; Commons rollbacker maps to Commons <b>rollbacker</b>.
+        </p>
+
+        <label class="runtime-reason-label" for="auto-grant-role-select">Role</label>
+        <select
+          id="auto-grant-role-select"
+          :value="selectedAutoGrantRole"
+          :disabled="!canEditConfig || saving"
+          @change="onSelectedAutoGrantRoleChange"
+        >
+          <option v-for="role in autoGrantRoleFields" :key="role.key" :value="role.key">
+            {{ role.label }}
+          </option>
+        </select>
+
+        <UnifiedTable
+          :rows="autoGrantRoleRowsForSelected()"
+          :columns="autoGrantRoleColumns"
+          row-key="key"
+          table-class="runtime-rights-table"
+        />
+
+        <h4>Auto-granted groups</h4>
+        <UnifiedTable
+          :rows="groupRows"
+          :columns="autoGroupColumns"
+          row-key="key"
+          table-class="runtime-rights-table"
+        />
+
+        <div v-for="section in userGrantRightSections" :key="`auto-${section.title}`">
+          <h4>Auto-granted {{ section.title }}</h4>
+          <UnifiedTable
+            :rows="rightsRowsForSection(section.title)"
+            :columns="autoRightColumns"
+            row-key="key"
+            table-class="runtime-rights-table"
+          />
+        </div>
       </section>
 
       <section v-for="field in numberFields" :key="field.key" class="runtime-config-card">
@@ -684,7 +1056,7 @@ onMounted(() => {
         <input
           type="number"
           min="0"
-          :disabled="!canEdit"
+          :disabled="!canEditConfig"
           :value="config[field.key]"
           @input="(event) => onNumberInput(field.key, event)"
         />
@@ -696,7 +1068,7 @@ onMounted(() => {
         action="progressive"
         weight="primary"
         type="button"
-        :disabled="!canEdit || loading || saving"
+        :disabled="!canEditConfig || loading || saving"
         @click="saveConfig"
       >
         {{ saving ? "Saving..." : "Save runtime config" }}

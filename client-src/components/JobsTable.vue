@@ -2,6 +2,21 @@
 import { ref } from "vue";
 import { CdxButton, CdxProgressBar } from "@wikimedia/codex";
 import { cancelJob, fetchJobDetails, retryJob } from "../api";
+import UnifiedTable from "./UnifiedTable.vue";
+import {
+  actionColumn,
+  type TableColumn,
+} from "./unifiedTable";
+import {
+  buttonCell,
+  dryRunModeColumn,
+  linkCell,
+  modeLabel,
+  progressPercent,
+  progressSummary,
+  statusTagColumn,
+  textColumn,
+} from "./tableColumnFactories";
 
 export interface UiJob {
   id: number;
@@ -30,20 +45,6 @@ function esc(s: unknown): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-}
-
-function progressText(job: UiJob): string {
-  const done = (job.completed || 0) + (job.failed || 0);
-  return `${done}/${job.total || 0}`;
-}
-
-function progressPct(job: UiJob): number {
-  const done = (job.completed || 0) + (job.failed || 0);
-  return job.total ? Math.round((done / job.total) * 100) : 0;
-}
-
-function modeLabel(job: UiJob): string {
-  return job.dryRun ? "Dry run" : "Live";
 }
 
 async function toggle(id: number) {
@@ -77,96 +78,97 @@ async function onCancel(id: number) {
   await cancelJob(id, props.token);
   emit("job-updated");
 }
+
+const columns: TableColumn<UiJob>[] = [
+  {
+    key: "id",
+    label: "ID",
+    render: (job) => linkCell(job.id, "#", {
+      onClick: (event) => {
+        event.preventDefault();
+        void toggle(job.id);
+      },
+    }),
+  },
+  statusTagColumn("status", "Status", (job) => job.status),
+  dryRunModeColumn("mode", "Mode", (job) => job.dryRun),
+  {
+    key: "progress",
+    label: "Progress",
+    render: (job) => [
+      {
+        component: CdxProgressBar,
+        key: `bar-${job.id}`,
+        props: {
+          inline: true,
+          disabled: !(job.status === "queued" || job.status === "running"),
+          "aria-label": `Job ${job.id} progress`,
+        },
+      },
+      {
+        component: "span",
+        key: `text-${job.id}`,
+        props: {
+          class: "job-progress-inline-text",
+        },
+        children: `${progressSummary(job)} (${progressPercent(job)}%)`,
+      },
+    ],
+  },
+  textColumn("created", "Created", (job) => job.created),
+  actionColumn("retry", "Retry", (job) => {
+    if (!(job.status === "failed" || job.status === "resolving")) return null;
+    return buttonCell(CdxButton, "Retry", () => {
+      void onRetry(job.id);
+    }, {
+      action: "progressive",
+      weight: "primary",
+    });
+  }),
+  actionColumn("cancel", "Cancel", (job) => {
+    if (!(
+      job.status === "queued" ||
+      job.status === "running" ||
+      job.status === "resolving" ||
+      job.status === "staging" ||
+      job.status === "pending_approval"
+    )) {
+      return null;
+    }
+
+    return buttonCell(CdxButton, "Cancel rollback job", () => {
+      void onCancel(job.id);
+    }, {
+      action: "destructive",
+      weight: "quiet",
+    });
+  }),
+];
+
+function isExpandedRow(row: unknown): boolean {
+  const id = (row as UiJob).id;
+  return Boolean(openRows.value[id]);
+}
+
+function detailsHtml(row: unknown): string {
+  const id = (row as UiJob).id;
+  return details.value[id] || "";
+}
 </script>
 
 <template>
-  <table class="wikitable">
-    <tr>
-      <th>ID</th>
-      <th>Status</th>
-      <th>Mode</th>
-      <th>Progress</th>
-      <th>Created</th>
-      <th>Actions</th>
-    </tr>
-
-    <template v-for="job in jobs" :key="job.id">
-      <tr>
-        <td>
-          <a href="#" @click.prevent="toggle(job.id)">{{ job.id }}</a>
-        </td>
-
-        <td>
-          <span
-            class="cdx-tag"
-            :class="{
-              'cdx-tag--status-success': job.status === 'completed',
-              'cdx-tag--status-error': job.status === 'failed',
-              'cdx-tag--status-warning': job.status === 'queued' || job.status === 'resolving' || job.status === 'staging' || job.status === 'pending_approval'
-            }"
-          >
-            {{ job.status }}
-          </span>
-        </td>
-
-        <td>
-          <span
-            class="cdx-tag"
-            :class="{
-              'cdx-tag--mode-dry-run': job.dryRun,
-              'cdx-tag--mode-live': !job.dryRun
-            }"
-          >
-            {{ modeLabel(job) }}
-          </span>
-        </td>
-
-        <td>
-          <div class="job-progress">
-            <CdxProgressBar
-              inline
-              :disabled="!(job.status === 'queued' || job.status === 'running')"
-              :aria-label="`Job ${job.id} progress`"
-            />
-          </div>
-          <div class="job-progress-text">
-            <span>{{ progressText(job) }}</span>
-            <span>{{ progressPct(job) }}%</span>
-          </div>
-        </td>
-
-        <td>{{ job.created }}</td>
-
-        <td>
-          <CdxButton
-            v-if="job.status === 'failed' || job.status === 'resolving'"
-            action="progressive"
-            weight="primary"
-            type="button"
-            @click="onRetry(job.id)"
-          >
-            Retry
-          </CdxButton>
-
-          <CdxButton
-            v-if="job.status === 'queued' || job.status === 'running' || job.status === 'resolving' || job.status === 'staging' || job.status === 'pending_approval'"
-            action="destructive"
-            weight="quiet"
-            type="button"
-            @click="onCancel(job.id)"
-          >
-            Cancel rollback job
-          </CdxButton>
-        </td>
-      </tr>
-
-      <tr v-if="openRows[job.id]">
-        <td colspan="6">
-          <div class="job-details" style="display:block" v-html="details[job.id]"></div>
-        </td>
-      </tr>
+  <UnifiedTable
+    :rows="jobs"
+    :columns="columns"
+    row-key="id"
+    table-class="jobs-table"
+    empty-text="No jobs found."
+    :expanded="isExpandedRow"
+  >
+    <template #expanded="{ row }">
+      <div class="job-details" style="display:block" v-html="detailsHtml(row)"></div>
     </template>
-  </table>
+  </UnifiedTable>
 </template>
 
 <style scoped>
@@ -213,15 +215,12 @@ async function onCancel(id: number) {
   color: var(--color-base, #202122);
 }
 
-.job-progress {
-  min-width: 160px;
+.job-progress-inline-text {
+  font-size: 0.8125rem;
+  white-space: nowrap;
 }
 
-.job-progress-text {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 4px;
-  font-size: 0.8125rem;
+:deep(.jobs-table td) {
+  white-space: nowrap;
 }
 </style>
