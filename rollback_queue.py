@@ -1,7 +1,9 @@
 import os
 from pathlib import Path
 from celery import shared_task
-
+from redis_state import set_progress, update_progress
+from toolsdb import get_conn
+import status_updater
 
 def _resolve_pywikibot_dir() -> Path:
     """Return a writable directory for Pywikibot config files."""
@@ -45,9 +47,7 @@ def _bootstrap_pywikibot_env() -> None:
 _bootstrap_pywikibot_env()
 
 import pywikibot
-from redis_state import set_progress, update_progress
-from toolsdb import get_conn
-import status_updater
+
 
 # MediaWiki API error codes that mean the rollback is already in the desired
 # state.  The page does not need to change, so these are not real failures.
