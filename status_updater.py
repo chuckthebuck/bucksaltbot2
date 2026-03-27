@@ -5,12 +5,15 @@ environment variable (the same convention used elsewhere in this codebase).
 When ``NOTDEV`` is unset the functions return immediately so that tests and
 development environments never accidentally touch the live wiki.
 """
+import os  
+import pywikibot
 
 from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from redis_state import r as _redis
 
 
 def _resolve_pywikibot_dir() -> Path:
@@ -58,9 +61,7 @@ def _bootstrap_pywikibot_env() -> None:
 
 _bootstrap_pywikibot_env()
 
-import pywikibot
 
-from redis_state import r as _redis
 
 # ── Page titles ───────────────────────────────────────────────────────────────
 
