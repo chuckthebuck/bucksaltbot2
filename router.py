@@ -2190,6 +2190,10 @@ def rollback_from_diff_api():
 
         if autoapproved:
             _set_diff_error(job_id, None)
+            status_updater.update_wiki_status(
+                editing="Resolving diff",
+                current_job=f"Auto-approved diff job {job_id} resolving",
+            )
             resolve_diff_rollback_job.delay(job_id)
     except Exception as e:
         logging.exception("Error in rollback_from_diff_api")
@@ -2366,6 +2370,10 @@ def rollback_from_account_api():
 
         if autoapproved:
             _set_diff_error(job_id, None)
+            status_updater.update_wiki_status(
+                editing="Resolving account",
+                current_job=f"Auto-approved account job {job_id} resolving",
+            )
             resolve_diff_rollback_job.delay(job_id)
 
     except ValueError as e:
@@ -3316,6 +3324,12 @@ def approve_rollback_job(job_id: int):
                     },
                 )
                 _set_diff_error(job_id, None)
+
+                status_updater.update_wiki_status(
+                    editing="Resolving diff",
+                    current_job=f"Approved diff job {job_id} resolving",
+                )
+
                 resolve_diff_rollback_job.delay(job_id)
 
                 return jsonify(
@@ -3379,6 +3393,11 @@ def approve_rollback_job(job_id: int):
                 )
 
         conn.commit()
+
+    status_updater.update_wiki_status(
+        editing="Actively editing",
+        current_job=f"Processing approved batch job {job_id} with {len(approved_job_ids)} job(s)",
+    )
 
     for approved_job_id in approved_job_ids:
         process_rollback_job.delay(approved_job_id)
