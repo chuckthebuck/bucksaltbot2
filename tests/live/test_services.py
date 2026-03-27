@@ -6,6 +6,7 @@ and the database schema is correctly initialised.
 
 from __future__ import annotations
 
+import os
 import time
 
 import pytest
@@ -74,6 +75,9 @@ class TestDatabase:
         inserted_id = row[0]
         assert row[1] == "live-test-probe"
 
+        if os.environ.get("LIVE_TEST_KEEP_JOBS"):
+            return
+
         with db_conn.cursor() as cur:
             cur.execute("DELETE FROM rollback_jobs WHERE id=%s", (inserted_id,))
         db_conn.commit()
@@ -115,6 +119,9 @@ class TestDatabase:
             assert item[0] == "File:Test.jpg"
             assert item[1] == "queued"
         finally:
+            if os.environ.get("LIVE_TEST_KEEP_JOBS"):
+                return
+
             with db_conn.cursor() as cur:
                 cur.execute("DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,))
                 cur.execute("DELETE FROM rollback_jobs WHERE id=%s", (job_id,))

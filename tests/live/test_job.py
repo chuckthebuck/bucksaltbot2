@@ -26,6 +26,9 @@ _PIPELINE_TIMEOUT = 45
 
 def _cleanup(db_conn, *job_ids: int) -> None:
     """Delete test jobs and their items from the database."""
+    if os.environ.get("LIVE_TEST_KEEP_JOBS"):
+        return
+
     for job_id in job_ids:
         try:
             with db_conn.cursor() as cur:

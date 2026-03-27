@@ -9,6 +9,7 @@ the routes return the expected HTTP status codes and response shapes.
 
 from __future__ import annotations
 
+import os
 import requests
 import pytest
 
@@ -227,6 +228,9 @@ class TestFromDiffInputValidation:
 
         # Clean up the created job record.
         job_id = data["job_id"]
+        if os.environ.get("LIVE_TEST_KEEP_JOBS"):
+            return
+
         try:
             with db_conn.cursor() as cur:
                 cur.execute("DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,))
