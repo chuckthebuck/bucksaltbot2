@@ -3,7 +3,9 @@ import pymysql as sql
 from cnf import config
 
 
-def _ensure_column(cursor, table_name: str, column_name: str, ddl_fragment: str) -> None:
+def _ensure_column(
+    cursor, table_name: str, column_name: str, ddl_fragment: str
+) -> None:
     """Add a missing column with ``ALTER TABLE`` in an idempotent way."""
     cursor.execute(f"SHOW COLUMNS FROM {table_name} LIKE %s", (column_name,))
     if cursor.fetchone():
@@ -56,7 +58,9 @@ def init_db():
 
             # Ensure approval columns exist for legacy deployments where
             # rollback_jobs was created before request/approval workflows.
-            _ensure_column(cursor, "rollback_jobs", "request_type", "request_type VARCHAR(32) NULL")
+            _ensure_column(
+                cursor, "rollback_jobs", "request_type", "request_type VARCHAR(32) NULL"
+            )
             _ensure_column(
                 cursor,
                 "rollback_jobs",
@@ -75,8 +79,12 @@ def init_db():
                 "approval_required",
                 "approval_required VARCHAR(32) NULL",
             )
-            _ensure_column(cursor, "rollback_jobs", "approved_by", "approved_by VARCHAR(255) NULL")
-            _ensure_column(cursor, "rollback_jobs", "approved_at", "approved_at TIMESTAMP NULL")
+            _ensure_column(
+                cursor, "rollback_jobs", "approved_by", "approved_by VARCHAR(255) NULL"
+            )
+            _ensure_column(
+                cursor, "rollback_jobs", "approved_at", "approved_at TIMESTAMP NULL"
+            )
 
             cursor.execute(
                 """

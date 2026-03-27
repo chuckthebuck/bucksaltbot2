@@ -110,9 +110,7 @@ class TestCommonsAPI:
         start_ts = result["timestamp"]
 
         # Fetch at most 1 contribution to keep the test fast.
-        contribs = router.fetch_contribs_after_timestamp(
-            target_user, start_ts, limit=1
-        )
+        contribs = router.fetch_contribs_after_timestamp(target_user, start_ts, limit=1)
         assert isinstance(contribs, list)
         assert len(contribs) <= 1
 

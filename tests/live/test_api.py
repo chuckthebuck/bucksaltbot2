@@ -191,9 +191,7 @@ class TestFromDiffInputValidation:
         job_id = data["job_id"]
         try:
             with db_conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,)
-                )
+                cur.execute("DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,))
                 cur.execute("DELETE FROM rollback_jobs WHERE id=%s", (job_id,))
             db_conn.commit()
         except Exception:

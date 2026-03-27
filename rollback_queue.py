@@ -5,6 +5,7 @@ from redis_state import set_progress, update_progress
 from toolsdb import get_conn
 import status_updater
 
+
 def _resolve_pywikibot_dir() -> Path:
     """Return a writable directory for Pywikibot config files."""
     candidates: list[Path] = []
@@ -135,7 +136,7 @@ def _setup_pywikibot_dir() -> None:
     """Configure Pywikibot to use ~/.pywikibot for config files."""
     pywikibot_home = _resolve_pywikibot_dir()
     os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
-    
+
     # Create minimal config if it doesn't exist
     config_file = pywikibot_home / "user-config.py"
     if not config_file.exists():
@@ -149,7 +150,7 @@ def _setup_pywikibot_dir() -> None:
 def _bot_site() -> pywikibot.Site:
     """Create and authenticate a Pywikibot Site using OAuth env vars."""
     _setup_pywikibot_dir()
-    
+
     consumer_token = os.environ.get("CONSUMER_TOKEN")
     consumer_secret = os.environ.get("CONSUMER_SECRET")
     access_token = os.environ.get("ACCESS_TOKEN")
@@ -161,10 +162,12 @@ def _bot_site() -> pywikibot.Site:
         )
 
     site = pywikibot.Site("commons", "commons")
-    
+
     # Authenticate with OAuth
     try:
-        site.login(oauth_token=(consumer_token, consumer_secret, access_token, access_secret))
+        site.login(
+            oauth_token=(consumer_token, consumer_secret, access_token, access_secret)
+        )
         print("Logged in as:", site.user())
     except Exception as e:
         print(f"OAuth login failed: {e}")

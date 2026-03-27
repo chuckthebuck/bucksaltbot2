@@ -194,8 +194,13 @@ def test_status_subpages_target_user_chuckbot_status_space_names():
     assert status_updater.STATUS_PAGE == "User:Chuckbot/status"
     assert status_updater.STATUS_SUBPAGES["editing"] == "User:Chuckbot/status/editing"
     assert status_updater.STATUS_SUBPAGES["web"] == "User:Chuckbot/status/web"
-    assert status_updater.STATUS_SUBPAGES["last_edit"] == "User:Chuckbot/status/last edit"
-    assert status_updater.STATUS_SUBPAGES["current_job"] == "User:Chuckbot/status/current job"
+    assert (
+        status_updater.STATUS_SUBPAGES["last_edit"] == "User:Chuckbot/status/last edit"
+    )
+    assert (
+        status_updater.STATUS_SUBPAGES["current_job"]
+        == "User:Chuckbot/status/current job"
+    )
     assert status_updater.STATUS_SUBPAGES["last_job"] == "User:Chuckbot/status/last job"
     assert status_updater.STATUS_SUBPAGES["details"] == "User:Chuckbot/status/details"
     assert status_updater.STATUS_SUBPAGES["warning"] == "User:Chuckbot/status/warning"
@@ -239,9 +244,11 @@ def test_update_wiki_status_includes_warning_when_provided(monkeypatch):
 
     def capture_text(site, page_title):
         page = MagicMock()
+
         # Capture the text assigned to this page
         def save_text(*args, **kwargs):
             page_texts[page_title] = page.text
+
         page.save = save_text
         return page
 

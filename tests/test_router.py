@@ -141,7 +141,9 @@ def test_approve_diff_request_requires_maintainer(client):
         patch("router.get_conn", return_value=mock_conn),
         patch("router._can_actor_approve", return_value=False),
     ):
-        resp = client.post("/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_diff"})
+        resp = client.post(
+            "/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_diff"}
+        )
 
     assert resp.status_code == 403
 
@@ -169,7 +171,9 @@ def test_approve_diff_request_can_switch_to_account_endpoint(client):
         patch("router._set_diff_error"),
     ):
         mock_resolve.delay = MagicMock()
-        resp = client.post("/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_account"})
+        resp = client.post(
+            "/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_account"}
+        )
 
     assert resp.status_code == 200
     data = resp.get_json()
@@ -201,7 +205,9 @@ def test_approve_batch_request_by_admin_queues_all_pending_jobs_in_batch(client)
         patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
-        resp = client.post("/api/v1/rollback/jobs/10/approve", json={"endpoint": "batch"})
+        resp = client.post(
+            "/api/v1/rollback/jobs/10/approve", json={"endpoint": "batch"}
+        )
 
     assert resp.status_code == 200
     data = resp.get_json()
@@ -335,7 +341,9 @@ def test_request_preview_from_diff_full_loads_all_items(client):
             ),
         ) as mock_iter,
     ):
-        resp = client.get("/api/v1/rollback/requests/1/preview?endpoint=from_diff&full=1")
+        resp = client.get(
+            "/api/v1/rollback/requests/1/preview?endpoint=from_diff&full=1"
+        )
 
     assert resp.status_code == 200
     data = resp.get_json()
@@ -355,10 +363,15 @@ def test_request_preview_from_account_rejects_from_diff_without_anchor(client):
         patch("router._can_review_requests", return_value=True),
         patch(
             "router._load_diff_payload",
-            return_value={"target_user": "BadUser", "requested_endpoint": "from_account"},
+            return_value={
+                "target_user": "BadUser",
+                "requested_endpoint": "from_account",
+            },
         ),
     ):
-        resp = client.get("/api/v1/rollback/requests/1/preview?endpoint=from_diff&full=1")
+        resp = client.get(
+            "/api/v1/rollback/requests/1/preview?endpoint=from_diff&full=1"
+        )
 
     assert resp.status_code == 400
     assert "diff anchor" in resp.get_json().get("detail", "")
@@ -384,7 +397,9 @@ def test_approve_diff_request_rejects_from_diff_without_anchor(client):
         patch("router._can_actor_approve", return_value=True),
         patch("router._load_diff_payload", return_value={"target_user": "BadUser"}),
     ):
-        resp = client.post("/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_diff"})
+        resp = client.post(
+            "/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_diff"}
+        )
 
     assert resp.status_code == 400
     assert "diff anchor" in resp.get_json().get("detail", "")
@@ -695,7 +710,9 @@ def test_fetch_contribs_after_timestamp_requests_timestamp_and_filters_strictly(
     }
 
     with patch("router.requests.get", return_value=mock_resp) as mock_get:
-        results = router.fetch_contribs_after_timestamp("TargetUser", start_ts, limit=10)
+        results = router.fetch_contribs_after_timestamp(
+            "TargetUser", start_ts, limit=10
+        )
 
     assert results == [{"title": "File:AfterTs.jpg", "user": "TargetUser"}]
     assert mock_get.call_count == 1
@@ -863,7 +880,7 @@ def test_get_job_includes_diff_query_debug_metadata(client):
                 "kind": "revisions",
                 "status_code": 200,
                 "elapsed_ms": 121,
-                "response_snippet": "{\"query\": ...}",
+                "response_snippet": '{"query": ...}',
             }
         ],
     }
@@ -890,7 +907,13 @@ def test_get_job_includes_diff_query_debug_metadata(client):
 def test_get_job_marks_stale_resolving_as_failed(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
-    mock_cursor.fetchone.return_value = (30, "alice", "resolving", 1, "2020-01-01 00:00:00")
+    mock_cursor.fetchone.return_value = (
+        30,
+        "alice",
+        "resolving",
+        1,
+        "2020-01-01 00:00:00",
+    )
     mock_cursor.fetchall.return_value = []
 
     with (
@@ -974,8 +997,14 @@ def test_resolve_diff_rollback_job_propagates_query_payload_to_chunk_jobs():
     with (
         patch("router._load_diff_payload", return_value=payload),
         patch("router._update_diff_payload") as mock_update_payload,
-        patch("router.fetch_diff_author_and_timestamp", return_value={"user": "TargetUser", "timestamp": "2026-03-25T03:30:00Z"}),
-        patch("router.fetch_rollbackable_window_end_timestamp", return_value="2026-03-25T04:00:00Z"),
+        patch(
+            "router.fetch_diff_author_and_timestamp",
+            return_value={"user": "TargetUser", "timestamp": "2026-03-25T03:30:00Z"},
+        ),
+        patch(
+            "router.fetch_rollbackable_window_end_timestamp",
+            return_value="2026-03-25T04:00:00Z",
+        ),
         patch("router.iter_contribs_after_timestamp", return_value=iter(items)),
         patch("router.get_conn", return_value=mock_conn),
         patch("router._set_diff_error"),
@@ -1995,7 +2024,7 @@ def test_is_bot_admin_returns_true_for_bot_admin_account():
 
     with patch.object(router, "BOT_ADMIN_ACCOUNTS", {"chuckbot"}):
         assert router.is_bot_admin("chuckbot") is True
-        assert router.is_bot_admin("ChuckBot") is True   # case-insensitive
+        assert router.is_bot_admin("ChuckBot") is True  # case-insensitive
 
 
 def test_is_bot_admin_returns_false_for_regular_user():
@@ -2061,7 +2090,9 @@ def test_user_permissions_admin_sysop_does_not_get_cancel_admin_jobs():
 # ── cancel_rollback_job – three-tier ownership (chuckbot > maintainer > admin > regular) ───
 
 
-def test_cancel_job_returns_403_when_owner_is_maintainer_and_actor_has_only_cancel_any(client):
+def test_cancel_job_returns_403_when_owner_is_maintainer_and_actor_has_only_cancel_any(
+    client,
+):
     """An env-granted cancel_any user cannot cancel a maintainer's job."""
     import router
 
@@ -2081,7 +2112,9 @@ def test_cancel_job_returns_403_when_owner_is_maintainer_and_actor_has_only_canc
     assert "maintainer" in resp.get_json().get("detail", "").lower()
 
 
-def test_cancel_job_allowed_when_owner_is_regular_maintainer_and_actor_is_also_maintainer(client):
+def test_cancel_job_allowed_when_owner_is_regular_maintainer_and_actor_is_also_maintainer(
+    client,
+):
     """A maintainer can cancel another regular maintainer's job."""
     import router
 
@@ -2121,7 +2154,9 @@ def test_cancel_job_allowed_when_owner_is_maintainer_and_actor_is_bot_admin(clie
     assert resp.get_json()["status"] == "canceled"
 
 
-def test_cancel_job_returns_403_when_owner_is_bot_admin_and_actor_is_regular_maintainer(client):
+def test_cancel_job_returns_403_when_owner_is_bot_admin_and_actor_is_regular_maintainer(
+    client,
+):
     """A regular maintainer cannot cancel chuckbot's job."""
     import router
 
@@ -2161,7 +2196,9 @@ def test_cancel_job_allowed_when_owner_is_bot_admin_and_actor_is_also_bot_admin(
     assert resp.get_json()["status"] == "canceled"
 
 
-def test_cancel_job_returns_403_when_owner_is_admin_and_actor_has_only_cancel_any(client):
+def test_cancel_job_returns_403_when_owner_is_admin_and_actor_has_only_cancel_any(
+    client,
+):
     """An env-granted cancel_any user cannot cancel a sysop admin's job."""
     import router
 
@@ -2449,7 +2486,10 @@ def test_user_permissions_supports_group_based_user_centric_grants():
 def test_from_diff_api_rejects_live_mode_for_dry_run_only_right(client):
     _set_session(client, "alice")
 
-    with patch("router._user_permissions", return_value=frozenset({"from_diff", "from_diff_dry_run_only"})):
+    with patch(
+        "router._user_permissions",
+        return_value=frozenset({"from_diff", "from_diff_dry_run_only"}),
+    ):
         resp = client.post(
             "/api/v1/rollback/from-diff",
             json={"diff": 123, "dry_run": False},
@@ -2465,7 +2505,10 @@ def test_from_diff_api_allows_dry_run_for_dry_run_only_right(client):
     mock_cursor.lastrowid = 77
 
     with (
-        patch("router._user_permissions", return_value=frozenset({"from_diff", "from_diff_dry_run_only"})),
+        patch(
+            "router._user_permissions",
+            return_value=frozenset({"from_diff", "from_diff_dry_run_only"}),
+        ),
         patch("router.get_conn", return_value=mock_conn),
         patch("router.resolve_diff_rollback_job") as mock_resolve,
     ):

@@ -23,7 +23,10 @@ from flask import (
 )
 from app import BOT_ADMIN_ACCOUNTS, MAX_JOB_ITEMS, flask_app as app, is_maintainer
 from redis_state import get_progress, r
-from rollback_queue import process_rollback_job, resolve_diff_rollback_job_task as resolve_diff_rollback_job
+from rollback_queue import (
+    process_rollback_job,
+    resolve_diff_rollback_job_task as resolve_diff_rollback_job,
+)
 from toolsdb import get_conn, get_runtime_config, upsert_runtime_config
 
 ALLOWED_GROUPS = {"sysop", "rollbacker"}
@@ -70,7 +73,9 @@ RATE_LIMIT_TESTER_JOBS_PER_HOUR: int = int(
     os.getenv("RATE_LIMIT_TESTER_JOBS_PER_HOUR", str(RATE_LIMIT_JOBS_PER_HOUR))
 )
 
-_CONFIG_EDIT_PRIMARY_ACCOUNT = os.getenv("CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot").strip().lower()
+_CONFIG_EDIT_PRIMARY_ACCOUNT = (
+    os.getenv("CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot").strip().lower()
+)
 
 _USER_GRANT_RIGHTS = {
     "from_diff",
@@ -118,7 +123,9 @@ _JSON_CONFIG_KEYS = {
     "USER_GRANTS_JSON",
 }
 
-_RUNTIME_AUTHZ_ALLOWED_KEYS = sorted(_USER_SET_CONFIG_KEYS | _INT_CONFIG_KEYS | _JSON_CONFIG_KEYS)
+_RUNTIME_AUTHZ_ALLOWED_KEYS = sorted(
+    _USER_SET_CONFIG_KEYS | _INT_CONFIG_KEYS | _JSON_CONFIG_KEYS
+)
 _RUNTIME_AUTHZ_CACHE_TTL = 60
 _runtime_authz_cache = None
 _runtime_authz_cache_expiry = 0.0
@@ -263,7 +270,9 @@ def _get_user_grants_payload(target_username: str, config: dict) -> dict:
         "maintainer": bool(is_maintainer(normalized_username)),
         "tester": bool(normalized_username in config["USERS_TESTER"]),
         "read_only": bool(normalized_username in config["USERS_READ_ONLY"]),
-        "extra_authorized": bool(normalized_username in config["EXTRA_AUTHORIZED_USERS"]),
+        "extra_authorized": bool(
+            normalized_username in config["EXTRA_AUTHORIZED_USERS"]
+        ),
     }
 
     return {
@@ -471,6 +480,7 @@ def _persist_runtime_authz_updates(updates: dict, updated_by: str) -> None:
     upsert_runtime_config(rows, updated_by=updated_by)
     _invalidate_runtime_authz_cache()
 
+
 _DIFF_PAYLOAD_TTL = 7 * 24 * 3600
 _MW_DEBUG_MAX_ENTRIES = 25
 _MW_DEBUG_BODY_MAX = 1200
@@ -546,7 +556,9 @@ def _created_at_to_epoch(created_at_value) -> float | None:
     return None
 
 
-def _maybe_mark_stale_resolving_job_failed(job_id: int, status: str, created_at_value) -> bool:
+def _maybe_mark_stale_resolving_job_failed(
+    job_id: int, status: str, created_at_value
+) -> bool:
     if status != "resolving":
         return False
 
@@ -735,7 +747,9 @@ def fetch_rollbackable_window_end_timestamp(
                     "elapsed_ms": int((time.perf_counter() - started) * 1000),
                 }
             )
-        raise ValueError(f"Failed to fetch rollbackable contribution window: {e}") from e
+        raise ValueError(
+            f"Failed to fetch rollbackable contribution window: {e}"
+        ) from e
 
     contribs = data.get("query", {}).get("usercontribs", [])
     if not contribs:
@@ -794,7 +808,9 @@ def fetch_recent_rollbackable_contribs(
                     "elapsed_ms": int((time.perf_counter() - started) * 1000),
                 }
             )
-        raise ValueError(f"Failed to fetch recent rollbackable contributions: {e}") from e
+        raise ValueError(
+            f"Failed to fetch recent rollbackable contributions: {e}"
+        ) from e
 
     contribs = data.get("query", {}).get("usercontribs", [])
     results = []
@@ -911,7 +927,9 @@ def iter_contribs_after_timestamp(
 
 
 def fetch_contribs_after_timestamp(target_user, start_timestamp, limit=None):
-    return list(iter_contribs_after_timestamp(target_user, start_timestamp, limit=limit))
+    return list(
+        iter_contribs_after_timestamp(target_user, start_timestamp, limit=limit)
+    )
 
 
 def create_rollback_jobs_from_diff(
@@ -1009,8 +1027,12 @@ def resolve_diff_rollback_job_impl(job_id: int):
     summary = payload.get("summary") or ""
     diff = payload.get("diff")
     limit = payload.get("limit")
-    requested_endpoint = str(payload.get("requested_endpoint") or _ENDPOINT_FROM_DIFF).strip().lower()
-    approved_endpoint = str(payload.get("approved_endpoint") or requested_endpoint).strip().lower()
+    requested_endpoint = (
+        str(payload.get("requested_endpoint") or _ENDPOINT_FROM_DIFF).strip().lower()
+    )
+    approved_endpoint = (
+        str(payload.get("approved_endpoint") or requested_endpoint).strip().lower()
+    )
 
     if approved_endpoint not in _ALLOWED_DIFF_REQUEST_ENDPOINTS:
         approved_endpoint = _ENDPOINT_FROM_DIFF
@@ -1032,7 +1054,9 @@ def resolve_diff_rollback_job_impl(job_id: int):
             oldid = _extract_oldid(diff)
             _update_diff_payload(job_id, {"oldid": oldid})
 
-            diff_metadata = fetch_diff_author_and_timestamp(oldid, debug_callback=_debug)
+            diff_metadata = fetch_diff_author_and_timestamp(
+                oldid, debug_callback=_debug
+            )
             target_user = target_user or diff_metadata["user"]
             start_timestamp = diff_metadata["timestamp"]
 
@@ -1075,7 +1099,9 @@ def resolve_diff_rollback_job_impl(job_id: int):
                 batch_id = row[0] or int(time.time() * 1000)
 
                 # Clear any stale items from previous failed attempts.
-                cursor.execute("DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,))
+                cursor.execute(
+                    "DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,)
+                )
 
                 def _persist_chunk(chunk_items, target_job_id):
                     for item in chunk_items:
@@ -1102,7 +1128,13 @@ def resolve_diff_rollback_job_impl(job_id: int):
                             SET status=%s, dry_run=%s, requested_by=%s, batch_id=%s
                             WHERE id=%s
                             """,
-                            ("staging", 1 if dry_run else 0, requested_by, batch_id, job_id),
+                            (
+                                "staging",
+                                1 if dry_run else 0,
+                                requested_by,
+                                batch_id,
+                                job_id,
+                            ),
                         )
                         return job_id
 
@@ -1160,13 +1192,17 @@ def resolve_diff_rollback_job_impl(job_id: int):
                 if approved_endpoint == _ENDPOINT_FROM_ACCOUNT:
                     effective_limit = parsed_limit or _ACCOUNT_ROLLBACK_MAX_LIMIT
                     if effective_limit > _ACCOUNT_ROLLBACK_MAX_LIMIT:
-                        raise ValueError(f"limit must be <= {_ACCOUNT_ROLLBACK_MAX_LIMIT}")
+                        raise ValueError(
+                            f"limit must be <= {_ACCOUNT_ROLLBACK_MAX_LIMIT}"
+                        )
 
                     query_debug_payload["contribs_query"] = {
                         "action": "query",
                         "list": "usercontribs",
                         "ucuser": target_user,
-                        "uclimit": str(min(_ACCOUNT_ROLLBACK_MAX_LIMIT, int(effective_limit))),
+                        "uclimit": str(
+                            min(_ACCOUNT_ROLLBACK_MAX_LIMIT, int(effective_limit))
+                        ),
                         "ucprop": "ids|title|timestamp",
                         "ucshow": "top",
                         "ucstart": _utc_now_iso(),
@@ -1202,15 +1238,23 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         pending_chunk = []
                 else:
                     if not start_timestamp:
-                        raise ValueError("Missing diff timestamp for from-diff resolution")
+                        raise ValueError(
+                            "Missing diff timestamp for from-diff resolution"
+                        )
 
-                    first_uclimit = str(min(500, int(parsed_limit))) if parsed_limit is not None else "500"
+                    first_uclimit = (
+                        str(min(500, int(parsed_limit)))
+                        if parsed_limit is not None
+                        else "500"
+                    )
 
-                    rollbackable_end_timestamp = fetch_rollbackable_window_end_timestamp(
-                        target_user,
-                        start_timestamp,
-                        limit=_ROLLBACKABLE_WINDOW_LIMIT,
-                        debug_callback=_debug,
+                    rollbackable_end_timestamp = (
+                        fetch_rollbackable_window_end_timestamp(
+                            target_user,
+                            start_timestamp,
+                            limit=_ROLLBACKABLE_WINDOW_LIMIT,
+                            debug_callback=_debug,
+                        )
                     )
 
                     query_debug_payload["contribs_query"] = {
@@ -1225,8 +1269,12 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         "ucdir": "newer",
                         "format": "json",
                     }
-                    query_debug_payload["rollbackable_window_limit"] = _ROLLBACKABLE_WINDOW_LIMIT
-                    query_debug_payload["rollbackable_window_end_timestamp"] = rollbackable_end_timestamp
+                    query_debug_payload["rollbackable_window_limit"] = (
+                        _ROLLBACKABLE_WINDOW_LIMIT
+                    )
+                    query_debug_payload["rollbackable_window_end_timestamp"] = (
+                        rollbackable_end_timestamp
+                    )
 
                     _update_diff_payload(
                         job_id,
@@ -1262,7 +1310,9 @@ def resolve_diff_rollback_job_impl(job_id: int):
                     created_job_ids.append(target_job_id)
 
                 if not created_job_ids:
-                    raise ValueError("No rollbackable contributions found for the approved request")
+                    raise ValueError(
+                        "No rollbackable contributions found for the approved request"
+                    )
 
                 # Move all staged jobs to queued only after full list/chunks are built.
                 for staged_job_id in created_job_ids:
@@ -1300,6 +1350,8 @@ def resolve_diff_rollback_job_impl(job_id: int):
             last_job=f"Failed to resolve diff for job {job_id}",
             details=str(e)[:200],
         )
+
+
 if not os.environ.get("NOTDEV"):
     from dotenv import load_dotenv
 
@@ -1441,7 +1493,14 @@ def _user_permissions(username: str) -> frozenset:
 
     if is_maintainer(username):
         # Maintainers are above admins: they can cancel any admin's job.
-        perms |= {"read_all", "from_diff", "batch", "cancel_any", "retry_any", "cancel_admin_jobs"}
+        perms |= {
+            "read_all",
+            "from_diff",
+            "batch",
+            "cancel_any",
+            "retry_any",
+            "cancel_admin_jobs",
+        }
         # Bot admins (chuckbot) sit above all maintainers and can cancel their jobs too.
         if is_bot_admin(username):
             perms.add("cancel_maintainer_jobs")
@@ -1527,9 +1586,7 @@ def _check_rate_limit(username: str) -> bool:
             r.expire(key, 7200)
         return int(count) <= limit
     except Exception:
-        app.logger.warning(
-            "Rate-limit check failed for %s; failing open.", username
-        )
+        app.logger.warning("Rate-limit check failed for %s; failing open.", username)
         return True
 
 
@@ -1678,8 +1735,12 @@ _ENDPOINT_BATCH = "batch"
 _ENDPOINT_FROM_DIFF = "from_diff"
 _ENDPOINT_FROM_ACCOUNT = "from_account"
 
-_ALLOWED_DIFF_REQUEST_ENDPOINTS = frozenset({_ENDPOINT_FROM_DIFF, _ENDPOINT_FROM_ACCOUNT})
-_ALLOWED_REQUEST_TYPES = frozenset({_REQUEST_TYPE_QUEUE, _REQUEST_TYPE_BATCH, _REQUEST_TYPE_DIFF})
+_ALLOWED_DIFF_REQUEST_ENDPOINTS = frozenset(
+    {_ENDPOINT_FROM_DIFF, _ENDPOINT_FROM_ACCOUNT}
+)
+_ALLOWED_REQUEST_TYPES = frozenset(
+    {_REQUEST_TYPE_QUEUE, _REQUEST_TYPE_BATCH, _REQUEST_TYPE_DIFF}
+)
 
 
 def _normalize_request_type(raw_value) -> str:
@@ -1689,7 +1750,9 @@ def _normalize_request_type(raw_value) -> str:
     return _REQUEST_TYPE_QUEUE
 
 
-def _approval_requirement_for_request(request_type: str, requested_endpoint: str | None) -> str | None:
+def _approval_requirement_for_request(
+    request_type: str, requested_endpoint: str | None
+) -> str | None:
     if request_type == _REQUEST_TYPE_BATCH or requested_endpoint == _ENDPOINT_BATCH:
         return _APPROVAL_REQUIRED_ADMIN
     if request_type == _REQUEST_TYPE_DIFF:
@@ -1730,7 +1793,9 @@ def _can_run_live(actor: str, requested_by: str, approval_required: str | None) 
     return "retry_any" in _user_permissions(actor)
 
 
-def _pending_batch_request_job_ids(cursor, batch_id: int, request_type: str) -> list[int]:
+def _pending_batch_request_job_ids(
+    cursor, batch_id: int, request_type: str
+) -> list[int]:
     cursor.execute(
         """
         SELECT id
@@ -1832,7 +1897,9 @@ def _compute_diff_request_preview(
         "resolved_user": target_user,
         "resolved_timestamp": start_timestamp,
         "rollbackable_window_end_timestamp": rollbackable_end_timestamp,
-        "limit": None if (endpoint == _ENDPOINT_FROM_DIFF and full_from_diff) else limit,
+        "limit": None
+        if (endpoint == _ENDPOINT_FROM_DIFF and full_from_diff)
+        else limit,
         "request_limit": limit,
         "full_from_diff": bool(endpoint == _ENDPOINT_FROM_DIFF and full_from_diff),
         "total_items": len(items),
@@ -1863,7 +1930,9 @@ def goto():
         return redirect("/rollback_batch")
 
     if tab == "rollback-all-jobs":
-        if "read_all" not in _user_permissions(username) and not is_admin_user(username):
+        if "read_all" not in _user_permissions(username) and not is_admin_user(
+            username
+        ):
             abort(403)
         return redirect("/rollback-queue/all-jobs")
 
@@ -2029,7 +2098,9 @@ def rollback_from_diff_api():
     dry_run = _parse_bool(dry_run_raw, default=False)
 
     if "from_diff_dry_run_only" in perms and not dry_run:
-        return jsonify({"detail": "Forbidden: from-diff access is limited to dry-run mode"}), 403
+        return jsonify(
+            {"detail": "Forbidden: from-diff access is limited to dry-run mode"}
+        ), 403
 
     batch_id = int(time.time() * 1000)
 
@@ -2160,7 +2231,9 @@ def rollback_from_account_api():
     dry_run = _parse_bool(dry_run_raw, default=False)
 
     if "from_diff_dry_run_only" in perms and not dry_run:
-        return jsonify({"detail": "Forbidden: from-diff access is limited to dry-run mode"}), 403
+        return jsonify(
+            {"detail": "Forbidden: from-diff access is limited to dry-run mode"}
+        ), 403
 
     limit = _ACCOUNT_ROLLBACK_MAX_LIMIT
     if limit_raw not in (None, ""):
@@ -2173,7 +2246,9 @@ def rollback_from_account_api():
             return jsonify({"detail": "limit must be a positive integer"}), 400
 
         if limit > _ACCOUNT_ROLLBACK_MAX_LIMIT:
-            return jsonify({"detail": f"limit must be <= {_ACCOUNT_ROLLBACK_MAX_LIMIT}"}), 400
+            return jsonify(
+                {"detail": f"limit must be <= {_ACCOUNT_ROLLBACK_MAX_LIMIT}"}
+            ), 400
 
     try:
         batch_id = int(time.time() * 1000)
@@ -2326,7 +2401,10 @@ def list_rollback_requests_api():
         params.append(status_filter)
 
     if requested_by_filter:
-        if not can_review and requested_by_filter.strip().lower() != username.strip().lower():
+        if (
+            not can_review
+            and requested_by_filter.strip().lower() != username.strip().lower()
+        ):
             return jsonify({"detail": "Forbidden"}), 403
         where_parts.append("j.requested_by=%s")
         params.append(requested_by_filter)
@@ -2500,12 +2578,25 @@ def rollback_request_preview_api(job_id: int):
     if not payload:
         return jsonify({"detail": "Missing request payload"}), 404
 
-    endpoint = requested_endpoint or str(stored_endpoint or payload.get("requested_endpoint") or _ENDPOINT_FROM_DIFF).strip().lower()
+    endpoint = (
+        requested_endpoint
+        or str(
+            stored_endpoint or payload.get("requested_endpoint") or _ENDPOINT_FROM_DIFF
+        )
+        .strip()
+        .lower()
+    )
     if endpoint not in _ALLOWED_DIFF_REQUEST_ENDPOINTS:
         return jsonify({"detail": "Invalid endpoint"}), 400
 
-    if endpoint == _ENDPOINT_FROM_DIFF and not _request_payload_has_diff_anchor(payload):
-        return jsonify({"detail": "This request does not include a diff anchor for endpoint=from_diff"}), 400
+    if endpoint == _ENDPOINT_FROM_DIFF and not _request_payload_has_diff_anchor(
+        payload
+    ):
+        return jsonify(
+            {
+                "detail": "This request does not include a diff anchor for endpoint=from_diff"
+            }
+        ), 400
 
     try:
         preview = _compute_diff_request_preview(
@@ -2602,7 +2693,17 @@ def rollback_queue_all_jobs_ui():
                     failed,
                 ) = row
             else:
-                job_id, batch_id, requested_by, status, dry_run, created_at, total, completed, failed = row
+                (
+                    job_id,
+                    batch_id,
+                    requested_by,
+                    status,
+                    dry_run,
+                    created_at,
+                    total,
+                    completed,
+                    failed,
+                ) = row
                 request_type = None
                 requested_endpoint = None
                 approved_endpoint = None
@@ -2641,11 +2742,7 @@ def rollback_queue_all_jobs_ui():
                 }
             )
 
-        return jsonify(
-            {
-                "jobs": jobs_for_output
-            }
-        )
+        return jsonify({"jobs": jobs_for_output})
 
     return render_template(
         "rollback_queue_all_jobs.html",
@@ -2826,7 +2923,9 @@ def update_runtime_authz_user_grants(target_username: str):
     else:
         grants_map.pop(normalized_target, None)
 
-    _persist_runtime_authz_updates({"USER_GRANTS_JSON": grants_map}, updated_by=username)
+    _persist_runtime_authz_updates(
+        {"USER_GRANTS_JSON": grants_map}, updated_by=username
+    )
     updated_config = _effective_runtime_authz_config()
     response_payload = _get_user_grants_payload(normalized_target, updated_config)
     response_payload["ok"] = True
@@ -2885,7 +2984,9 @@ def list_rollback_jobs():
                     "approved_endpoint": row[7] if len(row) > 7 else None,
                     "approval_required": row[8] if len(row) > 8 else None,
                     "approved_by": row[9] if len(row) > 9 else None,
-                    "approved_at": (str(row[10]) if len(row) > 10 and row[10] else None),
+                    "approved_at": (
+                        str(row[10]) if len(row) > 10 and row[10] else None
+                    ),
                 }
                 for row in jobs
             ]
@@ -2937,8 +3038,12 @@ def create_rollback_job():
     if len(items) > 1000:
         return jsonify({"detail": "Too many rollback items"}), 400
 
-    requested_endpoint = _ENDPOINT_BATCH if request_type == _REQUEST_TYPE_BATCH else _REQUEST_TYPE_QUEUE
-    approval_required = _approval_requirement_for_request(request_type, requested_endpoint)
+    requested_endpoint = (
+        _ENDPOINT_BATCH if request_type == _REQUEST_TYPE_BATCH else _REQUEST_TYPE_QUEUE
+    )
+    approval_required = _approval_requirement_for_request(
+        request_type, requested_endpoint
+    )
     initial_status = (
         _REQUEST_STATUS_PENDING_APPROVAL
         if request_type == _REQUEST_TYPE_BATCH
@@ -3083,10 +3188,14 @@ def approve_rollback_job(job_id: int):
                 return jsonify({"detail": "This job does not require approval"}), 400
 
             if status != _REQUEST_STATUS_PENDING_APPROVAL:
-                return jsonify({"detail": f"Job is not pending approval (status={status})"}), 409
+                return jsonify(
+                    {"detail": f"Job is not pending approval (status={status})"}
+                ), 409
 
             if not _can_actor_approve(actor, approval_required):
-                return jsonify({"detail": "Forbidden: insufficient approval rights"}), 403
+                return jsonify(
+                    {"detail": "Forbidden: insufficient approval rights"}
+                ), 403
 
             approved_endpoint = endpoint_override or requested_endpoint
 
@@ -3147,10 +3256,14 @@ def approve_rollback_job(job_id: int):
                 )
 
             if request_type != _REQUEST_TYPE_BATCH:
-                return jsonify({"detail": f"Unsupported request_type: {request_type}"}), 400
+                return jsonify(
+                    {"detail": f"Unsupported request_type: {request_type}"}
+                ), 400
 
             if approved_endpoint not in (None, "", _ENDPOINT_BATCH):
-                return jsonify({"detail": "Batch requests can only use endpoint=batch"}), 400
+                return jsonify(
+                    {"detail": "Batch requests can only use endpoint=batch"}
+                ), 400
 
             approved_job_ids = []
 
@@ -3254,14 +3367,20 @@ def reject_rollback_request(job_id: int):
             )
 
             if status != _REQUEST_STATUS_PENDING_APPROVAL:
-                return jsonify({"detail": f"Job is not pending approval (status={status})"}), 409
+                return jsonify(
+                    {"detail": f"Job is not pending approval (status={status})"}
+                ), 409
 
             if not _can_actor_approve(actor, approval_required):
-                return jsonify({"detail": "Forbidden: insufficient approval rights"}), 403
+                return jsonify(
+                    {"detail": "Forbidden: insufficient approval rights"}
+                ), 403
 
             rejected_job_ids = [job_id]
             if request_type == _REQUEST_TYPE_BATCH and batch_id is not None:
-                rejected_job_ids = _pending_batch_request_job_ids(cursor, batch_id, _REQUEST_TYPE_BATCH)
+                rejected_job_ids = _pending_batch_request_job_ids(
+                    cursor, batch_id, _REQUEST_TYPE_BATCH
+                )
                 if not rejected_job_ids:
                     rejected_job_ids = [job_id]
 
@@ -3280,7 +3399,12 @@ def reject_rollback_request(job_id: int):
                     SET status=%s, error=%s
                     WHERE job_id=%s AND status=%s
                     """,
-                    ("canceled", "Rejected by approver", rejected_job_id, _REQUEST_STATUS_PENDING_APPROVAL),
+                    (
+                        "canceled",
+                        "Rejected by approver",
+                        rejected_job_id,
+                        _REQUEST_STATUS_PENDING_APPROVAL,
+                    ),
                 )
 
         conn.commit()
@@ -3340,14 +3464,20 @@ def force_dry_run_rollback_request(job_id: int):
             )
 
             if status != _REQUEST_STATUS_PENDING_APPROVAL:
-                return jsonify({"detail": f"Job is not pending approval (status={status})"}), 409
+                return jsonify(
+                    {"detail": f"Job is not pending approval (status={status})"}
+                ), 409
 
             if not _can_actor_approve(actor, approval_required):
-                return jsonify({"detail": "Forbidden: insufficient approval rights"}), 403
+                return jsonify(
+                    {"detail": "Forbidden: insufficient approval rights"}
+                ), 403
 
             updated_job_ids = [job_id]
             if request_type == _REQUEST_TYPE_BATCH and batch_id is not None:
-                updated_job_ids = _pending_batch_request_job_ids(cursor, batch_id, _REQUEST_TYPE_BATCH)
+                updated_job_ids = _pending_batch_request_job_ids(
+                    cursor, batch_id, _REQUEST_TYPE_BATCH
+                )
                 if not updated_job_ids:
                     updated_job_ids = [job_id]
 
@@ -3419,10 +3549,14 @@ def run_dry_run_job_live(job_id: int):
             )
 
             if status != "completed":
-                return jsonify({"detail": f"Job is not completed (status={status})"}), 409
+                return jsonify(
+                    {"detail": f"Job is not completed (status={status})"}
+                ), 409
 
             if not bool(dry_run):
-                return jsonify({"detail": "Job is already configured for live execution"}), 409
+                return jsonify(
+                    {"detail": "Job is already configured for live execution"}
+                ), 409
 
             if not _can_run_live(actor, requested_by, approval_required):
                 return jsonify({"detail": "Forbidden"}), 403
@@ -3437,10 +3571,16 @@ def run_dry_run_job_live(job_id: int):
             if item_count == 0 and request_type == _REQUEST_TYPE_DIFF:
                 payload = _load_diff_payload(job_id)
                 if not payload:
-                    return jsonify({"detail": "Cannot re-run this request without saved payload"}), 400
+                    return jsonify(
+                        {"detail": "Cannot re-run this request without saved payload"}
+                    ), 400
 
                 if not _request_payload_has_diff_anchor(payload):
-                    return jsonify({"detail": "Cannot run live from this request because it has no diff anchor"}), 400
+                    return jsonify(
+                        {
+                            "detail": "Cannot run live from this request because it has no diff anchor"
+                        }
+                    ), 400
 
                 cursor.execute(
                     "UPDATE rollback_jobs SET dry_run=0, status='resolving' WHERE id=%s",
@@ -3503,10 +3643,16 @@ def retry_job(job_id):
                     return jsonify({"detail": "Forbidden"}), 403
 
             current_status = str(job[1] or "") if len(job) > 1 else ""
-            request_type = _normalize_request_type(job[2]) if len(job) > 2 else _REQUEST_TYPE_QUEUE
+            request_type = (
+                _normalize_request_type(job[2]) if len(job) > 2 else _REQUEST_TYPE_QUEUE
+            )
 
             if current_status == _REQUEST_STATUS_PENDING_APPROVAL:
-                return jsonify({"detail": "This request is pending approval and cannot be retried yet"}), 409
+                return jsonify(
+                    {
+                        "detail": "This request is pending approval and cannot be retried yet"
+                    }
+                ), 409
 
             cursor.execute(
                 "SELECT COUNT(*) FROM rollback_job_items WHERE job_id=%s",
@@ -3518,10 +3664,17 @@ def retry_job(job_id):
             if item_count == 0:
                 payload = _load_diff_payload(job_id)
                 if not payload:
-                    return jsonify({"detail": "Cannot retry this job without saved diff payload"}), 400
+                    return jsonify(
+                        {"detail": "Cannot retry this job without saved diff payload"}
+                    ), 400
 
-                if request_type == _REQUEST_TYPE_DIFF and current_status == _REQUEST_STATUS_PENDING_APPROVAL:
-                    return jsonify({"detail": "Diff request is still pending approval"}), 409
+                if (
+                    request_type == _REQUEST_TYPE_DIFF
+                    and current_status == _REQUEST_STATUS_PENDING_APPROVAL
+                ):
+                    return jsonify(
+                        {"detail": "Diff request is still pending approval"}
+                    ), 409
 
                 cursor.execute(
                     "UPDATE rollback_jobs SET status='resolving' WHERE id=%s",
@@ -3596,15 +3749,27 @@ def cancel_rollback_job(job_id):
                 if is_bot_admin(job_owner):
                     # Bot-admin job: only another bot admin may cancel it.
                     if "cancel_maintainer_jobs" not in actor_perms:
-                        return jsonify({"detail": "Forbidden: canceling a bot-admin's job requires bot-admin rights"}), 403
+                        return jsonify(
+                            {
+                                "detail": "Forbidden: canceling a bot-admin's job requires bot-admin rights"
+                            }
+                        ), 403
                 elif is_maintainer(job_owner):
                     # Regular maintainer's job: any maintainer (or bot admin) may cancel it.
                     if not is_maintainer(actor):
-                        return jsonify({"detail": "Forbidden: canceling a maintainer's job requires maintainer rights"}), 403
+                        return jsonify(
+                            {
+                                "detail": "Forbidden: canceling a maintainer's job requires maintainer rights"
+                            }
+                        ), 403
                 elif is_admin_user(job_owner):
                     # Admin job: any maintainer (or bot admin) may cancel it.
                     if "cancel_admin_jobs" not in actor_perms:
-                        return jsonify({"detail": "Forbidden: canceling an admin's job requires maintainer rights"}), 403
+                        return jsonify(
+                            {
+                                "detail": "Forbidden: canceling an admin's job requires maintainer rights"
+                            }
+                        ), 403
                 # else: regular user's job; cancel_any is sufficient (already checked above).
 
             if job[2] in {"completed", "failed", "canceled"}:

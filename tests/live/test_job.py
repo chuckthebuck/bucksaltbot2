@@ -28,9 +28,7 @@ def _cleanup(db_conn, *job_ids: int) -> None:
     for job_id in job_ids:
         try:
             with db_conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,)
-                )
+                cur.execute("DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,))
                 cur.execute("DELETE FROM rollback_jobs WHERE id=%s", (job_id,))
             db_conn.commit()
         except Exception:
@@ -260,8 +258,7 @@ class TestJobPipeline:
 
         # Submit a moderately large job so there is time to cancel it.
         items = [
-            {"title": f"File:CancelTest{i}.jpg", "user": "TestUser"}
-            for i in range(10)
+            {"title": f"File:CancelTest{i}.jpg", "user": "TestUser"} for i in range(10)
         ]
         resp = client.post(
             "/api/v1/rollback/jobs",

@@ -221,9 +221,7 @@ def live_wiki_edit(bot_site):
     # there is always a prior revision to roll back to.
     original_text = page.text if page.exists() else ""
     if not original_text.strip():
-        original_text = (
-            f"This page is used for automated rollback testing by [[User:{bot_username}]].\n"
-        )
+        original_text = f"This page is used for automated rollback testing by [[User:{bot_username}]].\n"
         page.text = original_text
         page.save(
             summary="Chuckbot rollback test: initialise test page",
