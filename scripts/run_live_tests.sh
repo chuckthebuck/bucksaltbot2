@@ -22,9 +22,18 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
 cd "$REPO_ROOT"
 
+if command -v python3 >/dev/null 2>&1; then
+	PYTHON_BIN="python3"
+elif command -v python >/dev/null 2>&1; then
+	PYTHON_BIN="python"
+else
+	echo "Error: neither 'python3' nor 'python' was found in PATH" >&2
+	exit 127
+fi
+
 echo "=== BuckSaltBot2 live integration tests ==="
 echo "Working directory: $(pwd)"
-echo "Python: $(python --version 2>&1)"
+echo "Python: $($PYTHON_BIN --version 2>&1)"
 echo ""
 
-python3 -m pytest tests/live/ -v --tb=short "$@"
+$PYTHON_BIN -m pytest tests/live/ -v --tb=short "$@"
