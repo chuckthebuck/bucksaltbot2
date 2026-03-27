@@ -1,6 +1,6 @@
 amqp==5.3.1
 async-timeout==5.0.1
-billiard==4.2.0
+billiard==4.2.4
 blinker==1.9.0
 cachetools
 celery==5.4.0
