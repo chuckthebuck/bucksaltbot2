@@ -183,6 +183,39 @@ def test_approve_diff_request_can_switch_to_account_endpoint(client):
     mock_update_payload.assert_called_once()
 
 
+def test_approve_diff_request_accepts_legacy_hyphenated_requested_endpoint(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (
+        1,
+        "bob",
+        "pending_approval",
+        0,
+        12345,
+        "diff",
+        "from-account",
+        None,
+        "maintainer",
+    )
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=True),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
+        patch("router._update_diff_payload") as mock_update_payload,
+        patch("router._set_diff_error"),
+    ):
+        mock_resolve.delay = MagicMock()
+        resp = client.post("/api/v1/rollback/jobs/1/approve", json={})
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["approved_endpoint"] == "from_account"
+    assert data["status"] == "resolving"
+    mock_resolve.delay.assert_called_once_with(1)
+    mock_update_payload.assert_called_once()
+
+
 def test_approve_batch_request_by_admin_queues_all_pending_jobs_in_batch(client):
     _set_session(client, "sysop")
     mock_conn, mock_cursor = _make_mock_conn()
@@ -375,6 +408,41 @@ def test_request_preview_from_account_rejects_from_diff_without_anchor(client):
 
     assert resp.status_code == 400
     assert "diff anchor" in resp.get_json().get("detail", "")
+
+
+def test_request_preview_accepts_hyphenated_endpoint_query(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "alice", "diff", "from_account")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_review_requests", return_value=True),
+        patch(
+            "router._load_diff_payload",
+            return_value={
+                "target_user": "BadUser",
+                "requested_endpoint": "from_account",
+                "limit": 2,
+            },
+        ),
+        patch("router._store_diff_payload"),
+        patch(
+            "router.fetch_recent_rollbackable_contribs",
+            return_value=[
+                {"title": "File:One.jpg", "user": "BadUser"},
+                {"title": "File:Two.jpg", "user": "BadUser"},
+            ],
+        ),
+    ):
+        resp = client.get(
+            "/api/v1/rollback/requests/1/preview?endpoint=from-account&full=1"
+        )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["endpoint"] == "from_account"
+    assert data["total_items"] == 2
 
 
 def test_approve_diff_request_rejects_from_diff_without_anchor(client):
