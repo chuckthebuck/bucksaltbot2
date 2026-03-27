@@ -32,13 +32,13 @@ A Job item's data populates the mediawiki rollback command.
 
 
 ### Jobs
-Jobs are the primary working unit of chuckbot. Jobs are a collection of job items that are processed sequentially within the job by a celery worker. Multiple jobs can makeup a batch, 
+Jobs are orchestration units in chuckbot. A job groups many job items under shared metadata (requester, dry-run flag, batch_id), and workers execute the items, not the job row itself. Multiple jobs can make up a batch.
 Stored in `rollback_jobs`
 
 A **job** represents a logical request, such as:
-“Rollback all edits from a specific user or diff”
-however, there exists 2 classes of jobs: rollback and prep jobs. Prep jobs create rollback jobs based on some input, normally a user and some filtering criteria, that then creates all the rollback jobs for that task and batch. Rollback jobs are a list of job with a length defined by an envvar. they contain paramiters like who requested the job, it's staus, and if it's a dry run or not. It also can contain a batch number. 
-**JOBS WITHIN A BATCH OCCASIONALLY ARE PERFORMED SEQUENTIALLY, BUT THIS IS NOT ENFORCED OR GUARANTEED** each job is put into a queue, where a worker will pick it up as soon as it can, and processing time does vary. a job with 1 item is much faster than 500 items. Jobs are orchestration units,  they do not directly execute actions.
+“Rollback all edits from a specific user or diff”.
+There are two classes of jobs: rollback and prep jobs. Prep jobs expand lightweight API input into rollback items, then create one or more rollback jobs for execution. Rollback jobs are chunked by `MAX_JOB_ITEMS` (default 500), queued independently, and can run in parallel depending on worker availability.
+Jobs in the same batch are not guaranteed to run sequentially.
 
 
 ### Batches (`batch_id`)
@@ -68,6 +68,14 @@ Buckbot uses a multi-phase lifecycle.
 - `failed` – finished with errors  (a single failed job item results in a failed job, but doesn't cause the job to stop. chuckbot will keep going through a failed item.)
 - `canceled` – manually stopped  
 
+### Item-level states (execution truth)
+
+- `queued` – waiting to be claimed by a worker
+- `running` – claimed by a worker and currently executing
+- `completed` – rollback succeeded (or was already in desired state, e.g. `alreadyrolled`)
+- `failed` – rollback attempt failed
+- `canceled` – canceled before completion
+
 
 ### Derived states (batch/UI)
 
@@ -75,9 +83,9 @@ Buckbot uses a multi-phase lifecycle.
 - `partial_success`
 - `completed`
 
- **Important:**  
-Item states are the source of truth.  
-Job and batch states are derived from items.
+ **Important:**
+`rollback_job_items` is the runtime execution source of truth.
+`rollback_jobs` and batch-level state are derived from item aggregates.
 
 ---
 
@@ -109,12 +117,13 @@ Input:
 oldid = 12345
 
 Expansion:
-→ 5,000 edits
+→ 12,300 edits
 
-Chunking:
-→ Job A (5000 items)
-→ Job B (5000 items)
-→ Job C (5000 items)
+Chunking (default `MAX_JOB_ITEMS=500`):
+→ Job A (500 items)
+→ Job B (500 items)
+→ ...
+→ Job Y (300 items)
 
 All share:
 batch_id = 1773857907459
@@ -132,21 +141,27 @@ Large operations are split into multiple jobs using `MAX_JOB_ITEMS`.
 
 All chunked jobs share the same `batch_id`.
 
+Notes:
+- Buckbot chunking is typically 500 items per rollback job.
+- Upstream MediaWiki/API limits (for example 5000 in some contexts) are separate constraints and are handled during request resolution, not by increasing rollback job chunk size.
+
 ---
 
 ##  Execution Model
 
-Buckbot uses distributed workers to process job items.
+Buckbot uses distributed workers to process `rollback_job_items`.
 
 Workers:
 
-- Select items with status `queued`
-- Mark them as `running`
-- Execute rollback actions
-- Update status to `completed` or `failed`
+- Read job metadata (`rollback_jobs`) to check cancel/dry-run context
+- Claim one item at a time from `rollback_job_items` where status is `queued`
+- Transition claimed item to `running`
+- Execute rollback action for that item
+- Transition item to `completed`, `failed`, or `canceled`
+- Derive final job status from item state counts
 
 Execution is:
-- Sequential per item stream
+- Sequential per worker claim loop
 - Parallel across workers
 
 ---
@@ -219,7 +234,7 @@ Buckbot runs on Toolforge and consists of:
 
 ---
 
-##  Example Job Payload
+##  Example Request Payload (Input)
 
 ```json
 {
@@ -230,7 +245,12 @@ Buckbot runs on Toolforge and consists of:
   "maxRollbacksPerMinute": 10,
   "editSummary": "Reverting disruptive edits"
 }
- Why Buckbot
+```
+
+This JSON is request input, not the runtime execution source.
+At runtime, Buckbot executes from database rows in `rollback_jobs` and `rollback_job_items`.
+
+## Why Buckbot
 
 Buckbot is designed to be:
 

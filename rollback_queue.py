@@ -100,6 +100,21 @@ def _fetch_job(job_id: int):
     return job, items
 
 
+def _fetch_job_meta(job_id: int):
+    """Return rollback_jobs row without preloading rollback_job_items."""
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, requested_by, status, dry_run, batch_id
+                FROM rollback_jobs
+                WHERE id=%s
+                """,
+                (job_id,),
+            )
+            return cursor.fetchone()
+
+
 def _update_job_status(job_id: int, status: str):
     with get_conn() as conn:
         with conn.cursor() as cursor:
@@ -130,6 +145,99 @@ def _update_item(item_id: int, status: str, error: str | None = None):
                 (status, error, item_id),
             )
         conn.commit()
+
+
+def _count_job_items(job_id: int) -> int:
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM rollback_job_items WHERE job_id=%s",
+                (job_id,),
+            )
+            row = cursor.fetchone()
+    return int(row[0]) if row else 0
+
+
+def _get_item_status_counts(job_id: int) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT status, COUNT(*)
+                FROM rollback_job_items
+                WHERE job_id=%s
+                GROUP BY status
+                """,
+                (job_id,),
+            )
+            for status, count in cursor.fetchall():
+                counts[str(status)] = int(count)
+    return counts
+
+
+def _derive_job_status_from_items(job_id: int) -> tuple[str, dict[str, int]]:
+    """Derive rollback_jobs.status from rollback_job_items state."""
+    counts = _get_item_status_counts(job_id)
+    total = sum(counts.values())
+    failed = counts.get("failed", 0)
+    queued = counts.get("queued", 0)
+    running = counts.get("running", 0)
+    completed = counts.get("completed", 0)
+    canceled = counts.get("canceled", 0)
+
+    if total == 0:
+        return "completed", counts
+    if failed:
+        return "failed", counts
+    if queued or running:
+        return "running", counts
+    if canceled and not completed:
+        return "canceled", counts
+    if canceled and completed:
+        return "canceled", counts
+    return "completed", counts
+
+
+def _claim_next_queued_item(job_id: int):
+    """Claim one queued item by transitioning it to running.
+
+    Returns a tuple of (id, file_title, target_user, summary) or None when
+    no queued items remain.
+    """
+    while True:
+        with get_conn() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, file_title, target_user, summary
+                    FROM rollback_job_items
+                    WHERE job_id=%s AND status='queued'
+                    ORDER BY id ASC
+                    LIMIT 1
+                    """,
+                    (job_id,),
+                )
+                item = cursor.fetchone()
+
+                if not item:
+                    return None
+
+                item_id = item[0]
+                cursor.execute(
+                    """
+                    UPDATE rollback_job_items
+                    SET status='running', error=NULL
+                    WHERE id=%s AND status='queued'
+                    """,
+                    (item_id,),
+                )
+
+                if cursor.rowcount == 1:
+                    conn.commit()
+                    return item
+
+            conn.commit()
 
 
 def _setup_pywikibot_dir() -> None:
@@ -179,7 +287,7 @@ def _bot_site() -> pywikibot.Site:
 @shared_task(ignore_result=True)
 def process_rollback_job(job_id: int):
     try:
-        job, items = _fetch_job(job_id)
+        job = _fetch_job_meta(job_id)
 
         if not job:
             return
@@ -189,10 +297,12 @@ def process_rollback_job(job_id: int):
         if current_status == "canceled":
             return
 
+        total_items = _count_job_items(job_id)
+
         _update_job_status(job_id, "running")
         set_progress(
             job_id,
-            {"status": "running", "total": len(items), "completed": 0, "failed": 0},
+            {"status": "running", "total": total_items, "completed": 0, "failed": 0},
         )
 
         site = None
@@ -225,7 +335,7 @@ def process_rollback_job(job_id: int):
         status_updater.update_wiki_status(
             editing="Actively editing",
             current_job=f"Processing batch {batch_id} (job {job_id})",
-            details=f"{len(items)} items queued",
+            details=f"{total_items} items queued",
             warning=warning_text,
         )
 
@@ -237,16 +347,31 @@ def process_rollback_job(job_id: int):
             status_updater.notify_maintainers(batch_id, notify_users, site=_notify_site)
             status_updater.mark_batch_notified(batch_id)
 
-        failed = 0
         # Track flagged-bot users rolled back in this job: username → edit count.
         notified_bots: dict[str, int] = {}
 
-        for item_id, file_title, target_user, summary in items:
-            refreshed_job, _ = _fetch_job(job_id)
+        while True:
+            refreshed_job = _fetch_job_meta(job_id)
 
             if refreshed_job and refreshed_job[2] == "canceled":
-                _update_item(item_id, "canceled", "Canceled by requester")
-                continue
+                with get_conn() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute(
+                            """
+                            UPDATE rollback_job_items
+                            SET status='canceled', error='Canceled by requester'
+                            WHERE job_id=%s AND status IN ('queued', 'running')
+                            """,
+                            (job_id,),
+                        )
+                    conn.commit()
+                break
+
+            claimed = _claim_next_queued_item(job_id)
+            if not claimed:
+                break
+
+            item_id, file_title, target_user, summary = claimed
 
             try:
                 if dry_run:
@@ -280,7 +405,6 @@ def process_rollback_job(job_id: int):
                     _update_item(item_id, "completed", err_str)
                     update_progress(job_id, "completed")
                 else:
-                    failed += 1
                     _update_item(item_id, "failed", err_str)
                     update_progress(job_id, "failed")
 
@@ -292,14 +416,18 @@ def process_rollback_job(job_id: int):
                 )
 
         # AFTER the loop finishes
-        final_status = "failed" if failed else "completed"
+        final_status, counts = _derive_job_status_from_items(job_id)
+        completed_count = counts.get("completed", 0)
+        failed_count = counts.get("failed", 0)
+        total_count = sum(counts.values())
+
         set_progress(
             job_id,
             {
                 "status": final_status,
-                "total": len(items),
-                "completed": len(items) - failed,
-                "failed": failed,
+                "total": total_count,
+                "completed": completed_count,
+                "failed": failed_count,
             },
         )
 
@@ -307,8 +435,16 @@ def process_rollback_job(job_id: int):
 
         status_updater.update_wiki_status(
             editing="Idle",
-            last_job=f"{'Failed' if failed else 'Completed'} batch {batch_id} (job {job_id})",
-            details=f"{len(items) - failed}/{len(items)} items completed",
+            last_job=(
+                f"Failed batch {batch_id} (job {job_id})"
+                if final_status == "failed"
+                else (
+                    f"Canceled batch {batch_id} (job {job_id})"
+                    if final_status == "canceled"
+                    else f"Completed batch {batch_id} (job {job_id})"
+                )
+            ),
+            details=f"{completed_count}/{total_count} items completed",
         )
 
     except Exception as exc:
