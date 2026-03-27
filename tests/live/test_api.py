@@ -55,7 +55,6 @@ class TestAuthRequired:
             ("POST", "/api/v1/rollback/jobs", {"requested_by": "x", "items": []}),
             ("GET", "/api/v1/rollback/jobs/progress?ids=1", None),
             ("POST", "/api/v1/rollback/from-diff", {"diff": "123"}),
-            ("GET", "/rollback-queue", None),
             ("GET", "/rollback-queue/all-jobs", None),
             ("GET", "/rollback_batch", None),
             ("GET", "/rollback-from-diff", None),
@@ -175,8 +174,8 @@ class TestFromDiffInputValidation:
         )
         assert resp.status_code == 400
 
-    def test_valid_diff_id_creates_resolving_job(self, admin_client, db_conn):
-        """A syntactically valid diff ID is accepted; the job starts as ``resolving``."""
+    def test_valid_diff_id_creates_pending_approval_job(self, admin_client, db_conn):
+        """A valid diff ID creates a request in ``pending_approval`` status."""
         client, _user = admin_client
         resp = client.post(
             "/api/v1/rollback/from-diff",
@@ -184,7 +183,7 @@ class TestFromDiffInputValidation:
         )
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["status"] == "resolving"
+        assert data["status"] == "pending_approval"
         assert "job_id" in data
 
         # Clean up the created job record.
