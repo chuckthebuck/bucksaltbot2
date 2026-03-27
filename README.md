@@ -18,7 +18,14 @@ BuckSaltBot2 (tool name: **buckbot**) is a Wikimedia Commons administration tool
 ```
 bucksaltbot2/
 ├── app.py                   # Flask app factory, Celery setup, maintainer auth
-├── router.py                # All HTTP routes (login, API endpoints, UI pages)
+├── router/                  # HTTP routing package (split from monolithic router.py)
+│   ├── __init__.py          # Re-exports for backward-compatible `import router`
+│   ├── authz.py             # Auth config: env-var parsing, user grants, runtime config
+│   ├── diff_state.py        # Redis diff-payload helpers and stale-job detection
+│   ├── wiki_api.py          # MediaWiki API calls (revisions, contributions)
+│   ├── permissions.py       # Permission checks, rate limiting, user-group lookup
+│   ├── jobs.py              # Diff-rollback resolution and job creation helpers
+│   └── routes.py            # All HTTP route handlers and OAuth helpers
 ├── blueprint.py             # Static asset blueprint
 ├── celery_worker.py         # Celery worker entry point
 ├── celery_init.py           # Celery initialization helper
@@ -257,6 +264,18 @@ toolforge build start .
 | `CELERY_RESULT_BACKEND` | Redis URL used as the Celery result backend | same as `CELERY_BROKER_URL` |
 | `BOT_ADMIN_ACCOUNTS` | Comma-separated list of extra admin usernames | — |
 | `MAX_JOB_ITEMS` | Maximum number of items allowed per job | `50` |
+| `EXTRA_AUTHORIZED_USERS` | Comma-separated users granted basic tool access without maintainer rights | — |
+| `USERS_READ_ONLY` | Comma-separated users who may view their own jobs but cannot submit or cancel | — |
+| `USERS_TESTER` | Comma-separated tester accounts (full interface access, separate rate limit) | — |
+| `USERS_GRANTED_FROM_DIFF` | Comma-separated users granted access to the from-diff interface | — |
+| `USERS_GRANTED_VIEW_ALL` | Comma-separated users granted read access to all jobs | — |
+| `USERS_GRANTED_BATCH` | Comma-separated users granted access to the batch interface | — |
+| `USERS_GRANTED_CANCEL_ANY` | Comma-separated users who may cancel other users' jobs | — |
+| `USERS_GRANTED_RETRY_ANY` | Comma-separated users who may retry other users' jobs | — |
+| `USER_GRANTS_JSON` | JSON object mapping username → list of group/right grants | — |
+| `RATE_LIMIT_JOBS_PER_HOUR` | Per-user job-creation rate limit (0 = disabled; maintainers exempt) | `0` |
+| `RATE_LIMIT_TESTER_JOBS_PER_HOUR` | Separate rate limit for tester-tier accounts | same as above |
+| `CONFIG_EDIT_PRIMARY_ACCOUNT` | Only this bot-admin account may edit the runtime config via the UI | `chuckbot` |
 | `FLASK_DEBUG` | Enable Flask debug mode (`1`/`0`) | `0` |
 | `DOCKER` | Set to `TRUE` inside Docker containers | — |
 | `NOTDEV` | If set, skips loading the `.env` file | — |

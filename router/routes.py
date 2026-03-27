@@ -25,7 +25,7 @@ from rollback_queue import (
     process_rollback_job,
     resolve_diff_rollback_job_task as resolve_diff_rollback_job,
 )
-from toolsdb import get_conn, get_runtime_config
+from toolsdb import get_conn, get_runtime_config  # noqa: F401
 
 from router import permissions as _perm
 from router.authz import (
@@ -43,6 +43,7 @@ from router.authz import (
     _RUNTIME_AUTHZ_ALLOWED_KEYS,
     _USER_GRANT_GROUPS,
     _USER_GRANT_RIGHTS,
+    _USER_IMPLICIT_FLAGS,
     _get_user_grants_payload,
     _normalize_runtime_authz_updates,
     _normalize_username,
@@ -50,7 +51,6 @@ from router.authz import (
     _serialize_runtime_authz_config,
 )
 from router.diff_state import (
-    _append_mw_debug,
     _diff_error_key,
     _load_diff_payload,
     _maybe_mark_stale_resolving_job_failed,
@@ -58,7 +58,6 @@ from router.diff_state import (
     _store_diff_payload,
     _update_diff_payload,
 )
-from router.jobs import resolve_diff_rollback_job_impl
 from router.wiki_api import (
     _ACCOUNT_ROLLBACK_MAX_LIMIT,
     _ROLLBACKABLE_WINDOW_LIMIT,

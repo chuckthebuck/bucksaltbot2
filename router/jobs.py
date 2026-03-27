@@ -5,10 +5,7 @@ import time
 import status_updater
 
 from app import MAX_JOB_ITEMS, flask_app as app
-from rollback_queue import (
-    process_rollback_job,
-    resolve_diff_rollback_job_task as resolve_diff_rollback_job,
-)
+from rollback_queue import process_rollback_job
 from router.authz import (
     _ALLOWED_DIFF_REQUEST_ENDPOINTS,
     _APPROVAL_REQUIRED_MAINTAINER,
