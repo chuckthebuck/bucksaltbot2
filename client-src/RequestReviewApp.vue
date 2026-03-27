@@ -22,6 +22,8 @@ const props = JSON.parse(
 };
 
 const loading = ref(true);
+const refreshing = ref(false);
+const hasLoadedOnce = ref(false);
 const error = ref("");
 const notice = ref("");
 const requests = ref<RollbackRequestRow[]>([]);
@@ -38,8 +40,14 @@ const pendingRequests = computed(() =>
   requests.value.filter((r) => r.status === "pending_approval")
 );
 
+function normalizeEndpoint(endpoint?: string | null): string | null {
+  if (!endpoint) return null;
+  const normalized = String(endpoint).trim().toLowerCase().replace(/-/g, "_");
+  return normalized || null;
+}
+
 function isAccountStyleRequest(row: RollbackRequestRow): boolean {
-  return row.request_type === "diff" && row.requested_endpoint === "from_account";
+  return row.request_type === "diff" && normalizeEndpoint(row.requested_endpoint) === "from_account";
 }
 
 function canUseFromDiffEndpoint(row: RollbackRequestRow): boolean {
@@ -112,7 +120,12 @@ function dryRunLabel(row: RollbackRequestRow): string {
 }
 
 async function loadRequests() {
-  loading.value = true;
+  const isInitialLoad = !hasLoadedOnce.value;
+  if (isInitialLoad) {
+    loading.value = true;
+  } else {
+    refreshing.value = true;
+  }
   error.value = "";
 
   try {
@@ -121,7 +134,9 @@ async function loadRequests() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Failed to load rollback requests";
   } finally {
+    hasLoadedOnce.value = true;
     loading.value = false;
+    refreshing.value = false;
   }
 }
 
@@ -130,10 +145,10 @@ async function loadPreview(row: RollbackRequestRow, endpoint?: string) {
   error.value = "";
 
   try {
-    const effectiveEndpoint = endpoint || row.requested_endpoint || undefined;
+    const effectiveEndpoint = normalizeEndpoint(endpoint || row.requested_endpoint);
     const preview = await fetchRollbackRequestPreview(
       row.id,
-      effectiveEndpoint,
+      effectiveEndpoint || undefined,
       true,
     );
     previewByJob.value[row.id] = preview;
@@ -224,7 +239,7 @@ function startPolling() {
   if (pollingTimer.value !== null) return;
 
   pollingTimer.value = window.setInterval(() => {
-    if (loading.value) return;
+    if (loading.value || refreshing.value) return;
     void loadRequests();
   }, 5000);
 }
@@ -261,8 +276,8 @@ function onVisibilityChange() {
     </CdxMessage>
 
     <div class="request-review-actions">
-      <CdxButton action="default" weight="quiet" @click="loadRequests">
-        Refresh requests
+      <CdxButton action="default" weight="quiet" :disabled="loading || refreshing" @click="loadRequests">
+        {{ refreshing ? 'Refreshing...' : 'Refresh requests' }}
       </CdxButton>
     </div>
 
@@ -294,7 +309,7 @@ function onVisibilityChange() {
               <td>{{ row.id }}</td>
               <td>{{ row.requested_by }}</td>
               <td>{{ requestTypeLabel(row) }}</td>
-              <td>{{ row.requested_endpoint || '-' }}</td>
+              <td>{{ normalizeEndpoint(row.requested_endpoint) || '-' }}</td>
               <td>{{ row.status }}</td>
               <td>{{ dryRunLabel(row) }}</td>
               <td>{{ row.total }}</td>
