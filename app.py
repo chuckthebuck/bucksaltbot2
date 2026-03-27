@@ -18,7 +18,7 @@ BOT_ADMIN_ACCOUNTS = {
 
 TOOLHUB_API = "https://toolhub.wikimedia.org/api/tools/buckbot/"
 
-MAX_JOB_ITEMS = int(os.getenv("MAX_JOB_ITEMS", "50"))
+MAX_JOB_ITEMS = int(os.getenv("MAX_JOB_ITEMS", "500"))
 
 _TOOLHUB_CACHE_TTL = 300  # 5 minutes
 _toolhub_maintainers_cache = None
