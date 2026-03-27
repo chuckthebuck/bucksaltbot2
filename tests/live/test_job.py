@@ -1,8 +1,9 @@
 """Live tests: full dry-run job lifecycle.
 
 These tests create real database rows with ``dry_run=True`` and verify the
-complete job pipeline end-to-end.  All rows created during a test are deleted
-in teardown regardless of whether the test passes or fails.
+complete job pipeline end-to-end.  Rows are preserved by default so they
+remain visible in the jobs table; set ``LIVE_TEST_KEEP_JOBS=""`` to restore
+automatic teardown cleanup.
 
 Pipeline tests (those that wait for a Celery worker to process a job) are
 skipped automatically when the worker heartbeat is absent or stale.

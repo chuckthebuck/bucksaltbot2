@@ -7,6 +7,7 @@
 # Optional environment variables:
 #   LIVE_TEST_USER   – username injected into admin sessions (default: live-test-admin)
 #   TOOL_REDIS_URI   – Redis URL (defaults to the Toolforge Redis endpoint)
+#   LIVE_TEST_KEEP_JOBS – keep created rows in rollback tables (default: enabled)
 #
 # Usage:
 #   bash scripts/run_live_tests.sh            # run all live tests
