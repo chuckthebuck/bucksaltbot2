@@ -60,13 +60,13 @@ class TestDatabase:
             cur.execute(
                 "INSERT INTO rollback_jobs (requested_by, status, dry_run, batch_id)"
                 " VALUES (%s, %s, %s, %s)",
-                ("live-test-probe", "queued", 1, int(time.time() * 1000)),
+                ("live-test-probe", "completed", 1, int(time.time() * 1000)),
             )
         db_conn.commit()
 
         with db_conn.cursor() as cur:
             cur.execute(
-                "SELECT id, requested_by FROM rollback_jobs"
+                "SELECT id, requested_by, status FROM rollback_jobs"
                 " WHERE requested_by='live-test-probe' ORDER BY id DESC LIMIT 1"
             )
             row = cur.fetchone()
@@ -74,6 +74,7 @@ class TestDatabase:
         assert row is not None
         inserted_id = row[0]
         assert row[1] == "live-test-probe"
+        assert row[2] == "completed"
 
         if os.environ.get("LIVE_TEST_KEEP_JOBS"):
             return
@@ -88,7 +89,7 @@ class TestDatabase:
             cur.execute(
                 "INSERT INTO rollback_jobs (requested_by, status, dry_run, batch_id)"
                 " VALUES (%s, %s, %s, %s)",
-                ("live-test-fk", "queued", 1, int(time.time() * 1000)),
+                ("live-test-fk", "completed", 1, int(time.time() * 1000)),
             )
         db_conn.commit()
 
@@ -103,21 +104,30 @@ class TestDatabase:
             with db_conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO rollback_job_items"
-                    " (job_id, file_title, target_user, status) VALUES (%s,%s,%s,%s)",
-                    (job_id, "File:Test.jpg", "TestUser", "queued"),
+                    " (job_id, file_title, target_user, summary, status) VALUES (%s,%s,%s,%s,%s)",
+                    (
+                        job_id,
+                        "File:Test.jpg",
+                        "TestUser",
+                        "LIVE TEST PROBE: validates rollback_job_items foreign-key writes/reads",
+                        "completed",
+                    ),
                 )
             db_conn.commit()
 
             with db_conn.cursor() as cur:
                 cur.execute(
-                    "SELECT file_title, status FROM rollback_job_items WHERE job_id=%s",
+                    "SELECT file_title, status, summary FROM rollback_job_items WHERE job_id=%s",
                     (job_id,),
                 )
                 item = cur.fetchone()
 
             assert item is not None
             assert item[0] == "File:Test.jpg"
-            assert item[1] == "queued"
+            assert item[1] == "completed"
+            assert item[2] == (
+                "LIVE TEST PROBE: validates rollback_job_items foreign-key writes/reads"
+            )
         finally:
             if os.environ.get("LIVE_TEST_KEEP_JOBS"):
                 return

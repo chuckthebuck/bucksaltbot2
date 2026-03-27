@@ -219,7 +219,13 @@ class TestFromDiffInputValidation:
 
         resp = client.post(
             "/api/v1/rollback/from-diff",
-            json={"diff": str(revid), "dry_run": True},
+            json={
+                "diff": str(revid),
+                "dry_run": True,
+                "summary": (
+                    "LIVE TEST PROBE: validates from-diff request creation and auto-approval"
+                ),
+            },
         )
         assert resp.status_code == 200
         data = resp.get_json()
