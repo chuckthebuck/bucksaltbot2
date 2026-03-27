@@ -5,11 +5,11 @@ environment variable (the same convention used elsewhere in this codebase).
 When ``NOTDEV`` is unset the functions return immediately so that tests and
 development environments never accidentally touch the live wiki.
 """
+from __future__ import annotations
 
 import os
 import pywikibot
 
-from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
