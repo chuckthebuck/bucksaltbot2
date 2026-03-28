@@ -168,25 +168,58 @@ def _derive_job_status_from_items(job_id: int) -> tuple[str, dict[str, int]]:
     return "completed", counts
 
 
-def claim_next_item(job_id: int):
+def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = None):
     """Claim one queued item by transitioning it to running.
 
-    Returns a tuple of (id, file_title, target_user, summary) or None when
-    no queued items remain.
+    When ``job_id`` is provided, claims from that job only.
+    When ``job_id`` is None, claims from the global queue and optionally
+    prioritizes items whose job has ``preferred_batch_id``.
+
+    Returns:
+      - job-scoped claim: (id, file_title, target_user, summary)
+      - global claim: (id, claimed_job_id, file_title, target_user, summary)
+      - None when no queued items remain.
     """
     while True:
         with get_conn() as conn:
             with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT id, file_title, target_user, summary
-                    FROM rollback_job_items
-                    WHERE job_id=%s AND status='queued'
-                    ORDER BY id ASC
-                    LIMIT 1
-                    """,
-                    (job_id,),
-                )
+                if job_id is not None:
+                    cursor.execute(
+                        """
+                        SELECT id, file_title, target_user, summary
+                        FROM rollback_job_items
+                        WHERE job_id=%s AND status='queued'
+                        ORDER BY id ASC
+                        LIMIT 1
+                        """,
+                        (job_id,),
+                    )
+                else:
+                    if preferred_batch_id is None:
+                        cursor.execute(
+                            """
+                            SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary
+                            FROM rollback_job_items i
+                            JOIN rollback_jobs j ON j.id = i.job_id
+                            WHERE i.status='queued' AND j.status IN ('queued', 'running')
+                            ORDER BY i.id ASC
+                            LIMIT 1
+                            """
+                        )
+                    else:
+                        cursor.execute(
+                            """
+                            SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary
+                            FROM rollback_job_items i
+                            JOIN rollback_jobs j ON j.id = i.job_id
+                            WHERE i.status='queued' AND j.status IN ('queued', 'running')
+                            ORDER BY
+                                CASE WHEN j.batch_id=%s THEN 0 ELSE 1 END,
+                                i.id ASC
+                            LIMIT 1
+                            """,
+                            (preferred_batch_id,),
+                        )
                 item = cursor.fetchone()
 
                 if not item:
@@ -336,17 +369,39 @@ def process_rollback_job(job_id: int):
                     conn.commit()
                 break
 
-            claimed = claim_next_item(job_id)
+            claimed = claim_next_item(job_id=None, preferred_batch_id=batch_id)
             if not claimed:
                 break
 
-            item_id, file_title, target_user, summary = claimed
+            if len(claimed) == 4:
+                # Backward-compatible tuple shape for tests and job-scoped calls.
+                item_id, file_title, target_user, summary = claimed
+                claimed_job_id = job_id
+            else:
+                item_id, claimed_job_id, file_title, target_user, summary = claimed
+
+            claimed_job = _fetch_job_meta(claimed_job_id)
+            if not claimed_job:
+                _update_item(item_id, "failed", "Missing rollback_jobs row")
+                continue
+
+            (
+                _,
+                claimed_requested_by,
+                claimed_job_status,
+                claimed_dry_run,
+                _claimed_batch_id,
+            ) = claimed_job
+
+            if claimed_job_status == "queued":
+                _update_job_status(claimed_job_id, "running")
+
             _update_item(item_id, "running", None)
 
             try:
-                if dry_run:
+                if claimed_dry_run:
                     _update_item(item_id, "completed", None)
-                    update_progress(job_id, "completed")
+                    update_progress(claimed_job_id, "completed")
                     continue
 
                 token = site.tokens["rollback"]
@@ -356,13 +411,13 @@ def process_rollback_job(job_id: int):
                     title=file_title,
                     user=target_user,
                     token=token,
-                    summary=_summary_with_requester(summary, requested_by),
+                    summary=_summary_with_requester(summary, claimed_requested_by),
                     markbot=True,
                     bot=True,
                 ).submit()
 
                 _update_item(item_id, "completed", None)
-                update_progress(job_id, "completed")
+                update_progress(claimed_job_id, "completed")
 
                 # Track flagged-bot accounts for post-batch notification.
                 if site and status_updater.is_flagged_bot(site, target_user):
@@ -373,10 +428,10 @@ def process_rollback_job(job_id: int):
                 if any(code in err_str for code in _ROLLBACK_NOOP_CODES):
                     # Page is already in the desired state – not a real failure.
                     _update_item(item_id, "completed", err_str)
-                    update_progress(job_id, "completed")
+                    update_progress(claimed_job_id, "completed")
                 else:
                     _update_item(item_id, "failed", err_str)
-                    update_progress(job_id, "failed")
+                    update_progress(claimed_job_id, "failed")
 
         # Notify each flagged-bot account that was rolled back (once per job).
         if site:
