@@ -1,6 +1,6 @@
 """Tests for rollback_queue.py – Celery task helpers and process_rollback_job."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -38,34 +38,31 @@ def test_resolve_pywikibot_dir_falls_back_from_unwritable_home(monkeypatch):
     assert attempted[0] == "/data/project/buckbot/.pywikibot"
 
 
-# ── _fetch_job ────────────────────────────────────────────────────────────────
+# ── _fetch_job_meta ───────────────────────────────────────────────────────────
 
 
-def test_fetch_job_returns_job_and_items():
+def test_fetch_job_meta_returns_job_when_found():
     import rollback_queue
 
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "alice", "queued", 0, 12345)
-    mock_cursor.fetchall.return_value = [(10, "File:A.jpg", "Vandal", None)]
 
     with patch("rollback_queue.get_conn", return_value=mock_conn):
-        job, items = rollback_queue._fetch_job(1)
+        job = rollback_queue._fetch_job_meta(1)
 
     assert job == (1, "alice", "queued", 0, 12345)
-    assert items == [(10, "File:A.jpg", "Vandal", None)]
 
 
-def test_fetch_job_returns_none_when_not_found():
+def test_fetch_job_meta_returns_none_when_not_found():
     import rollback_queue
 
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = None
 
     with patch("rollback_queue.get_conn", return_value=mock_conn):
-        job, items = rollback_queue._fetch_job(999)
+        job = rollback_queue._fetch_job_meta(999)
 
     assert job is None
-    assert items == []
 
 
 # ── _update_job_status ────────────────────────────────────────────────────────
@@ -129,7 +126,7 @@ def test_process_rollback_job_dry_run_completes_without_bot_login():
     with (
         patch("rollback_queue._fetch_job_meta", return_value=job),
         patch("rollback_queue._count_job_items", return_value=len(items)),
-        patch("rollback_queue._claim_next_queued_item", side_effect=[items[0], items[1], None]),
+        patch("rollback_queue.claim_next_item", side_effect=[items[0], items[1], None]),
         patch(
             "rollback_queue._derive_job_status_from_items",
             return_value=("completed", {"completed": 2}),
@@ -142,10 +139,11 @@ def test_process_rollback_job_dry_run_completes_without_bot_login():
         rollback_queue.process_rollback_job.run(1)
 
     mock_bot_site.assert_not_called()
-    assert mock_update_item.call_count == len(items)
-    # Every item must be marked completed
-    for c in mock_update_item.call_args_list:
-        assert c.args[1] == "completed"
+    assert mock_update_item.call_count == len(items) * 2
+    # Each item should be set running then completed.
+    statuses = [c.args[1] for c in mock_update_item.call_args_list]
+    assert statuses.count("running") == len(items)
+    assert statuses.count("completed") == len(items)
     # Final job status must be "completed"
     final_status_call = mock_update_job.call_args_list[-1]
     assert final_status_call.args[1] == "completed"
@@ -161,7 +159,7 @@ def test_process_rollback_job_dry_run_sets_running_then_completed():
     with (
         patch("rollback_queue._fetch_job_meta", return_value=job),
         patch("rollback_queue._count_job_items", return_value=len(items)),
-        patch("rollback_queue._claim_next_queued_item", side_effect=[items[0], None]),
+        patch("rollback_queue.claim_next_item", side_effect=[items[0], None]),
         patch(
             "rollback_queue._derive_job_status_from_items",
             return_value=("completed", {"completed": 1}),
@@ -197,7 +195,7 @@ def test_process_rollback_job_live_run_obtains_mw_rollback_token():
     with (
         patch("rollback_queue._fetch_job_meta", return_value=job),
         patch("rollback_queue._count_job_items", return_value=len(items)),
-        patch("rollback_queue._claim_next_queued_item", side_effect=[items[0], None]),
+        patch("rollback_queue.claim_next_item", side_effect=[items[0], None]),
         patch(
             "rollback_queue._derive_job_status_from_items",
             return_value=("completed", {"completed": 1}),
@@ -235,7 +233,7 @@ def test_process_rollback_job_live_run_uses_default_summary_when_none():
     with (
         patch("rollback_queue._fetch_job_meta", return_value=job),
         patch("rollback_queue._count_job_items", return_value=len(items)),
-        patch("rollback_queue._claim_next_queued_item", side_effect=[items[0], None]),
+        patch("rollback_queue.claim_next_item", side_effect=[items[0], None]),
         patch(
             "rollback_queue._derive_job_status_from_items",
             return_value=("completed", {"completed": 1}),
@@ -264,7 +262,7 @@ def test_process_rollback_job_live_run_marks_item_completed_on_success():
     with (
         patch("rollback_queue._fetch_job_meta", return_value=job),
         patch("rollback_queue._count_job_items", return_value=len(items)),
-        patch("rollback_queue._claim_next_queued_item", side_effect=[items[0], None]),
+        patch("rollback_queue.claim_next_item", side_effect=[items[0], None]),
         patch(
             "rollback_queue._derive_job_status_from_items",
             return_value=("completed", {"completed": 1}),
@@ -276,7 +274,10 @@ def test_process_rollback_job_live_run_marks_item_completed_on_success():
     ):
         rollback_queue.process_rollback_job.run(1)
 
-    mock_update_item.assert_called_once_with(10, "completed", None)
+    assert mock_update_item.call_args_list == [
+        call(10, "running", None),
+        call(10, "completed", None),
+    ]
 
 
 def test_process_rollback_job_live_run_marks_item_failed_on_api_error():
@@ -293,7 +294,7 @@ def test_process_rollback_job_live_run_marks_item_failed_on_api_error():
     with (
         patch("rollback_queue._fetch_job_meta", return_value=job),
         patch("rollback_queue._count_job_items", return_value=len(items)),
-        patch("rollback_queue._claim_next_queued_item", side_effect=[items[0], None]),
+        patch("rollback_queue.claim_next_item", side_effect=[items[0], None]),
         patch(
             "rollback_queue._derive_job_status_from_items",
             return_value=("failed", {"failed": 1}),
@@ -305,7 +306,10 @@ def test_process_rollback_job_live_run_marks_item_failed_on_api_error():
     ):
         rollback_queue.process_rollback_job.run(1)
 
-    mock_update_item.assert_called_once_with(10, "failed", "API error")
+    assert mock_update_item.call_args_list == [
+        call(10, "running", None),
+        call(10, "failed", "API error"),
+    ]
     # Final job status should be "failed" since one item failed
     final_status = mock_update_job.call_args_list[-1].args[1]
     assert final_status == "failed"
@@ -327,7 +331,7 @@ def test_process_rollback_job_noop_alreadyrolled_treated_as_completed():
     with (
         patch("rollback_queue._fetch_job_meta", return_value=job),
         patch("rollback_queue._count_job_items", return_value=len(items)),
-        patch("rollback_queue._claim_next_queued_item", side_effect=[items[0], None]),
+        patch("rollback_queue.claim_next_item", side_effect=[items[0], None]),
         patch(
             "rollback_queue._derive_job_status_from_items",
             return_value=("completed", {"completed": 1}),
@@ -363,7 +367,7 @@ def test_process_rollback_job_noop_onlyauthor_treated_as_completed():
     with (
         patch("rollback_queue._fetch_job_meta", return_value=job),
         patch("rollback_queue._count_job_items", return_value=len(items)),
-        patch("rollback_queue._claim_next_queued_item", side_effect=[items[0], None]),
+        patch("rollback_queue.claim_next_item", side_effect=[items[0], None]),
         patch(
             "rollback_queue._derive_job_status_from_items",
             return_value=("completed", {"completed": 1}),
@@ -418,7 +422,7 @@ def test_process_rollback_job_marks_item_canceled_if_job_canceled_mid_run():
     with (
         patch("rollback_queue._fetch_job_meta", side_effect=[queued_job, canceled_job]),
         patch("rollback_queue._count_job_items", return_value=len(items)),
-        patch("rollback_queue._claim_next_queued_item", side_effect=[items[0], None]),
+        patch("rollback_queue.claim_next_item", side_effect=[items[0], None]),
         patch(
             "rollback_queue._derive_job_status_from_items",
             return_value=("canceled", {"canceled": 1}),

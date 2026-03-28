@@ -69,37 +69,6 @@ def _summary_with_requester(summary: str | None, requested_by: str) -> str:
     return f"{base}; {requester_tag}"
 
 
-def _fetch_job(job_id: int):
-    with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT id, requested_by, status, dry_run, batch_id
-                FROM rollback_jobs
-                WHERE id=%s
-                """,
-                (job_id,),
-            )
-            job = cursor.fetchone()
-
-            if not job:
-                return None, []
-
-            cursor.execute(
-                """
-                SELECT id, file_title, target_user, summary
-                FROM rollback_job_items
-                WHERE job_id=%s
-                ORDER BY id ASC
-                """,
-                (job_id,),
-            )
-
-            items = cursor.fetchall()
-
-    return job, items
-
-
 def _fetch_job_meta(job_id: int):
     """Return rollback_jobs row without preloading rollback_job_items."""
     with get_conn() as conn:
@@ -199,7 +168,7 @@ def _derive_job_status_from_items(job_id: int) -> tuple[str, dict[str, int]]:
     return "completed", counts
 
 
-def _claim_next_queued_item(job_id: int):
+def claim_next_item(job_id: int):
     """Claim one queued item by transitioning it to running.
 
     Returns a tuple of (id, file_title, target_user, summary) or None when
@@ -227,7 +196,7 @@ def _claim_next_queued_item(job_id: int):
                 cursor.execute(
                     """
                     UPDATE rollback_job_items
-                    SET status='running', error=NULL
+                    SET status='running', error=NULL, attempts=attempts+1
                     WHERE id=%s AND status='queued'
                     """,
                     (item_id,),
@@ -367,11 +336,12 @@ def process_rollback_job(job_id: int):
                     conn.commit()
                 break
 
-            claimed = _claim_next_queued_item(job_id)
+            claimed = claim_next_item(job_id)
             if not claimed:
                 break
 
             item_id, file_title, target_user, summary = claimed
+            _update_item(item_id, "running", None)
 
             try:
                 if dry_run:
@@ -448,12 +418,30 @@ def process_rollback_job(job_id: int):
         )
 
     except Exception as exc:
-        job, items = _fetch_job(job_id)
+        error_text = str(exc)
+        with get_conn() as conn:
+            with conn.cursor() as cursor:
+                # Mark any in-flight or pending items failed with the task-level error.
+                cursor.execute(
+                    """
+                    UPDATE rollback_job_items
+                    SET status='failed', error=%s
+                    WHERE job_id=%s AND status IN ('queued', 'running')
+                    """,
+                    (error_text, job_id),
+                )
+            conn.commit()
 
-        if items:
-            for item_id, *_ in items:
-                _update_item(item_id, "failed", str(exc))
-                update_progress(job_id, "failed")
+        final_status, counts = _derive_job_status_from_items(job_id)
+        set_progress(
+            job_id,
+            {
+                "status": final_status,
+                "total": sum(counts.values()),
+                "completed": counts.get("completed", 0),
+                "failed": counts.get("failed", 0),
+            },
+        )
 
         _update_job_status(job_id, "failed")
 

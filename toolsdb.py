@@ -94,11 +94,26 @@ def init_db():
                     file_title VARCHAR(512) NOT NULL,
                     target_user VARCHAR(255) NOT NULL,
                     summary TEXT NULL,
-                    status VARCHAR(32) NOT NULL,
+                    status VARCHAR(255) NOT NULL DEFAULT 'queued',
+                    attempts INT NOT NULL DEFAULT 0,
                     error TEXT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_job_id (job_id)
                 )
+                """
+            )
+
+            # Ensure legacy deployments keep the same default item-state model.
+            _ensure_column(
+                cursor,
+                "rollback_job_items",
+                "attempts",
+                "attempts INT NOT NULL DEFAULT 0",
+            )
+            cursor.execute(
+                """
+                ALTER TABLE rollback_job_items
+                MODIFY COLUMN status VARCHAR(255) NOT NULL DEFAULT 'queued'
                 """
             )
 
