@@ -1,6 +1,9 @@
 import os
 from pathlib import Path
 from celery import shared_task
+from redis_state import set_progress, update_progress
+from toolsdb import get_conn
+import status_updater
 
 
 def _resolve_pywikibot_dir() -> Path:
@@ -45,9 +48,7 @@ def _bootstrap_pywikibot_env() -> None:
 _bootstrap_pywikibot_env()
 
 import pywikibot
-from redis_state import set_progress, update_progress
-from toolsdb import get_conn
-import status_updater
+
 
 # MediaWiki API error codes that mean the rollback is already in the desired
 # state.  The page does not need to change, so these are not real failures.
@@ -68,7 +69,8 @@ def _summary_with_requester(summary: str | None, requested_by: str) -> str:
     return f"{base}; {requester_tag}"
 
 
-def _fetch_job(job_id: int):
+def _fetch_job_meta(job_id: int):
+    """Return rollback_jobs row without preloading rollback_job_items."""
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -79,24 +81,7 @@ def _fetch_job(job_id: int):
                 """,
                 (job_id,),
             )
-            job = cursor.fetchone()
-
-            if not job:
-                return None, []
-
-            cursor.execute(
-                """
-                SELECT id, file_title, target_user, summary
-                FROM rollback_job_items
-                WHERE job_id=%s
-                ORDER BY id ASC
-                """,
-                (job_id,),
-            )
-
-            items = cursor.fetchall()
-
-    return job, items
+            return cursor.fetchone()
 
 
 def _update_job_status(job_id: int, status: str):
@@ -131,11 +116,137 @@ def _update_item(item_id: int, status: str, error: str | None = None):
         conn.commit()
 
 
+def _count_job_items(job_id: int) -> int:
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM rollback_job_items WHERE job_id=%s",
+                (job_id,),
+            )
+            row = cursor.fetchone()
+    return int(row[0]) if row else 0
+
+
+def _get_item_status_counts(job_id: int) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT status, COUNT(*)
+                FROM rollback_job_items
+                WHERE job_id=%s
+                GROUP BY status
+                """,
+                (job_id,),
+            )
+            for status, count in cursor.fetchall():
+                counts[str(status)] = int(count)
+    return counts
+
+
+def _derive_job_status_from_items(job_id: int) -> tuple[str, dict[str, int]]:
+    """Derive rollback_jobs.status from rollback_job_items state."""
+    counts = _get_item_status_counts(job_id)
+    total = sum(counts.values())
+    failed = counts.get("failed", 0)
+    queued = counts.get("queued", 0)
+    running = counts.get("running", 0)
+    completed = counts.get("completed", 0)
+    canceled = counts.get("canceled", 0)
+
+    if total == 0:
+        return "completed", counts
+    if failed:
+        return "failed", counts
+    if queued or running:
+        return "running", counts
+    if canceled and not completed:
+        return "canceled", counts
+    if canceled and completed:
+        return "canceled", counts
+    return "completed", counts
+
+
+def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = None):
+    """Claim one queued item by transitioning it to running.
+
+    When ``job_id`` is provided, claims from that job only.
+    When ``job_id`` is None, claims from the global queue and optionally
+    prioritizes items whose job has ``preferred_batch_id``.
+
+    Returns:
+      - job-scoped claim: (id, file_title, target_user, summary)
+      - global claim: (id, claimed_job_id, file_title, target_user, summary)
+      - None when no queued items remain.
+    """
+    while True:
+        with get_conn() as conn:
+            with conn.cursor() as cursor:
+                if job_id is not None:
+                    cursor.execute(
+                        """
+                        SELECT id, file_title, target_user, summary
+                        FROM rollback_job_items
+                        WHERE job_id=%s AND status='queued'
+                        ORDER BY id ASC
+                        LIMIT 1
+                        """,
+                        (job_id,),
+                    )
+                else:
+                    if preferred_batch_id is None:
+                        cursor.execute(
+                            """
+                            SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary
+                            FROM rollback_job_items i
+                            JOIN rollback_jobs j ON j.id = i.job_id
+                            WHERE i.status='queued' AND j.status IN ('queued', 'running')
+                            ORDER BY i.id ASC
+                            LIMIT 1
+                            """
+                        )
+                    else:
+                        cursor.execute(
+                            """
+                            SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary
+                            FROM rollback_job_items i
+                            JOIN rollback_jobs j ON j.id = i.job_id
+                            WHERE i.status='queued' AND j.status IN ('queued', 'running')
+                            ORDER BY
+                                CASE WHEN j.batch_id=%s THEN 0 ELSE 1 END,
+                                i.id ASC
+                            LIMIT 1
+                            """,
+                            (preferred_batch_id,),
+                        )
+                item = cursor.fetchone()
+
+                if not item:
+                    return None
+
+                item_id = item[0]
+                cursor.execute(
+                    """
+                    UPDATE rollback_job_items
+                    SET status='running', error=NULL, attempts=attempts+1
+                    WHERE id=%s AND status='queued'
+                    """,
+                    (item_id,),
+                )
+
+                if cursor.rowcount == 1:
+                    conn.commit()
+                    return item
+
+            conn.commit()
+
+
 def _setup_pywikibot_dir() -> None:
     """Configure Pywikibot to use ~/.pywikibot for config files."""
     pywikibot_home = _resolve_pywikibot_dir()
     os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
-    
+
     # Create minimal config if it doesn't exist
     config_file = pywikibot_home / "user-config.py"
     if not config_file.exists():
@@ -149,7 +260,7 @@ def _setup_pywikibot_dir() -> None:
 def _bot_site() -> pywikibot.Site:
     """Create and authenticate a Pywikibot Site using OAuth env vars."""
     _setup_pywikibot_dir()
-    
+
     consumer_token = os.environ.get("CONSUMER_TOKEN")
     consumer_secret = os.environ.get("CONSUMER_SECRET")
     access_token = os.environ.get("ACCESS_TOKEN")
@@ -161,10 +272,12 @@ def _bot_site() -> pywikibot.Site:
         )
 
     site = pywikibot.Site("commons", "commons")
-    
+
     # Authenticate with OAuth
     try:
-        site.login(oauth_token=(consumer_token, consumer_secret, access_token, access_secret))
+        site.login(
+            oauth_token=(consumer_token, consumer_secret, access_token, access_secret)
+        )
         print("Logged in as:", site.user())
     except Exception as e:
         print(f"OAuth login failed: {e}")
@@ -176,7 +289,7 @@ def _bot_site() -> pywikibot.Site:
 @shared_task(ignore_result=True)
 def process_rollback_job(job_id: int):
     try:
-        job, items = _fetch_job(job_id)
+        job = _fetch_job_meta(job_id)
 
         if not job:
             return
@@ -186,10 +299,12 @@ def process_rollback_job(job_id: int):
         if current_status == "canceled":
             return
 
+        total_items = _count_job_items(job_id)
+
         _update_job_status(job_id, "running")
         set_progress(
             job_id,
-            {"status": "running", "total": len(items), "completed": 0, "failed": 0},
+            {"status": "running", "total": total_items, "completed": 0, "failed": 0},
         )
 
         site = None
@@ -222,7 +337,7 @@ def process_rollback_job(job_id: int):
         status_updater.update_wiki_status(
             editing="Actively editing",
             current_job=f"Processing batch {batch_id} (job {job_id})",
-            details=f"{len(items)} items queued",
+            details=f"{total_items} items queued",
             warning=warning_text,
         )
 
@@ -234,21 +349,59 @@ def process_rollback_job(job_id: int):
             status_updater.notify_maintainers(batch_id, notify_users, site=_notify_site)
             status_updater.mark_batch_notified(batch_id)
 
-        failed = 0
         # Track flagged-bot users rolled back in this job: username → edit count.
         notified_bots: dict[str, int] = {}
 
-        for item_id, file_title, target_user, summary in items:
-            refreshed_job, _ = _fetch_job(job_id)
+        while True:
+            refreshed_job = _fetch_job_meta(job_id)
 
             if refreshed_job and refreshed_job[2] == "canceled":
-                _update_item(item_id, "canceled", "Canceled by requester")
+                with get_conn() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute(
+                            """
+                            UPDATE rollback_job_items
+                            SET status='canceled', error='Canceled by requester'
+                            WHERE job_id=%s AND status IN ('queued', 'running')
+                            """,
+                            (job_id,),
+                        )
+                    conn.commit()
+                break
+
+            claimed = claim_next_item(job_id=None, preferred_batch_id=batch_id)
+            if not claimed:
+                break
+
+            if len(claimed) == 4:
+                # Backward-compatible tuple shape for tests and job-scoped calls.
+                item_id, file_title, target_user, summary = claimed
+                claimed_job_id = job_id
+            else:
+                item_id, claimed_job_id, file_title, target_user, summary = claimed
+
+            claimed_job = _fetch_job_meta(claimed_job_id)
+            if not claimed_job:
+                _update_item(item_id, "failed", "Missing rollback_jobs row")
                 continue
 
+            (
+                _,
+                claimed_requested_by,
+                claimed_job_status,
+                claimed_dry_run,
+                _claimed_batch_id,
+            ) = claimed_job
+
+            if claimed_job_status == "queued":
+                _update_job_status(claimed_job_id, "running")
+
+            _update_item(item_id, "running", None)
+
             try:
-                if dry_run:
+                if claimed_dry_run:
                     _update_item(item_id, "completed", None)
-                    update_progress(job_id, "completed")
+                    update_progress(claimed_job_id, "completed")
                     continue
 
                 token = site.tokens["rollback"]
@@ -258,13 +411,13 @@ def process_rollback_job(job_id: int):
                     title=file_title,
                     user=target_user,
                     token=token,
-                    summary=_summary_with_requester(summary, requested_by),
+                    summary=_summary_with_requester(summary, claimed_requested_by),
                     markbot=True,
                     bot=True,
                 ).submit()
 
                 _update_item(item_id, "completed", None)
-                update_progress(job_id, "completed")
+                update_progress(claimed_job_id, "completed")
 
                 # Track flagged-bot accounts for post-batch notification.
                 if site and status_updater.is_flagged_bot(site, target_user):
@@ -275,11 +428,10 @@ def process_rollback_job(job_id: int):
                 if any(code in err_str for code in _ROLLBACK_NOOP_CODES):
                     # Page is already in the desired state – not a real failure.
                     _update_item(item_id, "completed", err_str)
-                    update_progress(job_id, "completed")
+                    update_progress(claimed_job_id, "completed")
                 else:
-                    failed += 1
                     _update_item(item_id, "failed", err_str)
-                    update_progress(job_id, "failed")
+                    update_progress(claimed_job_id, "failed")
 
         # Notify each flagged-bot account that was rolled back (once per job).
         if site:
@@ -289,14 +441,18 @@ def process_rollback_job(job_id: int):
                 )
 
         # AFTER the loop finishes
-        final_status = "failed" if failed else "completed"
+        final_status, counts = _derive_job_status_from_items(job_id)
+        completed_count = counts.get("completed", 0)
+        failed_count = counts.get("failed", 0)
+        total_count = sum(counts.values())
+
         set_progress(
             job_id,
             {
                 "status": final_status,
-                "total": len(items),
-                "completed": len(items) - failed,
-                "failed": failed,
+                "total": total_count,
+                "completed": completed_count,
+                "failed": failed_count,
             },
         )
 
@@ -304,17 +460,43 @@ def process_rollback_job(job_id: int):
 
         status_updater.update_wiki_status(
             editing="Idle",
-            last_job=f"{'Failed' if failed else 'Completed'} batch {batch_id} (job {job_id})",
-            details=f"{len(items) - failed}/{len(items)} items completed",
+            last_job=(
+                f"Failed batch {batch_id} (job {job_id})"
+                if final_status == "failed"
+                else (
+                    f"Canceled batch {batch_id} (job {job_id})"
+                    if final_status == "canceled"
+                    else f"Completed batch {batch_id} (job {job_id})"
+                )
+            ),
+            details=f"{completed_count}/{total_count} items completed",
         )
 
     except Exception as exc:
-        job, items = _fetch_job(job_id)
+        error_text = str(exc)
+        with get_conn() as conn:
+            with conn.cursor() as cursor:
+                # Mark any in-flight or pending items failed with the task-level error.
+                cursor.execute(
+                    """
+                    UPDATE rollback_job_items
+                    SET status='failed', error=%s
+                    WHERE job_id=%s AND status IN ('queued', 'running')
+                    """,
+                    (error_text, job_id),
+                )
+            conn.commit()
 
-        if items:
-            for item_id, *_ in items:
-                _update_item(item_id, "failed", str(exc))
-                update_progress(job_id, "failed")
+        final_status, counts = _derive_job_status_from_items(job_id)
+        set_progress(
+            job_id,
+            {
+                "status": final_status,
+                "total": sum(counts.values()),
+                "completed": counts.get("completed", 0),
+                "failed": counts.get("failed", 0),
+            },
+        )
 
         _update_job_status(job_id, "failed")
 
@@ -335,7 +517,7 @@ def resolve_diff_rollback_job_task(job_id: int):
     web requests, even when route modules are not loaded in a particular
     worker process.
     """
-    from router.jobs import resolve_diff_rollback_job_impl
+    from router import resolve_diff_rollback_job_impl
 
     resolve_diff_rollback_job_impl(job_id)
 

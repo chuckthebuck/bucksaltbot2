@@ -3,7 +3,9 @@ import pymysql as sql
 from cnf import config
 
 
-def _ensure_column(cursor, table_name: str, column_name: str, ddl_fragment: str) -> None:
+def _ensure_column(
+    cursor, table_name: str, column_name: str, ddl_fragment: str
+) -> None:
     """Add a missing column with ``ALTER TABLE`` in an idempotent way."""
     cursor.execute(f"SHOW COLUMNS FROM {table_name} LIKE %s", (column_name,))
     if cursor.fetchone():
@@ -56,7 +58,9 @@ def init_db():
 
             # Ensure approval columns exist for legacy deployments where
             # rollback_jobs was created before request/approval workflows.
-            _ensure_column(cursor, "rollback_jobs", "request_type", "request_type VARCHAR(32) NULL")
+            _ensure_column(
+                cursor, "rollback_jobs", "request_type", "request_type VARCHAR(32) NULL"
+            )
             _ensure_column(
                 cursor,
                 "rollback_jobs",
@@ -75,8 +79,12 @@ def init_db():
                 "approval_required",
                 "approval_required VARCHAR(32) NULL",
             )
-            _ensure_column(cursor, "rollback_jobs", "approved_by", "approved_by VARCHAR(255) NULL")
-            _ensure_column(cursor, "rollback_jobs", "approved_at", "approved_at TIMESTAMP NULL")
+            _ensure_column(
+                cursor, "rollback_jobs", "approved_by", "approved_by VARCHAR(255) NULL"
+            )
+            _ensure_column(
+                cursor, "rollback_jobs", "approved_at", "approved_at TIMESTAMP NULL"
+            )
 
             cursor.execute(
                 """
@@ -86,11 +94,26 @@ def init_db():
                     file_title VARCHAR(512) NOT NULL,
                     target_user VARCHAR(255) NOT NULL,
                     summary TEXT NULL,
-                    status VARCHAR(32) NOT NULL,
+                    status VARCHAR(255) NOT NULL DEFAULT 'queued',
+                    attempts INT NOT NULL DEFAULT 0,
                     error TEXT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_job_id (job_id)
                 )
+                """
+            )
+
+            # Ensure legacy deployments keep the same default item-state model.
+            _ensure_column(
+                cursor,
+                "rollback_job_items",
+                "attempts",
+                "attempts INT NOT NULL DEFAULT 0",
+            )
+            cursor.execute(
+                """
+                ALTER TABLE rollback_job_items
+                MODIFY COLUMN status VARCHAR(255) NOT NULL DEFAULT 'queued'
                 """
             )
 

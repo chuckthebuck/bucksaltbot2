@@ -11,6 +11,18 @@ import {
   type RollbackRequestPreview,
   type RollbackRequestRow,
 } from "./api";
+import UnifiedTable from "./components/UnifiedTable.vue";
+import {
+  actionColumn,
+  type TableColumn,
+} from "./components/unifiedTable";
+import {
+  buttonCell,
+  dryRunModeColumn,
+  modeLabel,
+  statusTagColumn,
+  textColumn,
+} from "./components/tableColumnFactories";
 
 const props = JSON.parse(
   document.getElementById("request-review-props")!.textContent || "{}"
@@ -22,6 +34,8 @@ const props = JSON.parse(
 };
 
 const loading = ref(true);
+const refreshing = ref(false);
+const hasLoadedOnce = ref(false);
 const error = ref("");
 const notice = ref("");
 const requests = ref<RollbackRequestRow[]>([]);
@@ -38,8 +52,28 @@ const pendingRequests = computed(() =>
   requests.value.filter((r) => r.status === "pending_approval")
 );
 
+const actionableRequests = computed(() =>
+  requests.value.filter(
+    (r) => r.status === "pending_approval" || (r.status === "completed" && r.dry_run)
+  )
+);
+
+interface PreviewItemRow {
+  key: string;
+  index: number;
+  title: string;
+  user: string;
+  summary: string;
+}
+
+function normalizeEndpoint(endpoint?: string | null): string | null {
+  if (!endpoint) return null;
+  const normalized = String(endpoint).trim().toLowerCase().replace(/-/g, "_");
+  return normalized || null;
+}
+
 function isAccountStyleRequest(row: RollbackRequestRow): boolean {
-  return row.request_type === "diff" && row.requested_endpoint === "from_account";
+  return row.request_type === "diff" && normalizeEndpoint(row.requested_endpoint) === "from_account";
 }
 
 function canUseFromDiffEndpoint(row: RollbackRequestRow): boolean {
@@ -111,8 +145,241 @@ function dryRunLabel(row: RollbackRequestRow): string {
   return row.dry_run ? "dry-run" : "live";
 }
 
+function buildButton(
+  row: RollbackRequestRow,
+  text: string,
+  onClick: () => void,
+  options?: {
+    action?: "default" | "progressive" | "destructive";
+    weight?: "normal" | "primary" | "quiet";
+    disabled?: boolean;
+    key?: string;
+  }
+){
+  return buttonCell(CdxButton, text, onClick, {
+    key: options?.key,
+    action: options?.action,
+    weight: options?.weight,
+    disabled: options?.disabled,
+    extraProps: {
+      "data-row-id": row.id,
+    },
+  });
+}
+
+const requestColumns: TableColumn<RollbackRequestRow>[] = [
+  textColumn("id", "ID", (row) => row.id, { class: "request-col-id" }),
+  textColumn("requester", "Requester", (row) => row.requested_by),
+  textColumn("type", "Type", (row) => requestTypeLabel(row)),
+  textColumn("endpoint", "Endpoint", (row) => normalizeEndpoint(row.requested_endpoint) || "-"),
+  statusTagColumn("status", "Status", (row) => row.status),
+  dryRunModeColumn(
+    "mode",
+    "Mode",
+    (row) => row.dry_run,
+    (dryRun) => modeLabel(dryRun, { dry: "dry-run", live: "live" })
+  ),
+  textColumn("items", "Items", (row) => row.total, { align: "right" }),
+  actionColumn("preview", "Preview", (row) => {
+    const loadingPreview = Boolean(previewLoading.value[row.id]);
+    return buildButton(
+      row,
+      loadingPreview ? "Loading..." : "Preview",
+      () => {
+        void loadPreview(row, row.requested_endpoint || undefined);
+      },
+      {
+        disabled: loadingPreview,
+      }
+    );
+  }),
+  actionColumn("preview_diff", "After diff", (row) => {
+    if (row.request_type !== "diff" || !canUseFromDiffEndpoint(row)) return null;
+    const loadingPreview = Boolean(previewLoading.value[row.id]);
+    return buildButton(
+      row,
+      "Preview all after diff",
+      () => {
+        void loadPreview(row, "from_diff");
+      },
+      {
+        disabled: loadingPreview,
+      }
+    );
+  }),
+  actionColumn("preview_account", "As account", (row) => {
+    if (row.request_type !== "diff") return null;
+    const loadingPreview = Boolean(previewLoading.value[row.id]);
+    return buildButton(
+      row,
+      "Preview as account",
+      () => {
+        void loadPreview(row, "from_account");
+      },
+      {
+        disabled: loadingPreview,
+      }
+    );
+  }),
+  actionColumn("approve", "Approve", (row) => {
+    if (!canApproveRequest(row)) return null;
+
+    const isApproving = Boolean(approveLoading.value[row.id]);
+
+    if (row.request_type === "batch") {
+      return buildButton(
+        row,
+        isApproving ? "Approving..." : "Approve batch",
+        () => {
+          void approve(row, "batch");
+        },
+        {
+          action: "progressive",
+          weight: "primary",
+          disabled: isApproving,
+        }
+      );
+    }
+
+    if (row.request_type === "diff") {
+      if (canUseFromDiffEndpoint(row)) {
+        return buildButton(
+          row,
+          isApproving ? "Approving..." : "Approve from diff",
+          () => {
+            void approve(row, "from_diff");
+          },
+          {
+            action: "progressive",
+            weight: "primary",
+            disabled: isApproving,
+          }
+        );
+      }
+
+      return buildButton(
+        row,
+        isApproving ? "Approving..." : "Approve account rollback",
+        () => {
+          void approve(row, "from_account");
+        },
+        {
+          action: "progressive",
+          weight: "primary",
+          disabled: isApproving,
+        }
+      );
+    }
+
+    return null;
+  }),
+  actionColumn("approve_account", "Approve acct", (row) => {
+    if (!canApproveRequest(row) || row.request_type !== "diff" || !canUseFromDiffEndpoint(row)) {
+      return null;
+    }
+
+    const isApproving = Boolean(approveLoading.value[row.id]);
+
+    return buildButton(
+      row,
+      "Approve as account",
+      () => {
+        void approve(row, "from_account");
+      },
+      {
+        disabled: isApproving,
+      }
+    );
+  }),
+  actionColumn("force_dry", "Force dry", (row) => {
+    if (!canForceDryRun(row)) return null;
+
+    const isUpdating = Boolean(forceDryRunLoading.value[row.id]);
+
+    return buildButton(
+      row,
+      isUpdating ? "Updating..." : "Force dry-run",
+      () => {
+        void forceDryRun(row);
+      },
+      {
+        disabled: isUpdating,
+      }
+    );
+  }),
+  actionColumn("reject", "Reject", (row) => {
+    if (!canRejectRequest(row)) return null;
+
+    const isRejecting = Boolean(rejectLoading.value[row.id]);
+
+    return buildButton(
+      row,
+      isRejecting ? "Rejecting..." : "Reject",
+      () => {
+        void reject(row);
+      },
+      {
+        action: "destructive",
+        disabled: isRejecting,
+      }
+    );
+  }),
+  actionColumn("run_live", "Run live", (row) => {
+    if (!canRunLive(row)) return null;
+
+    const isQueueing = Boolean(runLiveLoading.value[row.id]);
+
+    return buildButton(
+      row,
+      isQueueing ? "Queueing..." : "Run live now",
+      () => {
+        void runLive(row);
+      },
+      {
+        action: "progressive",
+        disabled: isQueueing,
+      }
+    );
+  }),
+];
+
+const previewColumns: TableColumn<PreviewItemRow>[] = [
+  textColumn("index", "#", (row) => row.index, { align: "right", width: "1%" }),
+  textColumn("title", "Title", (row) => row.title),
+  textColumn("user", "User", (row) => row.user),
+  textColumn("summary", "Summary/Status", (row) => row.summary),
+];
+
+function previewForRow(row: unknown): RollbackRequestPreview | undefined {
+  const id = Number((row as { id?: number }).id);
+  if (!Number.isFinite(id)) return undefined;
+  return previewByJob.value[id];
+}
+
+function hasPreview(row: unknown): boolean {
+  return Boolean(previewForRow(row));
+}
+
+function previewRowsFor(row: unknown): PreviewItemRow[] {
+  const preview = previewForRow(row);
+  if (!preview?.items?.length) return [];
+
+  return preview.items.map((item, idx) => ({
+    key: `${idx + 1}-${item.title}`,
+    index: idx + 1,
+    title: item.title,
+    user: item.user,
+    summary: `${item.summary || item.status || "-"}${item.error ? ` (${item.error})` : ""}`,
+  }));
+}
+
 async function loadRequests() {
-  loading.value = true;
+  const isInitialLoad = !hasLoadedOnce.value;
+  if (isInitialLoad) {
+    loading.value = true;
+  } else {
+    refreshing.value = true;
+  }
   error.value = "";
 
   try {
@@ -121,7 +388,9 @@ async function loadRequests() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Failed to load rollback requests";
   } finally {
+    hasLoadedOnce.value = true;
     loading.value = false;
+    refreshing.value = false;
   }
 }
 
@@ -130,10 +399,10 @@ async function loadPreview(row: RollbackRequestRow, endpoint?: string) {
   error.value = "";
 
   try {
-    const effectiveEndpoint = endpoint || row.requested_endpoint || undefined;
+    const effectiveEndpoint = normalizeEndpoint(endpoint || row.requested_endpoint);
     const preview = await fetchRollbackRequestPreview(
       row.id,
-      effectiveEndpoint,
+      effectiveEndpoint || undefined,
       true,
     );
     previewByJob.value[row.id] = preview;
@@ -224,7 +493,7 @@ function startPolling() {
   if (pollingTimer.value !== null) return;
 
   pollingTimer.value = window.setInterval(() => {
-    if (loading.value) return;
+    if (loading.value || refreshing.value) return;
     void loadRequests();
   }, 5000);
 }
@@ -261,193 +530,46 @@ function onVisibilityChange() {
     </CdxMessage>
 
     <div class="request-review-actions">
-      <CdxButton action="default" weight="quiet" @click="loadRequests">
-        Refresh requests
+      <CdxButton action="default" weight="quiet" :disabled="loading || refreshing" @click="loadRequests">
+        {{ refreshing ? 'Refreshing...' : 'Refresh requests' }}
       </CdxButton>
     </div>
 
     <div v-if="loading">Loading requests...</div>
 
-    <div v-else-if="!requests.length" class="request-empty">
-      No rollback requests found.
-    </div>
-
     <div v-else>
       <h3>Pending approval ({{ pendingRequests.length }})</h3>
 
-      <table class="wikitable">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Requester</th>
-            <th>Type</th>
-            <th>Endpoint</th>
-            <th>Status</th>
-            <th>Mode</th>
-            <th>Items</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <template v-for="row in requests" :key="row.id">
-            <tr>
-              <td>{{ row.id }}</td>
-              <td>{{ row.requested_by }}</td>
-              <td>{{ requestTypeLabel(row) }}</td>
-              <td>{{ row.requested_endpoint || '-' }}</td>
-              <td>{{ row.status }}</td>
-              <td>{{ dryRunLabel(row) }}</td>
-              <td>{{ row.total }}</td>
-              <td>
-                <div class="request-actions">
-                  <CdxButton
-                    size="small"
-                    action="default"
-                    weight="quiet"
-                    :disabled="previewLoading[row.id]"
-                    @click="loadPreview(row, row.requested_endpoint || undefined)"
-                  >
-                    {{ previewLoading[row.id] ? 'Loading...' : 'Preview' }}
-                  </CdxButton>
+      <UnifiedTable
+        :rows="actionableRequests"
+        :columns="requestColumns"
+        row-key="id"
+        table-class="request-review-table"
+        empty-text="No rollback requests found."
+        :expanded="hasPreview"
+      >
+        <template #expanded="{ row }">
+          <div v-if="previewForRow(row)" class="request-preview">
+            <div>
+              <b>Preview endpoint:</b> {{ previewForRow(row)?.endpoint }}
+              <span v-if="previewForRow(row)?.resolved_user">
+                | <b>User:</b> {{ previewForRow(row)?.resolved_user }}
+              </span>
+              <span>
+                | <b>Total edits:</b> {{ previewForRow(row)?.total_items }}
+              </span>
+            </div>
 
-                  <template v-if="row.request_type === 'diff'">
-                    <CdxButton
-                      v-if="canUseFromDiffEndpoint(row)"
-                      size="small"
-                      action="default"
-                      weight="quiet"
-                      :disabled="previewLoading[row.id]"
-                      @click="loadPreview(row, 'from_diff')"
-                    >
-                      Preview all after diff
-                    </CdxButton>
-
-                    <CdxButton
-                      size="small"
-                      action="default"
-                      weight="quiet"
-                      :disabled="previewLoading[row.id]"
-                      @click="loadPreview(row, 'from_account')"
-                    >
-                      Preview as account
-                    </CdxButton>
-                  </template>
-
-                  <template v-if="canApproveRequest(row)">
-                    <CdxButton
-                      v-if="row.request_type === 'batch'"
-                      size="small"
-                      action="progressive"
-                      weight="primary"
-                      :disabled="approveLoading[row.id]"
-                      @click="approve(row, 'batch')"
-                    >
-                      {{ approveLoading[row.id] ? 'Approving...' : 'Approve batch' }}
-                    </CdxButton>
-
-                    <template v-else-if="row.request_type === 'diff'">
-                      <CdxButton
-                        v-if="canUseFromDiffEndpoint(row)"
-                        size="small"
-                        action="progressive"
-                        weight="primary"
-                        :disabled="approveLoading[row.id]"
-                        @click="approve(row, 'from_diff')"
-                      >
-                        {{ approveLoading[row.id] ? 'Approving...' : 'Approve from diff' }}
-                      </CdxButton>
-
-                      <CdxButton
-                        size="small"
-                        :action="canUseFromDiffEndpoint(row) ? 'default' : 'progressive'"
-                        :weight="canUseFromDiffEndpoint(row) ? 'quiet' : 'primary'"
-                        :disabled="approveLoading[row.id]"
-                        @click="approve(row, 'from_account')"
-                      >
-                        {{ canUseFromDiffEndpoint(row) ? 'Approve as account' : 'Approve account rollback' }}
-                      </CdxButton>
-                    </template>
-                  </template>
-
-                  <CdxButton
-                    v-if="canForceDryRun(row)"
-                    size="small"
-                    action="default"
-                    weight="quiet"
-                    :disabled="forceDryRunLoading[row.id]"
-                    @click="forceDryRun(row)"
-                  >
-                    {{ forceDryRunLoading[row.id] ? 'Updating...' : 'Force dry-run' }}
-                  </CdxButton>
-
-                  <CdxButton
-                    v-if="canRejectRequest(row)"
-                    size="small"
-                    action="destructive"
-                    weight="quiet"
-                    :disabled="rejectLoading[row.id]"
-                    @click="reject(row)"
-                  >
-                    {{ rejectLoading[row.id] ? 'Rejecting...' : 'Reject' }}
-                  </CdxButton>
-
-                  <CdxButton
-                    v-if="canRunLive(row)"
-                    size="small"
-                    action="progressive"
-                    weight="quiet"
-                    :disabled="runLiveLoading[row.id]"
-                    @click="runLive(row)"
-                  >
-                    {{ runLiveLoading[row.id] ? 'Queueing...' : 'Run live now' }}
-                  </CdxButton>
-                </div>
-              </td>
-            </tr>
-
-            <tr v-if="previewByJob[row.id]">
-              <td colspan="8">
-                <div class="request-preview">
-                  <div>
-                    <b>Preview endpoint:</b> {{ previewByJob[row.id].endpoint }}
-                    <span v-if="previewByJob[row.id].resolved_user">
-                      | <b>User:</b> {{ previewByJob[row.id].resolved_user }}
-                    </span>
-                    <span>
-                      | <b>Total edits:</b> {{ previewByJob[row.id].total_items }}
-                    </span>
-                  </div>
-
-                  <table class="wikitable request-preview-table" v-if="previewByJob[row.id].items?.length">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Title</th>
-                        <th>User</th>
-                        <th>Summary/Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr
-                        v-for="(item, idx) in previewByJob[row.id].items"
-                        :key="`${row.id}-${idx}-${item.title}`"
-                      >
-                        <td>{{ idx + 1 }}</td>
-                        <td>{{ item.title }}</td>
-                        <td>{{ item.user }}</td>
-                        <td>
-                          {{ item.summary || item.status || '-' }}
-                          <span v-if="item.error"> ({{ item.error }})</span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
+            <UnifiedTable
+              v-if="previewRowsFor(row).length"
+              :rows="previewRowsFor(row)"
+              :columns="previewColumns"
+              row-key="key"
+              table-class="request-preview-table"
+            />
+          </div>
+        </template>
+      </UnifiedTable>
     </div>
   </div>
 </template>
@@ -459,12 +581,6 @@ function onVisibilityChange() {
 
 .request-review-actions {
   margin-bottom: 12px;
-}
-
-.request-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .request-preview {
@@ -479,5 +595,63 @@ function onVisibilityChange() {
 
 .request-empty {
   color: #54595d;
+}
+
+.request-col-id {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+:deep(.request-review-table td) {
+  white-space: nowrap;
+}
+
+:deep(.cdx-tag) {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-color-subtle, #c8ccd1);
+  border-radius: 9999px;
+  padding: 2px 8px;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  text-transform: capitalize;
+  background-color: var(--background-color-neutral-subtle, #f8f9fa);
+  color: var(--color-base, #202122);
+}
+
+:deep(.cdx-tag--status-success) {
+  background-color: var(--background-color-success-subtle, #d5fdf4);
+  border-color: var(--color-success, #14866d);
+  color: var(--color-success, #14866d);
+}
+
+:deep(.cdx-tag--status-error) {
+  background-color: var(--background-color-error-subtle, #fee7e6);
+  border-color: var(--color-error, #d73333);
+  color: var(--color-error, #d73333);
+}
+
+:deep(.cdx-tag--status-warning) {
+  background-color: var(--background-color-warning-subtle, #fef6e7);
+  border-color: var(--color-warning, #edab00);
+  color: var(--color-warning, #7a4b00);
+}
+
+:deep(.cdx-tag--status-muted) {
+  background-color: var(--background-color-disabled-subtle, #f0f0f0);
+  border-color: var(--border-color-subtle, #c8ccd1);
+  color: var(--color-subtle, #54595d);
+}
+
+:deep(.cdx-tag--mode-dry-run) {
+  background-color: var(--background-color-warning-subtle, #fef6e7);
+  border-color: var(--color-warning, #edab00);
+  color: var(--color-warning, #7a4b00);
+}
+
+:deep(.cdx-tag--mode-live) {
+  background-color: var(--background-color-neutral-subtle, #f8f9fa);
+  border-color: var(--border-color-subtle, #c8ccd1);
+  color: var(--color-base, #202122);
 }
 </style>

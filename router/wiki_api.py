@@ -1,4 +1,4 @@
-"""MediaWiki API functions for fetching revision metadata and contributions."""
+"""MediaWiki API helpers: diff metadata, user contributions, timestamps."""
 
 import time
 from datetime import datetime, timezone
@@ -8,9 +8,9 @@ import requests
 
 from app import flask_app as app
 from router.diff_state import (
-    _ACCOUNT_ROLLBACK_MAX_LIMIT,
     _MW_DEBUG_BODY_MAX,
     _ROLLBACKABLE_WINDOW_LIMIT,
+    _ACCOUNT_ROLLBACK_MAX_LIMIT,
 )
 
 
@@ -48,10 +48,6 @@ def _normalize_target_user_input(raw_value):
         cleaned = cleaned[1:-1].strip()
 
     return " ".join(cleaned.replace("_", " ").split())
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
@@ -112,13 +108,21 @@ def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
     raise ValueError("Revision not found for provided diff")
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def fetch_rollbackable_window_end_timestamp(
     target_user,
     start_timestamp,
     limit=_ROLLBACKABLE_WINDOW_LIMIT,
     debug_callback=None,
 ):
-    """Return timestamp of the oldest edit in the latest rollbackable window."""
+    """Return timestamp of the oldest edit in the latest rollbackable window.
+
+    We use Action API usercontribs with ucshow=top (rollbackable candidates),
+    bounded by ucend=start_timestamp and uclimit<=500.
+    """
     url = "https://commons.wikimedia.org/w/api.php"
     params = {
         "action": "query",
@@ -159,7 +163,9 @@ def fetch_rollbackable_window_end_timestamp(
                     "elapsed_ms": int((time.perf_counter() - started) * 1000),
                 }
             )
-        raise ValueError(f"Failed to fetch rollbackable contribution window: {e}") from e
+        raise ValueError(
+            f"Failed to fetch rollbackable contribution window: {e}"
+        ) from e
 
     contribs = data.get("query", {}).get("usercontribs", [])
     if not contribs:
@@ -174,7 +180,11 @@ def fetch_recent_rollbackable_contribs(
     limit=_ACCOUNT_ROLLBACK_MAX_LIMIT,
     debug_callback=None,
 ):
-    """Return latest rollbackable contributions for a target account."""
+    """Return latest rollbackable contributions for a target account.
+
+    This powers account-wide rollback requests and is hard-capped at 500 items
+    to match Action API ``usercontribs`` constraints.
+    """
     url = "https://commons.wikimedia.org/w/api.php"
     params = {
         "action": "query",
@@ -214,7 +224,9 @@ def fetch_recent_rollbackable_contribs(
                     "elapsed_ms": int((time.perf_counter() - started) * 1000),
                 }
             )
-        raise ValueError(f"Failed to fetch recent rollbackable contributions: {e}") from e
+        raise ValueError(
+            f"Failed to fetch recent rollbackable contributions: {e}"
+        ) from e
 
     contribs = data.get("query", {}).get("usercontribs", [])
     results = []
@@ -308,6 +320,7 @@ def iter_contribs_after_timestamp(
         contribs = data.get("query", {}).get("usercontribs", [])
 
         for edit in contribs:
+            # Strictly after the diff timestamp.
             if edit.get("timestamp") and edit["timestamp"] > start_timestamp:
                 yielded += 1
                 yield {"title": edit["title"], "user": target_user}
@@ -330,4 +343,6 @@ def iter_contribs_after_timestamp(
 
 
 def fetch_contribs_after_timestamp(target_user, start_timestamp, limit=None):
-    return list(iter_contribs_after_timestamp(target_user, start_timestamp, limit=limit))
+    return list(
+        iter_contribs_after_timestamp(target_user, start_timestamp, limit=limit)
+    )

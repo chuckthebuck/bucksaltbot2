@@ -5,12 +5,16 @@ environment variable (the same convention used elsewhere in this codebase).
 When ``NOTDEV`` is unset the functions return immediately so that tests and
 development environments never accidentally touch the live wiki.
 """
-
 from __future__ import annotations
+
+import os
+import pywikibot
+
 
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from redis_state import r as _redis
 
 
 def _resolve_pywikibot_dir() -> Path:
@@ -58,9 +62,6 @@ def _bootstrap_pywikibot_env() -> None:
 
 _bootstrap_pywikibot_env()
 
-import pywikibot
-
-from redis_state import r as _redis
 
 # ── Page titles ───────────────────────────────────────────────────────────────
 
@@ -83,19 +84,18 @@ STATUS_SUBPAGES = {
 _NOTIFIED_BATCH_TTL = 7 * 24 * 3600  # 7 days
 
 
-
 # ── Pywikibot OAuth configuration ─────────────────────────────────────────
 
 
 def _setup_pywikibot_dir() -> None:
     """Configure Pywikibot to use ~/.pywikibot for config files.
-    
+
     This ensures Pywikibot uses the home directory instead of /workspace,
     which avoids file ownership issues on Toolforge.
     """
     pywikibot_home = _resolve_pywikibot_dir()
     os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
-    
+
     # Create minimal config if it doesn't exist
     config_file = pywikibot_home / "user-config.py"
     if not config_file.exists():
@@ -108,26 +108,28 @@ def _setup_pywikibot_dir() -> None:
 
 def _get_authenticated_site() -> pywikibot.Site:
     """Create and authenticate a Pywikibot Site using OAuth env vars.
-    
+
     Returns:
         An authenticated pywikibot.Site object for Commons.
     """
     # Ensure Pywikibot config is in the right place
     _setup_pywikibot_dir()
-    
+
     # Get OAuth credentials from environment
     consumer_key = os.getenv("CONSUMER_TOKEN") or os.getenv("OAUTH_CONSUMER_KEY")
     consumer_secret = os.getenv("CONSUMER_SECRET") or os.getenv("OAUTH_CONSUMER_SECRET")
     access_token = os.getenv("ACCESS_TOKEN") or os.getenv("OAUTH_ACCESS_TOKEN")
     access_secret = os.getenv("ACCESS_SECRET") or os.getenv("OAUTH_ACCESS_SECRET")
-    
+
     # Create site object
     site = pywikibot.Site("commons", "commons")
-    
+
     # Attempt OAuth login if credentials are available
     if all([consumer_key, consumer_secret, access_token, access_secret]):
         try:
-            site.login(oauth_token=(consumer_key, consumer_secret, access_token, access_secret))
+            site.login(
+                oauth_token=(consumer_key, consumer_secret, access_token, access_secret)
+            )
         except Exception as e:
             # Fall back to config-based auth if OAuth fails
             try:
@@ -135,7 +137,7 @@ def _get_authenticated_site() -> pywikibot.Site:
             except Exception:
                 # If all else fails, continue without authentication
                 pass
-    
+
     return site
 
 
@@ -144,6 +146,8 @@ def _get_authenticated_site() -> pywikibot.Site:
 
 def _is_live() -> bool:
     """Return True when running in production (``NOTDEV`` is set)."""
+    if os.environ.get("LIVE_TEST_DISABLE_STATUS_UPDATES"):
+        return False
     return bool(os.environ.get("NOTDEV"))
 
 

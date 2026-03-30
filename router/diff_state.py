@@ -1,6 +1,7 @@
-"""Redis diff payload helpers and stale-job detection."""
+"""Diff payload and state management for rollback jobs."""
 
 import json
+import os
 import time
 from datetime import datetime, timezone
 
@@ -11,7 +12,7 @@ from toolsdb import get_conn
 _DIFF_PAYLOAD_TTL = 7 * 24 * 3600
 _MW_DEBUG_MAX_ENTRIES = 25
 _MW_DEBUG_BODY_MAX = 1200
-_RESOLVING_TIMEOUT_SECONDS = int(__import__("os").getenv("RESOLVING_TIMEOUT_SECONDS", "1800"))
+_RESOLVING_TIMEOUT_SECONDS = int(os.getenv("RESOLVING_TIMEOUT_SECONDS", "1800"))
 _ROLLBACKABLE_WINDOW_LIMIT = 500
 _ACCOUNT_ROLLBACK_MAX_LIMIT = 500
 
@@ -83,7 +84,9 @@ def _created_at_to_epoch(created_at_value) -> float | None:
     return None
 
 
-def _maybe_mark_stale_resolving_job_failed(job_id: int, status: str, created_at_value) -> bool:
+def _maybe_mark_stale_resolving_job_failed(
+    job_id: int, status: str, created_at_value
+) -> bool:
     if status != "resolving":
         return False
 

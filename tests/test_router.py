@@ -55,8 +55,8 @@ def test_create_job_returns_403_when_requester_mismatches_session(client):
     _set_session(client, "alice")
     mock_conn, _ = _make_mock_conn()
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.process_rollback_job") as mock_task,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
         resp = client.post(
@@ -72,7 +72,7 @@ def test_create_job_returns_403_when_requester_mismatches_session(client):
 def test_create_job_returns_400_when_items_empty(client):
     _set_session(client, "alice")
     mock_conn, _ = _make_mock_conn()
-    with patch("router.routes.get_conn", return_value=mock_conn):
+    with patch("router.get_conn", return_value=mock_conn):
         resp = client.post(
             "/api/v1/rollback/jobs",
             json={"requested_by": "alice", "items": []},
@@ -85,8 +85,8 @@ def test_create_job_success_returns_job_id_and_queued_status(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 99
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.process_rollback_job") as mock_task,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
         resp = client.post(
@@ -108,8 +108,8 @@ def test_create_job_enqueues_celery_task_with_job_id(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 7
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.process_rollback_job") as mock_task,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
         client.post(
@@ -138,10 +138,12 @@ def test_approve_diff_request_requires_maintainer(client):
     )
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes._can_actor_approve", return_value=False),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=False),
     ):
-        resp = client.post("/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_diff"})
+        resp = client.post(
+            "/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_diff"}
+        )
 
     assert resp.status_code == 403
 
@@ -162,19 +164,54 @@ def test_approve_diff_request_can_switch_to_account_endpoint(client):
     )
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes._can_actor_approve", return_value=True),
-        patch("router.routes.resolve_diff_rollback_job") as mock_resolve,
-        patch("router.routes._update_diff_payload") as mock_update_payload,
-        patch("router.routes._set_diff_error"),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=True),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
+        patch("router._update_diff_payload") as mock_update_payload,
+        patch("router._set_diff_error"),
     ):
         mock_resolve.delay = MagicMock()
-        resp = client.post("/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_account"})
+        resp = client.post(
+            "/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_account"}
+        )
 
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["status"] == "resolving"
     assert data["approved_endpoint"] == "from_account"
+    mock_resolve.delay.assert_called_once_with(1)
+    mock_update_payload.assert_called_once()
+
+
+def test_approve_diff_request_accepts_legacy_hyphenated_requested_endpoint(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (
+        1,
+        "bob",
+        "pending_approval",
+        0,
+        12345,
+        "diff",
+        "from-account",
+        None,
+        "maintainer",
+    )
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=True),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
+        patch("router._update_diff_payload") as mock_update_payload,
+        patch("router._set_diff_error"),
+    ):
+        mock_resolve.delay = MagicMock()
+        resp = client.post("/api/v1/rollback/jobs/1/approve", json={})
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["approved_endpoint"] == "from_account"
+    assert data["status"] == "resolving"
     mock_resolve.delay.assert_called_once_with(1)
     mock_update_payload.assert_called_once()
 
@@ -196,12 +233,14 @@ def test_approve_batch_request_by_admin_queues_all_pending_jobs_in_batch(client)
     mock_cursor.fetchall.return_value = [(10,), (11,)]
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes._can_actor_approve", return_value=True),
-        patch("router.routes.process_rollback_job") as mock_task,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=True),
+        patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
-        resp = client.post("/api/v1/rollback/jobs/10/approve", json={"endpoint": "batch"})
+        resp = client.post(
+            "/api/v1/rollback/jobs/10/approve", json={"endpoint": "batch"}
+        )
 
     assert resp.status_code == 200
     data = resp.get_json()
@@ -224,8 +263,8 @@ def test_reject_pending_diff_request_marks_canceled(client):
     )
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes._can_actor_approve", return_value=True),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=True),
     ):
         resp = client.post("/api/v1/rollback/jobs/1/reject", json={})
 
@@ -248,9 +287,9 @@ def test_force_dry_run_pending_diff_request_sets_dry_run(client):
     )
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes._can_actor_approve", return_value=True),
-        patch("router.routes._update_diff_payload") as mock_update_payload,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=True),
+        patch("router._update_diff_payload") as mock_update_payload,
     ):
         resp = client.post("/api/v1/rollback/jobs/1/force-dry-run", json={})
 
@@ -270,8 +309,8 @@ def test_run_live_completed_dry_run_queues_job(client):
     ]
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.process_rollback_job") as mock_task,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
         resp = client.post("/api/v1/rollback/jobs/1/run-live", json={})
@@ -296,8 +335,8 @@ def test_run_live_completed_dry_run_forbidden_without_rights(client):
     )
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes._can_run_live", return_value=False),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_run_live", return_value=False),
     ):
         resp = client.post("/api/v1/rollback/jobs/1/run-live", json={})
 
@@ -310,23 +349,23 @@ def test_request_preview_from_diff_full_loads_all_items(client):
     mock_cursor.fetchone.return_value = (1, "alice", "diff", "from_diff")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes._can_review_requests", return_value=True),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_review_requests", return_value=True),
         patch(
-            "router.routes._load_diff_payload",
+            "router._load_diff_payload",
             return_value={"diff": "123", "limit": 5, "requested_by": "alice"},
         ),
-        patch("router.routes._store_diff_payload"),
+        patch("router._store_diff_payload"),
         patch(
-            "router.routes.fetch_diff_author_and_timestamp",
+            "router.fetch_diff_author_and_timestamp",
             return_value={"user": "BadUser", "timestamp": "2026-03-26T00:00:00Z"},
         ),
         patch(
-            "router.routes.fetch_rollbackable_window_end_timestamp",
+            "router.fetch_rollbackable_window_end_timestamp",
             return_value="2026-03-26T01:00:00Z",
         ),
         patch(
-            "router.routes.iter_contribs_after_timestamp",
+            "router.iter_contribs_after_timestamp",
             return_value=iter(
                 [
                     {"title": "File:One.jpg", "user": "BadUser"},
@@ -335,7 +374,9 @@ def test_request_preview_from_diff_full_loads_all_items(client):
             ),
         ) as mock_iter,
     ):
-        resp = client.get("/api/v1/rollback/requests/1/preview?endpoint=from_diff&full=1")
+        resp = client.get(
+            "/api/v1/rollback/requests/1/preview?endpoint=from_diff&full=1"
+        )
 
     assert resp.status_code == 200
     data = resp.get_json()
@@ -351,17 +392,57 @@ def test_request_preview_from_account_rejects_from_diff_without_anchor(client):
     mock_cursor.fetchone.return_value = (1, "alice", "diff", "from_account")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes._can_review_requests", return_value=True),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_review_requests", return_value=True),
         patch(
-            "router.routes._load_diff_payload",
-            return_value={"target_user": "BadUser", "requested_endpoint": "from_account"},
+            "router._load_diff_payload",
+            return_value={
+                "target_user": "BadUser",
+                "requested_endpoint": "from_account",
+            },
         ),
     ):
-        resp = client.get("/api/v1/rollback/requests/1/preview?endpoint=from_diff&full=1")
+        resp = client.get(
+            "/api/v1/rollback/requests/1/preview?endpoint=from_diff&full=1"
+        )
 
     assert resp.status_code == 400
     assert "diff anchor" in resp.get_json().get("detail", "")
+
+
+def test_request_preview_accepts_hyphenated_endpoint_query(client):
+    _set_session(client, "maintainer")
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (1, "alice", "diff", "from_account")
+
+    with (
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_review_requests", return_value=True),
+        patch(
+            "router._load_diff_payload",
+            return_value={
+                "target_user": "BadUser",
+                "requested_endpoint": "from_account",
+                "limit": 2,
+            },
+        ),
+        patch("router._store_diff_payload"),
+        patch(
+            "router.fetch_recent_rollbackable_contribs",
+            return_value=[
+                {"title": "File:One.jpg", "user": "BadUser"},
+                {"title": "File:Two.jpg", "user": "BadUser"},
+            ],
+        ),
+    ):
+        resp = client.get(
+            "/api/v1/rollback/requests/1/preview?endpoint=from-account&full=1"
+        )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["endpoint"] == "from_account"
+    assert data["total_items"] == 2
 
 
 def test_approve_diff_request_rejects_from_diff_without_anchor(client):
@@ -380,11 +461,13 @@ def test_approve_diff_request_rejects_from_diff_without_anchor(client):
     )
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes._can_actor_approve", return_value=True),
-        patch("router.routes._load_diff_payload", return_value={"target_user": "BadUser"}),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._can_actor_approve", return_value=True),
+        patch("router._load_diff_payload", return_value={"target_user": "BadUser"}),
     ):
-        resp = client.post("/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_diff"})
+        resp = client.post(
+            "/api/v1/rollback/jobs/1/approve", json={"endpoint": "from_diff"}
+        )
 
     assert resp.status_code == 400
     assert "diff anchor" in resp.get_json().get("detail", "")
@@ -396,8 +479,8 @@ def test_create_job_dry_run_flag_persisted(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 5
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.process_rollback_job") as mock_task,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
         resp = client.post(
@@ -420,8 +503,8 @@ def test_create_job_dry_run_string_false_persisted_as_zero(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 6
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.process_rollback_job") as mock_task,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
         resp = client.post(
@@ -443,8 +526,8 @@ def test_create_job_dry_run_string_true_persisted_as_one(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 6
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.process_rollback_job") as mock_task,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
         resp = client.post(
@@ -466,8 +549,8 @@ def test_create_job_uses_client_batch_id_when_provided(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 6
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.process_rollback_job") as mock_task,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
         resp = client.post(
@@ -487,7 +570,7 @@ def test_create_job_uses_client_batch_id_when_provided(client):
 def test_create_job_rejects_invalid_batch_id(client):
     _set_session(client, "alice")
     mock_conn, _ = _make_mock_conn()
-    with patch("router.routes.get_conn", return_value=mock_conn):
+    with patch("router.get_conn", return_value=mock_conn):
         resp = client.post(
             "/api/v1/rollback/jobs",
             json={
@@ -504,10 +587,10 @@ def test_create_job_allows_status_token_auth(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 13
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.process_rollback_job") as mock_task,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
         patch.dict(
-            "router.routes.os.environ",
+            "router.os.environ",
             {"STATUS_API_TOKEN": "token123", "STATUS_API_USER": "statusbot"},
             clear=False,
         ),
@@ -533,8 +616,8 @@ def test_from_diff_api_allows_request_submission_for_non_maintainer(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 91
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch("router.routes.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch("router.get_conn", return_value=mock_conn),
     ):
         resp = client.post("/api/v1/rollback/from-diff", json={"diff": 1})
     assert resp.status_code == 200
@@ -543,7 +626,7 @@ def test_from_diff_api_allows_request_submission_for_non_maintainer(client):
 
 def test_from_diff_api_rejects_invalid_limit(client):
     _set_session(client, "alice")
-    with patch("router.permissions.is_maintainer", return_value=True):
+    with patch("router.is_maintainer", return_value=True):
         resp = client.post(
             "/api/v1/rollback/from-diff",
             json={"diff": 10, "limit": "bad"},
@@ -558,9 +641,9 @@ def test_from_diff_api_passes_limit_to_creation_helper(client):
     mock_cursor.lastrowid = 11
 
     with (
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.resolve_diff_rollback_job") as mock_resolve,
+        patch("router.is_maintainer", return_value=True),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
     ):
         mock_resolve.delay = MagicMock()
         resp = client.post(
@@ -584,9 +667,9 @@ def test_from_diff_api_accepts_diff_url(client):
     mock_cursor.lastrowid = 11
 
     with (
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.resolve_diff_rollback_job") as mock_resolve,
+        patch("router.is_maintainer", return_value=True),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
     ):
         mock_resolve.delay = MagicMock()
         resp = client.post(
@@ -614,9 +697,9 @@ def test_from_account_api_allows_request_submission_for_non_maintainer(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 92
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch("router.permissions._user_permissions", return_value=frozenset({"write"})),
-        patch("router.routes.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch("router._user_permissions", return_value=frozenset({"write"})),
+        patch("router.get_conn", return_value=mock_conn),
     ):
         resp = client.post(
             "/api/v1/rollback/from-account",
@@ -628,7 +711,7 @@ def test_from_account_api_allows_request_submission_for_non_maintainer(client):
 
 def test_from_account_api_rejects_missing_target_user(client):
     _set_session(client, "alice")
-    with patch("router.permissions.is_maintainer", return_value=True):
+    with patch("router.is_maintainer", return_value=True):
         resp = client.post("/api/v1/rollback/from-account", json={})
     assert resp.status_code == 400
     assert "target_user" in resp.get_json().get("detail", "")
@@ -636,7 +719,7 @@ def test_from_account_api_rejects_missing_target_user(client):
 
 def test_from_account_api_rejects_limit_above_500(client):
     _set_session(client, "alice")
-    with patch("router.permissions.is_maintainer", return_value=True):
+    with patch("router.is_maintainer", return_value=True):
         resp = client.post(
             "/api/v1/rollback/from-account",
             json={"target_user": "BadUser", "limit": 501},
@@ -651,10 +734,10 @@ def test_from_account_api_creates_pending_approval_request(client):
     mock_cursor.lastrowid = 42
 
     with (
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.process_rollback_job") as mock_task,
-        patch("router.routes.status_updater.update_wiki_status"),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
+        patch("router.status_updater.update_wiki_status"),
     ):
         mock_task.delay = MagicMock()
         resp = client.post(
@@ -694,8 +777,10 @@ def test_fetch_contribs_after_timestamp_requests_timestamp_and_filters_strictly(
         }
     }
 
-    with patch("router.wiki_api.requests.get", return_value=mock_resp) as mock_get:
-        results = router.fetch_contribs_after_timestamp("TargetUser", start_ts, limit=10)
+    with patch("router.requests.get", return_value=mock_resp) as mock_get:
+        results = router.fetch_contribs_after_timestamp(
+            "TargetUser", start_ts, limit=10
+        )
 
     assert results == [{"title": "File:AfterTs.jpg", "user": "TargetUser"}]
     assert mock_get.call_count == 1
@@ -724,7 +809,7 @@ def test_fetch_contribs_after_timestamp_respects_limit():
         }
     }
 
-    with patch("router.wiki_api.requests.get", return_value=mock_resp):
+    with patch("router.requests.get", return_value=mock_resp):
         results = router.fetch_contribs_after_timestamp("TargetUser", start_ts, limit=1)
 
     assert results == [{"title": "File:One.jpg", "user": "TargetUser"}]
@@ -748,7 +833,7 @@ def test_fetch_rollbackable_window_end_timestamp_uses_top_and_ucend():
     mock_resp.text = "{}"
     mock_resp.status_code = 200
 
-    with patch("router.wiki_api.requests.get", return_value=mock_resp) as mock_get:
+    with patch("router.requests.get", return_value=mock_resp) as mock_get:
         end_ts = router.fetch_rollbackable_window_end_timestamp("TargetUser", start_ts)
 
     assert end_ts == "2024-01-15T00:00:00Z"
@@ -767,7 +852,7 @@ def test_fetch_rollbackable_window_end_timestamp_returns_none_when_empty():
     mock_resp.text = "{}"
     mock_resp.status_code = 200
 
-    with patch("router.wiki_api.requests.get", return_value=mock_resp):
+    with patch("router.requests.get", return_value=mock_resp):
         end_ts = router.fetch_rollbackable_window_end_timestamp(
             "TargetUser", "2024-01-01T00:00:00Z"
         )
@@ -791,7 +876,7 @@ def test_fetch_recent_rollbackable_contribs_uses_top_and_limit_cap():
     mock_resp.text = "{}"
     mock_resp.status_code = 200
 
-    with patch("router.wiki_api.requests.get", return_value=mock_resp) as mock_get:
+    with patch("router.requests.get", return_value=mock_resp) as mock_get:
         items = router.fetch_recent_rollbackable_contribs("BadUser", limit=999)
 
     assert items == [
@@ -808,7 +893,7 @@ def test_fetch_diff_author_and_timestamp_handles_network_error():
     import router
     import requests
 
-    with patch("router.wiki_api.requests.get") as mock_get:
+    with patch("router.requests.get") as mock_get:
         mock_get.side_effect = requests.Timeout("Connection timeout")
         with pytest.raises(ValueError, match="Failed to fetch revision metadata"):
             router.fetch_diff_author_and_timestamp(123456)
@@ -818,7 +903,7 @@ def test_fetch_contribs_after_timestamp_handles_network_error():
     import router
     import requests
 
-    with patch("router.wiki_api.requests.get") as mock_get:
+    with patch("router.requests.get") as mock_get:
         mock_get.side_effect = requests.ConnectionError("Connection failed")
         with pytest.raises(ValueError, match="Failed to fetch user contributions"):
             router.fetch_contribs_after_timestamp("TestUser", "2024-01-01T00:00:00Z")
@@ -830,9 +915,9 @@ def test_retry_job_with_no_items_requeues_diff_resolution(client):
     mock_cursor.fetchone.side_effect = [("alice",), (0,)]
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes._load_diff_payload", return_value={"diff": 123}),
-        patch("router.routes.resolve_diff_rollback_job") as mock_resolve,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._load_diff_payload", return_value={"diff": 123}),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
     ):
         mock_resolve.delay = MagicMock()
         resp = client.post("/api/v1/rollback/jobs/1/retry")
@@ -863,15 +948,15 @@ def test_get_job_includes_diff_query_debug_metadata(client):
                 "kind": "revisions",
                 "status_code": 200,
                 "elapsed_ms": 121,
-                "response_snippet": "{\"query\": ...}",
+                "response_snippet": '{"query": ...}',
             }
         ],
     }
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes._load_diff_payload", return_value=payload),
-        patch("router.routes.r.get", return_value=None),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._load_diff_payload", return_value=payload),
+        patch("router.r.get", return_value=None),
     ):
         resp = client.get("/api/v1/rollback/jobs/1")
 
@@ -890,15 +975,20 @@ def test_get_job_includes_diff_query_debug_metadata(client):
 def test_get_job_marks_stale_resolving_as_failed(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
-    mock_cursor.fetchone.return_value = (30, "alice", "resolving", 1, "2020-01-01 00:00:00")
+    mock_cursor.fetchone.return_value = (
+        30,
+        "alice",
+        "resolving",
+        1,
+        "2020-01-01 00:00:00",
+    )
     mock_cursor.fetchall.return_value = []
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.diff_state.get_conn", return_value=mock_conn),
-        patch("router.diff_state._set_diff_error") as mock_set_error,
-        patch("router.diff_state._update_diff_payload") as mock_update_payload,
-        patch("router.routes.r.get", return_value=None),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._set_diff_error") as mock_set_error,
+        patch("router._update_diff_payload") as mock_update_payload,
+        patch("router.r.get", return_value=None),
     ):
         resp = client.get("/api/v1/rollback/jobs/30")
 
@@ -917,11 +1007,10 @@ def test_all_jobs_json_marks_stale_resolving_as_failed(client):
     ]
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.diff_state.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.routes._set_diff_error"),
-        patch("router.routes._update_diff_payload"),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router._set_diff_error"),
+        patch("router._update_diff_payload"),
     ):
         resp = client.get("/rollback-queue/all-jobs?format=json")
 
@@ -939,10 +1028,10 @@ def test_all_jobs_json_tolerates_legacy_non_numeric_batch_id(client):
     ]
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.routes._set_diff_error"),
-        patch("router.routes._update_diff_payload"),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router._set_diff_error"),
+        patch("router._update_diff_payload"),
     ):
         resp = client.get("/rollback-queue/all-jobs?format=json")
 
@@ -974,20 +1063,26 @@ def test_resolve_diff_rollback_job_propagates_query_payload_to_chunk_jobs():
     mock_cursor.lastrowid = 999
 
     with (
-        patch("router.jobs._load_diff_payload", return_value=payload),
-        patch("router.jobs._update_diff_payload") as mock_update_payload,
-        patch("router.jobs.fetch_diff_author_and_timestamp", return_value={"user": "TargetUser", "timestamp": "2026-03-25T03:30:00Z"}),
-        patch("router.jobs.fetch_rollbackable_window_end_timestamp", return_value="2026-03-25T04:00:00Z"),
-        patch("router.jobs.iter_contribs_after_timestamp", return_value=iter(items)),
-        patch("router.jobs.get_conn", return_value=mock_conn),
-        patch("router.jobs._set_diff_error"),
-        patch("router.jobs.status_updater.update_wiki_status"),
-        patch("router.jobs._store_diff_payload") as mock_store_payload,
-        patch("router.jobs.process_rollback_job") as mock_task,
-        patch("router.jobs.MAX_JOB_ITEMS", 2),
+        patch("router._load_diff_payload", return_value=payload),
+        patch("router._update_diff_payload") as mock_update_payload,
+        patch(
+            "router.fetch_diff_author_and_timestamp",
+            return_value={"user": "TargetUser", "timestamp": "2026-03-25T03:30:00Z"},
+        ),
+        patch(
+            "router.fetch_rollbackable_window_end_timestamp",
+            return_value="2026-03-25T04:00:00Z",
+        ),
+        patch("router.iter_contribs_after_timestamp", return_value=iter(items)),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._set_diff_error"),
+        patch("router.status_updater.update_wiki_status"),
+        patch("router._store_diff_payload") as mock_store_payload,
+        patch("router.process_rollback_job") as mock_task,
+        patch("router.MAX_JOB_ITEMS", 2),
     ):
         mock_task.delay = MagicMock()
-        router.resolve_diff_rollback_job_impl(1)
+        router.resolve_diff_rollback_job(1)
 
     mock_update_payload.assert_called()
     mock_store_payload.assert_called_once()
@@ -1009,7 +1104,7 @@ def test_cancel_job_returns_404_when_not_found(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = None
-    with patch("router.routes.get_conn", return_value=mock_conn):
+    with patch("router.get_conn", return_value=mock_conn):
         resp = client.delete("/api/v1/rollback/jobs/999")
     assert resp.status_code == 404
 
@@ -1018,7 +1113,7 @@ def test_cancel_job_returns_403_when_owned_by_different_user(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "bob", "queued")
-    with patch("router.routes.get_conn", return_value=mock_conn):
+    with patch("router.get_conn", return_value=mock_conn):
         resp = client.delete("/api/v1/rollback/jobs/1")
     assert resp.status_code == 403
 
@@ -1027,7 +1122,7 @@ def test_cancel_job_marks_job_and_items_canceled(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "alice", "queued")
-    with patch("router.routes.get_conn", return_value=mock_conn):
+    with patch("router.get_conn", return_value=mock_conn):
         resp = client.delete("/api/v1/rollback/jobs/1")
     assert resp.status_code == 200
     assert resp.get_json()["status"] == "canceled"
@@ -1037,9 +1132,9 @@ def test_cancel_job_allows_status_token_auth(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "statusbot", "queued")
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
+        patch("router.get_conn", return_value=mock_conn),
         patch.dict(
-            "router.routes.os.environ",
+            "router.os.environ",
             {"STATUS_API_TOKEN": "token123", "STATUS_API_USER": "statusbot"},
             clear=False,
         ),
@@ -1062,7 +1157,7 @@ def test_get_job_returns_404_when_not_found(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = None
-    with patch("router.routes.get_conn", return_value=mock_conn):
+    with patch("router.get_conn", return_value=mock_conn):
         resp = client.get("/api/v1/rollback/jobs/999")
     assert resp.status_code == 404
 
@@ -1073,8 +1168,8 @@ def test_get_job_returns_403_when_owned_by_different_user(client):
     mock_cursor.fetchone.return_value = (1, "bob", "completed", 0, "2024-01-01")
     mock_cursor.fetchall.return_value = []
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=False),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
     ):
         resp = client.get("/api/v1/rollback/jobs/1")
     assert resp.status_code == 403
@@ -1088,8 +1183,8 @@ def test_get_job_allows_maintainer_for_other_user(client):
         (10, "File:Test.jpg", "Vandal", None, "completed", None),
     ]
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=True),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
     ):
         resp = client.get("/api/v1/rollback/jobs/1")
     assert resp.status_code == 200
@@ -1104,8 +1199,8 @@ def test_get_job_log_format_returns_plain_text(client):
         (10, "File:Test.jpg", "Vandal", None, "failed", "Rollback failed"),
     ]
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=True),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
     ):
         resp = client.get("/api/v1/rollback/jobs/1?format=log")
     assert resp.status_code == 200
@@ -1123,7 +1218,7 @@ def test_get_job_returns_full_detail_for_owner(client):
     mock_cursor.fetchall.return_value = [
         (10, "File:Test.jpg", "Vandal", None, "completed", None),
     ]
-    with patch("router.routes.get_conn", return_value=mock_conn):
+    with patch("router.get_conn", return_value=mock_conn):
         resp = client.get("/api/v1/rollback/jobs/1")
     assert resp.status_code == 200
     data = resp.get_json()
@@ -1141,7 +1236,7 @@ def test_get_job_exposes_dry_run_flag(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (2, "alice", "queued", 1, "2024-01-01")
     mock_cursor.fetchall.return_value = []
-    with patch("router.routes.get_conn", return_value=mock_conn):
+    with patch("router.get_conn", return_value=mock_conn):
         resp = client.get("/api/v1/rollback/jobs/2")
     assert resp.get_json()["dry_run"] is True
 
@@ -1161,7 +1256,7 @@ def test_list_jobs_returns_jobs_for_authenticated_user(client):
         (1, "alice", "queued", 0, "2024-01-01"),
         (2, "alice", "completed", 1, "2024-01-02"),
     ]
-    with patch("router.routes.get_conn", return_value=mock_conn):
+    with patch("router.get_conn", return_value=mock_conn):
         resp = client.get("/api/v1/rollback/jobs")
     assert resp.status_code == 200
     jobs = resp.get_json()["jobs"]
@@ -1174,7 +1269,7 @@ def test_list_jobs_response_shape(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchall.return_value = [(3, "alice", "running", 0, "2024-06-01")]
-    with patch("router.routes.get_conn", return_value=mock_conn):
+    with patch("router.get_conn", return_value=mock_conn):
         resp = client.get("/api/v1/rollback/jobs")
     job = resp.get_json()["jobs"][0]
     assert {"id", "requested_by", "status", "dry_run", "created_at"} <= job.keys()
@@ -1199,7 +1294,7 @@ def test_rollback_queue_ui_returns_200_for_authenticated_user(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchall.return_value = []
-    with patch("router.routes.get_conn", return_value=mock_conn):
+    with patch("router.get_conn", return_value=mock_conn):
         resp = client.get("/rollback-queue")
     assert resp.status_code == 200
 
@@ -1212,8 +1307,8 @@ def test_all_jobs_ui_returns_401_when_not_authenticated(client):
 def test_all_jobs_ui_returns_403_for_non_maintainer(client):
     _set_session(client, "alice")
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch("router.permissions.is_admin_user", return_value=False),
+        patch("router.is_maintainer", return_value=False),
+        patch("router.is_admin_user", return_value=False),
     ):
         resp = client.get("/rollback-queue/all-jobs")
     assert resp.status_code == 403
@@ -1224,8 +1319,8 @@ def test_all_jobs_ui_returns_200_for_maintainer(client):
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchall.return_value = []
     with (
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.routes.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.get_conn", return_value=mock_conn),
     ):
         resp = client.get("/rollback-queue/all-jobs")
     assert resp.status_code == 200
@@ -1247,7 +1342,7 @@ def test_login_does_not_500_when_secret_key_missing(client):
     router.app.config["SECRET_KEY"] = None
     with (
         patch.dict(
-            "router.routes.os.environ",
+            "router.os.environ",
             {
                 "SECRET_KEY": "",
                 "FALLBACK_SECRET_KEY": "fallback-secret",
@@ -1257,7 +1352,7 @@ def test_login_does_not_500_when_secret_key_missing(client):
             clear=False,
         ),
         patch(
-            "router.routes.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))
+            "router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))
         ),
     ):
         resp = client.get("/login")
@@ -1267,7 +1362,7 @@ def test_login_does_not_500_when_secret_key_missing(client):
 
 def test_login_redirects_to_index_when_consumer_creds_missing(client):
     with patch.dict(
-        "router.routes.os.environ",
+        "router.os.environ",
         {"USER_OAUTH_CONSUMER_KEY": "", "USER_OAUTH_CONSUMER_SECRET": ""},
         clear=False,
     ):
@@ -1279,7 +1374,7 @@ def test_login_redirects_to_index_when_consumer_creds_missing(client):
 def test_login_uses_current_site_callback_url_by_default(client):
     with (
         patch.dict(
-            "router.routes.os.environ",
+            "router.os.environ",
             {
                 "USER_OAUTH_CALLBACK_URL": "",
                 "USER_OAUTH_CONSUMER_KEY": "k",
@@ -1288,7 +1383,7 @@ def test_login_uses_current_site_callback_url_by_default(client):
             clear=False,
         ),
         patch(
-            "router.routes.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))
+            "router.mwoauth.initiate", return_value=("https://example.test", ("a", "b"))
         ) as mock_initiate,
     ):
         resp = client.get("/login")
@@ -1307,11 +1402,11 @@ def test_oauth_callback_failure_redirects_index_not_referrer(client):
 
     with (
         patch.dict(
-            "router.routes.os.environ",
+            "router.os.environ",
             {"USER_OAUTH_CONSUMER_KEY": "k", "USER_OAUTH_CONSUMER_SECRET": "s"},
             clear=False,
         ),
-        patch("router.routes.mwoauth.complete", side_effect=RuntimeError("bad oauth")),
+        patch("router.mwoauth.complete", side_effect=RuntimeError("bad oauth")),
     ):
         resp = client.get("/oauth-callback")
 
@@ -1357,7 +1452,7 @@ def test_goto_rollback_queue_tab_redirects_to_rollback_queue(client):
 
 def test_goto_all_jobs_tab_redirects_for_maintainer(client):
     _set_session(client, "alice")
-    with patch("router.permissions.is_maintainer", return_value=True):
+    with patch("router.is_maintainer", return_value=True):
         resp = client.get("/goto?tab=rollback-all-jobs")
     assert resp.status_code == 302
     assert "/rollback-queue/all-jobs" in resp.headers["Location"]
@@ -1366,8 +1461,8 @@ def test_goto_all_jobs_tab_redirects_for_maintainer(client):
 def test_goto_all_jobs_tab_returns_403_for_non_maintainer(client):
     _set_session(client, "alice")
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch("router.permissions.is_admin_user", return_value=False),
+        patch("router.is_maintainer", return_value=False),
+        patch("router.is_admin_user", return_value=False),
     ):
         resp = client.get("/goto?tab=rollback-all-jobs")
     assert resp.status_code == 403
@@ -1375,7 +1470,7 @@ def test_goto_all_jobs_tab_returns_403_for_non_maintainer(client):
 
 def test_goto_from_diff_tab_redirects_for_maintainer(client):
     _set_session(client, "alice")
-    with patch("router.permissions.is_maintainer", return_value=True):
+    with patch("router.is_maintainer", return_value=True):
         resp = client.get("/goto?tab=rollback-from-diff")
     assert resp.status_code == 302
     assert "/rollback-from-diff" in resp.headers["Location"]
@@ -1383,7 +1478,7 @@ def test_goto_from_diff_tab_redirects_for_maintainer(client):
 
 def test_goto_from_diff_tab_returns_403_for_non_maintainer(client):
     _set_session(client, "alice")
-    with patch("router.permissions.is_maintainer", return_value=False):
+    with patch("router.is_maintainer", return_value=False):
         resp = client.get("/goto?tab=rollback-from-diff")
     assert resp.status_code == 302
     assert "/rollback-from-diff" in resp.headers["Location"]
@@ -1391,7 +1486,7 @@ def test_goto_from_diff_tab_returns_403_for_non_maintainer(client):
 
 def test_goto_account_tab_redirects_for_maintainer(client):
     _set_session(client, "alice")
-    with patch("router.permissions.is_maintainer", return_value=True):
+    with patch("router.is_maintainer", return_value=True):
         resp = client.get("/goto?tab=rollback-account")
     assert resp.status_code == 302
     assert "/rollback-account" in resp.headers["Location"]
@@ -1399,7 +1494,7 @@ def test_goto_account_tab_redirects_for_maintainer(client):
 
 def test_goto_account_tab_returns_403_for_non_maintainer(client):
     _set_session(client, "alice")
-    with patch("router.permissions.is_maintainer", return_value=False):
+    with patch("router.is_maintainer", return_value=False):
         resp = client.get("/goto?tab=rollback-account")
     assert resp.status_code == 302
     assert "/rollback-account" in resp.headers["Location"]
@@ -1407,7 +1502,7 @@ def test_goto_account_tab_returns_403_for_non_maintainer(client):
 
 def test_goto_runtime_config_tab_redirects_for_bot_admin(client):
     _set_session(client, "chuckbot")
-    with patch("router.permissions.is_bot_admin", return_value=True):
+    with patch("router.is_bot_admin", return_value=True):
         resp = client.get("/goto?tab=rollback-config")
     assert resp.status_code == 302
     assert "/rollback-config" in resp.headers["Location"]
@@ -1415,7 +1510,7 @@ def test_goto_runtime_config_tab_redirects_for_bot_admin(client):
 
 def test_goto_runtime_config_tab_returns_403_for_non_bot_admin(client):
     _set_session(client, "alice")
-    with patch("router.permissions.is_bot_admin", return_value=False):
+    with patch("router.is_bot_admin", return_value=False):
         resp = client.get("/goto?tab=rollback-config")
     assert resp.status_code == 403
 
@@ -1427,8 +1522,8 @@ def test_is_authorized_returns_true_for_extra_authorized_user():
     """A user listed in EXTRA_AUTHORIZED_USERS is authorized."""
     import router
 
-    with patch.object(router.authz, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
-        with patch("router.permissions.is_maintainer", return_value=False):
+    with patch.object(router, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
+        with patch("router.is_maintainer", return_value=False):
             assert router.is_authorized("TestUser") is True
 
 
@@ -1436,8 +1531,8 @@ def test_is_authorized_extra_authorized_user_is_case_insensitive():
     """EXTRA_AUTHORIZED_USERS matching is case-insensitive."""
     import router
 
-    with patch.object(router.authz, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
-        with patch("router.permissions.is_maintainer", return_value=False):
+    with patch.object(router, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
+        with patch("router.is_maintainer", return_value=False):
             assert router.is_authorized("TESTUSER") is True
             assert router.is_authorized("testuser") is True
             assert router.is_authorized("TestUser") is True
@@ -1447,9 +1542,9 @@ def test_is_authorized_returns_false_for_unknown_user():
     """A user not in any authorized list or group is denied."""
     import router
 
-    with patch.object(router.authz, "EXTRA_AUTHORIZED_USERS", set()):
-        with patch("router.permissions.is_maintainer", return_value=False):
-            with patch("router.permissions.get_user_groups", return_value=[]):
+    with patch.object(router, "EXTRA_AUTHORIZED_USERS", set()):
+        with patch("router.is_maintainer", return_value=False):
+            with patch("router.get_user_groups", return_value=[]):
                 assert router.is_authorized("nobody") is False
 
 
@@ -1458,9 +1553,9 @@ def test_extra_authorized_user_is_not_granted_maintainer_status():
     import router
     from app import is_maintainer
 
-    with patch.object(router.authz, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
+    with patch.object(router, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
         # The user is authorized …
-        with patch("router.permissions.is_maintainer", return_value=False):
+        with patch("router.is_maintainer", return_value=False):
             assert router.is_authorized("testuser") is True
         # … but is_maintainer is not affected by EXTRA_AUTHORIZED_USERS.
         assert is_maintainer("testuser") is False
@@ -1474,8 +1569,8 @@ def test_user_permissions_base_perms_for_regular_user():
     import router
 
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_READ_ONLY", set()),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_READ_ONLY", set()),
     ):
         perms = router._user_permissions("alice")
 
@@ -1493,7 +1588,7 @@ def test_user_permissions_read_only_user_gets_only_read_own():
     """Users in USERS_READ_ONLY can only view their own jobs."""
     import router
 
-    with patch.object(router.authz, "USERS_READ_ONLY", {"readonly"}):
+    with patch.object(router, "USERS_READ_ONLY", {"readonly"}):
         perms = router._user_permissions("readonly")
 
     assert perms == frozenset({"read_own"})
@@ -1506,7 +1601,7 @@ def test_user_permissions_read_only_matching_is_case_insensitive():
     """USERS_READ_ONLY matching is case-insensitive."""
     import router
 
-    with patch.object(router.authz, "USERS_READ_ONLY", {"readonly"}):
+    with patch.object(router, "USERS_READ_ONLY", {"readonly"}):
         assert "write" not in router._user_permissions("READONLY")
         assert "write" not in router._user_permissions("ReadOnly")
         assert "write" not in router._user_permissions("readonly")
@@ -1517,8 +1612,8 @@ def test_user_permissions_maintainer_gets_all_permissions():
     import router
 
     with (
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.permissions.is_bot_admin", return_value=False),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", return_value=False),
     ):
         perms = router._user_permissions("maintainer")
 
@@ -1544,8 +1639,8 @@ def test_user_permissions_granted_from_diff():
     import router
 
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_FROM_DIFF", {"alice"}),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
     ):
         perms = router._user_permissions("alice")
 
@@ -1559,8 +1654,8 @@ def test_user_permissions_granted_view_all():
     import router
 
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_VIEW_ALL", {"alice"}),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", {"alice"}),
     ):
         perms = router._user_permissions("alice")
 
@@ -1573,8 +1668,8 @@ def test_user_permissions_granted_cancel_any():
     import router
 
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
     ):
         perms = router._user_permissions("alice")
 
@@ -1587,8 +1682,8 @@ def test_user_permissions_granted_retry_any():
     import router
 
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_RETRY_ANY", {"alice"}),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_RETRY_ANY", {"alice"}),
     ):
         perms = router._user_permissions("alice")
 
@@ -1601,10 +1696,10 @@ def test_user_permissions_multiple_grants_accumulate():
     import router
 
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_FROM_DIFF", {"alice"}),
-        patch.object(router.authz, "USERS_GRANTED_VIEW_ALL", {"alice"}),
-        patch.object(router.authz, "USERS_GRANTED_BATCH", {"alice"}),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", {"alice"}),
+        patch.object(router, "USERS_GRANTED_BATCH", {"alice"}),
     ):
         perms = router._user_permissions("alice")
 
@@ -1622,7 +1717,7 @@ def test_check_rate_limit_disabled_when_zero():
     """Rate limiting is off by default (RATE_LIMIT_JOBS_PER_HOUR=0)."""
     import router
 
-    with patch.object(router.authz, "RATE_LIMIT_JOBS_PER_HOUR", 0):
+    with patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 0):
         assert router._check_rate_limit("alice") is True
 
 
@@ -1634,8 +1729,8 @@ def test_check_rate_limit_allows_when_within_limit():
     mock_r.incr.return_value = 3
 
     with (
-        patch.object(router.authz, "RATE_LIMIT_JOBS_PER_HOUR", 10),
-        patch.object(router.permissions, "r", mock_r),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 10),
+        patch.object(router, "r", mock_r),
     ):
         assert router._check_rate_limit("alice") is True
 
@@ -1648,8 +1743,8 @@ def test_check_rate_limit_blocks_when_exceeded():
     mock_r.incr.return_value = 11
 
     with (
-        patch.object(router.authz, "RATE_LIMIT_JOBS_PER_HOUR", 10),
-        patch.object(router.permissions, "r", mock_r),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 10),
+        patch.object(router, "r", mock_r),
     ):
         assert router._check_rate_limit("alice") is False
 
@@ -1662,8 +1757,8 @@ def test_check_rate_limit_allows_at_exact_limit():
     mock_r.incr.return_value = 10
 
     with (
-        patch.object(router.authz, "RATE_LIMIT_JOBS_PER_HOUR", 10),
-        patch.object(router.permissions, "r", mock_r),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 10),
+        patch.object(router, "r", mock_r),
     ):
         assert router._check_rate_limit("alice") is True
 
@@ -1676,8 +1771,8 @@ def test_check_rate_limit_sets_expiry_on_new_bucket():
     mock_r.incr.return_value = 1
 
     with (
-        patch.object(router.authz, "RATE_LIMIT_JOBS_PER_HOUR", 5),
-        patch.object(router.permissions, "r", mock_r),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 5),
+        patch.object(router, "r", mock_r),
     ):
         router._check_rate_limit("alice")
 
@@ -1693,8 +1788,8 @@ def test_check_rate_limit_does_not_set_expiry_on_subsequent_increments():
     mock_r.incr.return_value = 4
 
     with (
-        patch.object(router.authz, "RATE_LIMIT_JOBS_PER_HOUR", 5),
-        patch.object(router.permissions, "r", mock_r),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 5),
+        patch.object(router, "r", mock_r),
     ):
         router._check_rate_limit("alice")
 
@@ -1709,8 +1804,8 @@ def test_check_rate_limit_fails_open_on_redis_error():
     mock_r.incr.side_effect = Exception("Redis unavailable")
 
     with (
-        patch.object(router.authz, "RATE_LIMIT_JOBS_PER_HOUR", 10),
-        patch.object(router.permissions, "r", mock_r),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 10),
+        patch.object(router, "r", mock_r),
     ):
         assert router._check_rate_limit("alice") is True
 
@@ -1723,7 +1818,7 @@ def test_create_job_returns_403_for_read_only_user(client):
     import router
 
     _set_session(client, "viewer")
-    with patch.object(router.authz, "USERS_READ_ONLY", {"viewer"}):
+    with patch.object(router, "USERS_READ_ONLY", {"viewer"}):
         resp = client.post(
             "/api/v1/rollback/jobs",
             json={
@@ -1739,8 +1834,8 @@ def test_create_job_returns_429_when_rate_limited(client):
     """A user who has exceeded the rate limit receives a 429 response."""
     _set_session(client, "alice")
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch("router.permissions._check_rate_limit", return_value=False),
+        patch("router.is_maintainer", return_value=False),
+        patch("router._check_rate_limit", return_value=False),
     ):
         resp = client.post(
             "/api/v1/rollback/jobs",
@@ -1762,10 +1857,10 @@ def test_create_job_succeeds_when_rate_limit_disabled(client):
     mock_cursor.lastrowid = 42
 
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "RATE_LIMIT_JOBS_PER_HOUR", 0),
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.process_rollback_job") as mock_task,
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 0),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
         resp = client.post(
@@ -1790,9 +1885,9 @@ def test_cancel_job_allowed_for_cancel_any_user_on_others_job(client):
     mock_cursor.fetchone.return_value = (1, "bob", "queued")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_CANCEL_ANY", {"admin"}),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"admin"}),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -1809,9 +1904,9 @@ def test_cancel_job_still_forbidden_without_cancel_any(client):
     mock_cursor.fetchone.return_value = (1, "bob", "queued")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_CANCEL_ANY", set()),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", set()),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -1830,10 +1925,10 @@ def test_retry_job_allowed_for_retry_any_user_on_others_job(client):
     mock_cursor.fetchone.side_effect = [("bob",), (1,)]
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_RETRY_ANY", {"admin"}),
-        patch("router.routes.process_rollback_job") as mock_task,
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_RETRY_ANY", {"admin"}),
+        patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
         resp = client.post("/api/v1/rollback/jobs/1/retry")
@@ -1851,9 +1946,9 @@ def test_retry_job_still_forbidden_without_retry_any(client):
     mock_cursor.fetchone.return_value = ("bob",)
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_RETRY_ANY", set()),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_RETRY_ANY", set()),
     ):
         resp = client.post("/api/v1/rollback/jobs/1/retry")
 
@@ -1873,9 +1968,9 @@ def test_get_job_allowed_for_view_all_user_on_others_job(client):
     mock_cursor.fetchall.return_value = []
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_VIEW_ALL", {"watcher"}),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", {"watcher"}),
     ):
         resp = client.get("/api/v1/rollback/jobs/1")
 
@@ -1893,9 +1988,9 @@ def test_get_job_still_forbidden_without_read_all(client):
     mock_cursor.fetchall.return_value = []
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_VIEW_ALL", set()),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", set()),
     ):
         resp = client.get("/api/v1/rollback/jobs/1")
 
@@ -1914,10 +2009,10 @@ def test_from_diff_api_allowed_for_granted_user(client):
     mock_cursor.lastrowid = 11
 
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_FROM_DIFF", {"alice"}),
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.resolve_diff_rollback_job") as mock_resolve,
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
     ):
         mock_resolve.delay = MagicMock()
         resp = client.post(
@@ -1931,7 +2026,7 @@ def test_from_diff_api_allowed_for_granted_user(client):
 
 def test_from_diff_api_still_denied_without_grant(client):
     _set_session(client, "alice")
-    with patch("router.permissions._user_permissions", return_value=frozenset({"read_own"})):
+    with patch("router._user_permissions", return_value=frozenset({"read_own"})):
         resp = client.post(
             "/api/v1/rollback/from-diff",
             json={"diff": 999},
@@ -1949,9 +2044,9 @@ def test_all_jobs_ui_allowed_for_view_all_granted_user(client):
     mock_cursor.fetchall.return_value = []
 
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_VIEW_ALL", {"alice"}),
-        patch("router.routes.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", {"alice"}),
+        patch("router.get_conn", return_value=mock_conn),
     ):
         resp = client.get("/rollback-queue/all-jobs")
 
@@ -1964,8 +2059,8 @@ def test_goto_from_diff_tab_allowed_for_granted_user(client):
 
     _set_session(client, "alice")
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_FROM_DIFF", {"alice"}),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
     ):
         resp = client.get("/goto?tab=rollback-from-diff")
 
@@ -1979,8 +2074,8 @@ def test_goto_account_tab_allowed_for_granted_user(client):
 
     _set_session(client, "alice")
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_FROM_DIFF", {"alice"}),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
     ):
         resp = client.get("/goto?tab=rollback-account")
 
@@ -1995,16 +2090,16 @@ def test_is_bot_admin_returns_true_for_bot_admin_account():
     """A username listed in BOT_ADMIN_ACCOUNTS is a bot admin."""
     import router
 
-    with patch.object(router.authz, "BOT_ADMIN_ACCOUNTS", {"chuckbot"}):
+    with patch.object(router, "BOT_ADMIN_ACCOUNTS", {"chuckbot"}):
         assert router.is_bot_admin("chuckbot") is True
-        assert router.is_bot_admin("ChuckBot") is True   # case-insensitive
+        assert router.is_bot_admin("ChuckBot") is True  # case-insensitive
 
 
 def test_is_bot_admin_returns_false_for_regular_user():
     """A username not in BOT_ADMIN_ACCOUNTS is not a bot admin."""
     import router
 
-    with patch.object(router.authz, "BOT_ADMIN_ACCOUNTS", {"chuckbot"}):
+    with patch.object(router, "BOT_ADMIN_ACCOUNTS", {"chuckbot"}):
         assert router.is_bot_admin("alice") is False
 
 
@@ -2023,8 +2118,8 @@ def test_user_permissions_bot_admin_gets_cancel_maintainer_jobs():
     import router
 
     with (
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.permissions.is_bot_admin", return_value=True),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", return_value=True),
     ):
         perms = router._user_permissions("chuckbot")
 
@@ -2037,8 +2132,8 @@ def test_user_permissions_regular_maintainer_does_not_get_cancel_maintainer_jobs
     import router
 
     with (
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.permissions.is_bot_admin", return_value=False),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", return_value=False),
     ):
         perms = router._user_permissions("maintainer")
 
@@ -2051,8 +2146,8 @@ def test_user_permissions_admin_sysop_does_not_get_cancel_admin_jobs():
     import router
 
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch.object(router.authz, "USERS_READ_ONLY", set()),
+        patch("router.is_maintainer", return_value=False),
+        patch.object(router, "USERS_READ_ONLY", set()),
     ):
         perms = router._user_permissions("sysop_alice")
 
@@ -2063,7 +2158,9 @@ def test_user_permissions_admin_sysop_does_not_get_cancel_admin_jobs():
 # ── cancel_rollback_job – three-tier ownership (chuckbot > maintainer > admin > regular) ───
 
 
-def test_cancel_job_returns_403_when_owner_is_maintainer_and_actor_has_only_cancel_any(client):
+def test_cancel_job_returns_403_when_owner_is_maintainer_and_actor_has_only_cancel_any(
+    client,
+):
     """An env-granted cancel_any user cannot cancel a maintainer's job."""
     import router
 
@@ -2072,10 +2169,10 @@ def test_cancel_job_returns_403_when_owner_is_maintainer_and_actor_has_only_canc
     mock_cursor.fetchone.return_value = (1, "maintaineruser", "queued")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", side_effect=lambda u: u == "maintaineruser"),
-        patch("router.permissions.is_admin_user", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", side_effect=lambda u: u == "maintaineruser"),
+        patch("router.is_admin_user", return_value=False),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -2083,7 +2180,9 @@ def test_cancel_job_returns_403_when_owner_is_maintainer_and_actor_has_only_canc
     assert "maintainer" in resp.get_json().get("detail", "").lower()
 
 
-def test_cancel_job_allowed_when_owner_is_regular_maintainer_and_actor_is_also_maintainer(client):
+def test_cancel_job_allowed_when_owner_is_regular_maintainer_and_actor_is_also_maintainer(
+    client,
+):
     """A maintainer can cancel another regular maintainer's job."""
     import router
 
@@ -2092,10 +2191,10 @@ def test_cancel_job_allowed_when_owner_is_regular_maintainer_and_actor_is_also_m
     mock_cursor.fetchone.return_value = (1, "maint_bob", "queued")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.permissions.is_bot_admin", return_value=False),
-        patch("router.permissions.is_admin_user", return_value=False),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", return_value=False),
+        patch("router.is_admin_user", return_value=False),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -2112,10 +2211,10 @@ def test_cancel_job_allowed_when_owner_is_maintainer_and_actor_is_bot_admin(clie
     mock_cursor.fetchone.return_value = (1, "maint_bob", "queued")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.permissions.is_bot_admin", side_effect=lambda u: u == "chuckbot"),
-        patch("router.permissions.is_admin_user", return_value=False),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", side_effect=lambda u: u == "chuckbot"),
+        patch("router.is_admin_user", return_value=False),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -2123,7 +2222,9 @@ def test_cancel_job_allowed_when_owner_is_maintainer_and_actor_is_bot_admin(clie
     assert resp.get_json()["status"] == "canceled"
 
 
-def test_cancel_job_returns_403_when_owner_is_bot_admin_and_actor_is_regular_maintainer(client):
+def test_cancel_job_returns_403_when_owner_is_bot_admin_and_actor_is_regular_maintainer(
+    client,
+):
     """A regular maintainer cannot cancel chuckbot's job."""
     import router
 
@@ -2132,10 +2233,10 @@ def test_cancel_job_returns_403_when_owner_is_bot_admin_and_actor_is_regular_mai
     mock_cursor.fetchone.return_value = (1, "chuckbot", "queued")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.permissions.is_bot_admin", side_effect=lambda u: u == "chuckbot"),
-        patch("router.permissions.is_admin_user", return_value=False),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", side_effect=lambda u: u == "chuckbot"),
+        patch("router.is_admin_user", return_value=False),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -2152,10 +2253,10 @@ def test_cancel_job_allowed_when_owner_is_bot_admin_and_actor_is_also_bot_admin(
     mock_cursor.fetchone.return_value = (1, "chuckbot", "queued")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.permissions.is_bot_admin", return_value=True),
-        patch("router.permissions.is_admin_user", return_value=False),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_bot_admin", return_value=True),
+        patch("router.is_admin_user", return_value=False),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -2163,7 +2264,9 @@ def test_cancel_job_allowed_when_owner_is_bot_admin_and_actor_is_also_bot_admin(
     assert resp.get_json()["status"] == "canceled"
 
 
-def test_cancel_job_returns_403_when_owner_is_admin_and_actor_has_only_cancel_any(client):
+def test_cancel_job_returns_403_when_owner_is_admin_and_actor_has_only_cancel_any(
+    client,
+):
     """An env-granted cancel_any user cannot cancel a sysop admin's job."""
     import router
 
@@ -2172,10 +2275,10 @@ def test_cancel_job_returns_403_when_owner_is_admin_and_actor_has_only_cancel_an
     mock_cursor.fetchone.return_value = (1, "sysop_bob", "queued")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch("router.permissions.is_admin_user", side_effect=lambda u: u == "sysop_bob"),
-        patch.object(router.authz, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch("router.is_admin_user", side_effect=lambda u: u == "sysop_bob"),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -2192,10 +2295,10 @@ def test_cancel_job_allowed_when_owner_is_admin_and_actor_is_maintainer(client):
     mock_cursor.fetchone.return_value = (1, "sysop_bob", "queued")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", side_effect=lambda u: u == "maint_alice"),
-        patch("router.permissions.is_bot_admin", return_value=False),
-        patch("router.permissions.is_admin_user", side_effect=lambda u: u == "sysop_bob"),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", side_effect=lambda u: u == "maint_alice"),
+        patch("router.is_bot_admin", return_value=False),
+        patch("router.is_admin_user", side_effect=lambda u: u == "sysop_bob"),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -2212,8 +2315,8 @@ def test_cancel_job_returns_403_when_regular_user_tries_to_cancel_admin_job(clie
     mock_cursor.fetchone.return_value = (1, "sysop_bob", "queued")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=False),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -2230,10 +2333,10 @@ def test_cancel_job_allowed_for_cancel_any_user_on_regular_users_job(client):
     mock_cursor.fetchone.return_value = (1, "bob", "queued")
 
     with (
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch("router.permissions.is_admin_user", return_value=False),
-        patch.object(router.authz, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.is_maintainer", return_value=False),
+        patch("router.is_admin_user", return_value=False),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -2250,11 +2353,11 @@ def test_user_permissions_config_view_for_bot_admin_and_config_edit_for_chuckbot
     defaults = router._runtime_authz_defaults()
 
     with (
-        patch("router.permissions._effective_runtime_authz_config", return_value=defaults),
-        patch("router.permissions.is_maintainer", return_value=True),
-        patch("router.permissions.is_tester", return_value=False),
-        patch("router.permissions.is_bot_admin", return_value=True),
-        patch.object(router.permissions, "_CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot"),
+        patch("router._effective_runtime_authz_config", return_value=defaults),
+        patch("router.is_maintainer", return_value=True),
+        patch("router.is_tester", return_value=False),
+        patch("router.is_bot_admin", return_value=True),
+        patch.object(router, "_CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot"),
     ):
         other_bot_perms = router._user_permissions("otherbot")
         chuckbot_perms = router._user_permissions("chuckbot")
@@ -2272,7 +2375,7 @@ def test_get_runtime_authz_api_returns_401_when_not_authenticated(client):
 
 def test_get_runtime_authz_api_returns_403_for_non_bot_admin(client):
     _set_session(client, "alice")
-    with patch("router.permissions.is_bot_admin", return_value=False):
+    with patch("router.is_bot_admin", return_value=False):
         resp = client.get("/api/v1/config/authz")
     assert resp.status_code == 403
 
@@ -2282,9 +2385,9 @@ def test_get_runtime_authz_api_returns_config_for_bot_admin(client):
 
     _set_session(client, "otherbot")
     with (
-        patch("router.permissions.is_bot_admin", return_value=True),
-        patch.object(router.permissions, "_CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot"),
-        patch("router.routes.get_runtime_config", return_value={}),
+        patch("router.is_bot_admin", return_value=True),
+        patch.object(router, "_CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot"),
+        patch("router.get_runtime_config", return_value={}),
     ):
         resp = client.get("/api/v1/config/authz")
 
@@ -2299,8 +2402,8 @@ def test_get_runtime_authz_api_returns_config_for_bot_admin(client):
 def test_update_runtime_authz_api_returns_403_for_non_chuckbot_bot_admin(client):
     _set_session(client, "otherbot")
     with (
-        patch("router.permissions.is_bot_admin", return_value=True),
-        patch("router.routes.get_runtime_config", return_value={}),
+        patch("router.is_bot_admin", return_value=True),
+        patch("router.get_runtime_config", return_value={}),
     ):
         resp = client.put(
             "/api/v1/config/authz",
@@ -2312,7 +2415,7 @@ def test_update_runtime_authz_api_returns_403_for_non_chuckbot_bot_admin(client)
 
 def test_update_runtime_authz_api_rejects_unknown_key(client):
     _set_session(client, "chuckbot")
-    with patch("router.permissions.is_bot_admin", return_value=True):
+    with patch("router.is_bot_admin", return_value=True):
         resp = client.put(
             "/api/v1/config/authz",
             json={"config": {"NOT_A_REAL_KEY": "x"}},
@@ -2329,9 +2432,9 @@ def test_update_runtime_authz_api_persists_for_chuckbot(client):
     default_cfg = router._runtime_authz_defaults()
 
     with (
-        patch("router.permissions.is_bot_admin", return_value=True),
-        patch("router.routes._persist_runtime_authz_updates") as mock_persist,
-        patch("router.permissions._effective_runtime_authz_config", return_value=default_cfg),
+        patch("router.is_bot_admin", return_value=True),
+        patch("router._persist_runtime_authz_updates") as mock_persist,
+        patch("router._effective_runtime_authz_config", return_value=default_cfg),
     ):
         resp = client.put(
             "/api/v1/config/authz",
@@ -2357,9 +2460,9 @@ def test_update_runtime_authz_api_normalizes_quoted_and_prefixed_usernames(clien
     default_cfg = router._runtime_authz_defaults()
 
     with (
-        patch("router.permissions.is_bot_admin", return_value=True),
-        patch("router.routes._persist_runtime_authz_updates") as mock_persist,
-        patch("router.permissions._effective_runtime_authz_config", return_value=default_cfg),
+        patch("router.is_bot_admin", return_value=True),
+        patch("router._persist_runtime_authz_updates") as mock_persist,
+        patch("router._effective_runtime_authz_config", return_value=default_cfg),
     ):
         resp = client.put(
             "/api/v1/config/authz",
@@ -2385,9 +2488,9 @@ def test_update_runtime_authz_api_accepts_user_grants_json(client):
     default_cfg = router._runtime_authz_defaults()
 
     with (
-        patch("router.permissions.is_bot_admin", return_value=True),
-        patch("router.routes._persist_runtime_authz_updates") as mock_persist,
-        patch("router.permissions._effective_runtime_authz_config", return_value=default_cfg),
+        patch("router.is_bot_admin", return_value=True),
+        patch("router._persist_runtime_authz_updates") as mock_persist,
+        patch("router._effective_runtime_authz_config", return_value=default_cfg),
     ):
         resp = client.put(
             "/api/v1/config/authz",
@@ -2416,9 +2519,9 @@ def test_user_permissions_supports_user_centric_view_all_right():
     }
 
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch("router.permissions.is_tester", return_value=False),
-        patch("router.permissions._effective_runtime_authz_config", return_value=cfg),
+        patch("router.is_maintainer", return_value=False),
+        patch("router.is_tester", return_value=False),
+        patch("router._effective_runtime_authz_config", return_value=cfg),
     ):
         perms = router._user_permissions("alice")
 
@@ -2435,9 +2538,9 @@ def test_user_permissions_supports_group_based_user_centric_grants():
     }
 
     with (
-        patch("router.permissions.is_maintainer", return_value=False),
-        patch("router.permissions.is_tester", return_value=False),
-        patch("router.permissions._effective_runtime_authz_config", return_value=cfg),
+        patch("router.is_maintainer", return_value=False),
+        patch("router.is_tester", return_value=False),
+        patch("router._effective_runtime_authz_config", return_value=cfg),
     ):
         perms = router._user_permissions("alice")
 
@@ -2451,7 +2554,10 @@ def test_user_permissions_supports_group_based_user_centric_grants():
 def test_from_diff_api_rejects_live_mode_for_dry_run_only_right(client):
     _set_session(client, "alice")
 
-    with patch("router.permissions._user_permissions", return_value=frozenset({"from_diff", "from_diff_dry_run_only"})):
+    with patch(
+        "router._user_permissions",
+        return_value=frozenset({"from_diff", "from_diff_dry_run_only"}),
+    ):
         resp = client.post(
             "/api/v1/rollback/from-diff",
             json={"diff": 123, "dry_run": False},
@@ -2467,9 +2573,12 @@ def test_from_diff_api_allows_dry_run_for_dry_run_only_right(client):
     mock_cursor.lastrowid = 77
 
     with (
-        patch("router.permissions._user_permissions", return_value=frozenset({"from_diff", "from_diff_dry_run_only"})),
-        patch("router.routes.get_conn", return_value=mock_conn),
-        patch("router.routes.resolve_diff_rollback_job") as mock_resolve,
+        patch(
+            "router._user_permissions",
+            return_value=frozenset({"from_diff", "from_diff_dry_run_only"}),
+        ),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router.resolve_diff_rollback_job") as mock_resolve,
     ):
         mock_resolve.delay = MagicMock()
         resp = client.post(
@@ -2492,9 +2601,9 @@ def test_get_runtime_authz_user_grants_returns_payload_for_bot_admin(client):
     }
 
     with (
-        patch("router.permissions.is_bot_admin", return_value=True),
-        patch("router.permissions._effective_runtime_authz_config", return_value=cfg),
-        patch("router.permissions.is_maintainer", return_value=False),
+        patch("router.is_bot_admin", return_value=True),
+        patch("router._effective_runtime_authz_config", return_value=cfg),
+        patch("router.is_maintainer", return_value=False),
     ):
         resp = client.get("/api/v1/config/authz/user-grants/Alice")
 
@@ -2515,10 +2624,10 @@ def test_update_runtime_authz_user_grants_updates_single_user(client):
     }
 
     with (
-        patch("router.permissions.is_bot_admin", return_value=True),
-        patch("router.permissions._effective_runtime_authz_config", return_value=cfg),
-        patch("router.routes._persist_runtime_authz_updates") as mock_persist,
-        patch("router.permissions.is_maintainer", return_value=False),
+        patch("router.is_bot_admin", return_value=True),
+        patch("router._effective_runtime_authz_config", return_value=cfg),
+        patch("router._persist_runtime_authz_updates") as mock_persist,
+        patch("router.is_maintainer", return_value=False),
     ):
         resp = client.put(
             "/api/v1/config/authz/user-grants/Alice",

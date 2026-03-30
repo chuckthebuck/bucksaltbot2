@@ -4,8 +4,18 @@ import json
 import os
 import time
 
+import sys as _sys
+
+import requests
+
 from app import BOT_ADMIN_ACCOUNTS, flask_app as app, is_maintainer  # noqa: F401
 from toolsdb import get_runtime_config, upsert_runtime_config
+
+
+def _r():
+    """Return the router package module (supports test-side patching via router.X)."""
+    return _sys.modules.get('router')
+
 
 ALLOWED_GROUPS = {"sysop", "rollbacker"}
 GROUP_CACHE_TTL = 300
@@ -31,33 +41,82 @@ RATE_LIMIT_TESTER_JOBS_PER_HOUR: int = int(
     os.getenv("RATE_LIMIT_TESTER_JOBS_PER_HOUR", str(RATE_LIMIT_JOBS_PER_HOUR))
 )
 
-_CONFIG_EDIT_PRIMARY_ACCOUNT = os.getenv("CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot").strip().lower()
+_CONFIG_EDIT_PRIMARY_ACCOUNT = (
+    os.getenv("CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot").strip().lower()
+)
 
 _USER_GRANT_RIGHTS = {
-    "from_diff",
-    "batch",
+    "rollback_diff",
+    "rollback_account",
+    "rollback_batch",
+    "rollback_diff_dry_run_only",
+    "approve_jobs",
+    "autoapprove_jobs",
+    "force_dry_run",
     "view_all",
+    "edit_config",
+    "manage_user_grants",
     "cancel_any",
     "retry_any",
-    "from_diff_dry_run_only",
 }
 
 _USER_GRANT_GROUPS = {
     "viewer": {"view_all"},
-    "diff": {"from_diff"},
-    "diff_dry_run": {"from_diff", "from_diff_dry_run_only"},
-    "batch": {"batch"},
-    "support": {"view_all", "retry_any"},
-    "operator": {"view_all", "from_diff", "batch", "cancel_any", "retry_any"},
+    "rollbacker": {"rollback_diff", "rollback_account"},
+    "rollbacker_dry_run": {
+        "rollback_diff",
+        "rollback_account",
+        "rollback_diff_dry_run_only",
+    },
+    "batch_runner": {"rollback_batch"},
+    "jobs_moderator": {
+        "approve_jobs",
+        "force_dry_run",
+        "cancel_any",
+        "retry_any",
+    },
+    "admin": {
+        "view_all",
+        "rollback_diff",
+        "rollback_account",
+        "rollback_batch",
+        "approve_jobs",
+        "autoapprove_jobs",
+        "force_dry_run",
+        "cancel_any",
+        "retry_any",
+        "edit_config",
+        "manage_user_grants",
+    },
+}
+
+_LEGACY_RIGHT_ALIASES = {
+    "from_diff": "rollback_diff",
+    "batch": "rollback_batch",
+    "from_diff_dry_run_only": "rollback_diff_dry_run_only",
+    "read_all": "view_all",
+}
+
+_LEGACY_GROUP_ALIASES = {
+    "diff": "rollbacker",
+    "diff_dry_run": "rollbacker_dry_run",
+    "batch": "batch_runner",
+    "support": "jobs_moderator",
+    "operator": "admin",
 }
 
 _USER_IMPLICIT_FLAGS = (
+    "authenticated",
     "bot_admin",
     "maintainer",
+    "commons_admin",
+    "commons_rollbacker",
     "tester",
     "read_only",
     "extra_authorized",
 )
+
+_AUTO_GRANT_ROLE_KEYS = set(_USER_IMPLICIT_FLAGS)
 
 _USER_SET_CONFIG_KEYS = {
     "EXTRA_AUTHORIZED_USERS",
@@ -77,39 +136,15 @@ _INT_CONFIG_KEYS = {
 
 _JSON_CONFIG_KEYS = {
     "USER_GRANTS_JSON",
+    "AUTO_GRANTS_JSON",
 }
 
-_RUNTIME_AUTHZ_ALLOWED_KEYS = sorted(_USER_SET_CONFIG_KEYS | _INT_CONFIG_KEYS | _JSON_CONFIG_KEYS)
+_RUNTIME_AUTHZ_ALLOWED_KEYS = sorted(
+    _USER_SET_CONFIG_KEYS | _INT_CONFIG_KEYS | _JSON_CONFIG_KEYS
+)
 _RUNTIME_AUTHZ_CACHE_TTL = 60
 _runtime_authz_cache = None
 _runtime_authz_cache_expiry = 0.0
-
-
-_REQUEST_TYPE_QUEUE = "queue"
-_REQUEST_TYPE_BATCH = "batch"
-_REQUEST_TYPE_DIFF = "diff"
-
-_REQUEST_STATUS_PENDING_APPROVAL = "pending_approval"
-
-_APPROVAL_REQUIRED_ADMIN = "admin"
-_APPROVAL_REQUIRED_MAINTAINER = "maintainer"
-
-_ENDPOINT_BATCH = "batch"
-_ENDPOINT_FROM_DIFF = "from_diff"
-_ENDPOINT_FROM_ACCOUNT = "from_account"
-
-_ALLOWED_DIFF_REQUEST_ENDPOINTS = frozenset({_ENDPOINT_FROM_DIFF, _ENDPOINT_FROM_ACCOUNT})
-_ALLOWED_REQUEST_TYPES = frozenset({_REQUEST_TYPE_QUEUE, _REQUEST_TYPE_BATCH, _REQUEST_TYPE_DIFF})
-
-
-def is_bot_admin(username: str) -> bool:
-    """Return True if the user is one of the hardcoded bot-admin accounts (e.g. chuckbot).
-
-    Bot admins sit at the top of the user hierarchy: chuckbot > maintainer > admin > regular.
-    """
-    if not username:
-        return False
-    return username.strip().lower() in BOT_ADMIN_ACCOUNTS
 
 
 def _parse_user_csv(raw_value: str) -> set[str]:
@@ -134,8 +169,12 @@ def _normalize_username(raw_value: str) -> str:
 
 def _normalize_grant_atom(atom: str) -> str:
     normalized = str(atom or "").strip().lower().replace(" ", "_")
-    if normalized == "read_all":
-        return "view_all"
+    if normalized.startswith("group:"):
+        group_name = normalized.split(":", 1)[1]
+        group_name = _LEGACY_GROUP_ALIASES.get(group_name, group_name)
+        return f"group:{group_name}"
+
+    normalized = _LEGACY_RIGHT_ALIASES.get(normalized, normalized)
     return normalized
 
 
@@ -235,7 +274,138 @@ def _expand_user_grants(config: dict, username: str) -> set[str]:
     return expanded
 
 
-def _get_user_grants_payload(target_username: str, config: dict) -> dict:
+def _implicit_role_flags(
+    config: dict, username: str, commons_groups: set[str] | None = None
+) -> dict[str, bool]:
+    normalized_username = _normalize_username(username)
+    if not normalized_username:
+        return {role: False for role in _USER_IMPLICIT_FLAGS}
+
+    groups = set(commons_groups if commons_groups is not None else get_user_groups(normalized_username))
+
+    _router = _r()
+    _is_bot_admin = _router.is_bot_admin if _router else is_bot_admin
+    _is_maintainer = _router.is_maintainer if _router else is_maintainer
+    return {
+        "authenticated": True,
+        "bot_admin": bool(_is_bot_admin(normalized_username)),
+        "maintainer": bool(_is_maintainer(normalized_username)),
+        "commons_admin": bool("sysop" in groups),
+        "commons_rollbacker": bool("rollbacker" in groups),
+        "tester": bool(normalized_username in config["USERS_TESTER"]),
+        "read_only": bool(normalized_username in config["USERS_READ_ONLY"]),
+        "extra_authorized": bool(normalized_username in config["EXTRA_AUTHORIZED_USERS"]),
+    }
+
+
+def _normalize_auto_grants_map_input(value, key: str) -> dict:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{key} must be valid JSON") from exc
+
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be an object mapping role names to grants")
+
+    normalized = {}
+
+    for raw_role, raw_grants in value.items():
+        role_name = str(raw_role or "").strip().lower().replace(" ", "_")
+        if not role_name:
+            continue
+
+        if role_name not in _AUTO_GRANT_ROLE_KEYS:
+            raise ValueError(f"Unknown auto-grant role '{role_name}'")
+
+        atoms = []
+        if isinstance(raw_grants, dict):
+            rights = raw_grants.get("rights", [])
+            groups = raw_grants.get("groups", [])
+            if isinstance(rights, str):
+                rights = [part.strip() for part in rights.split(",") if part.strip()]
+            if isinstance(groups, str):
+                groups = [part.strip() for part in groups.split(",") if part.strip()]
+            if isinstance(groups, list):
+                atoms.extend([f"group:{g}" for g in groups])
+            if isinstance(rights, list):
+                atoms.extend([str(r) for r in rights])
+        elif isinstance(raw_grants, list):
+            atoms = [str(item) for item in raw_grants]
+        elif isinstance(raw_grants, str):
+            atoms = [part.strip() for part in raw_grants.replace("\n", ",").split(",")]
+        else:
+            raise ValueError(f"{key}.{role_name} must be a list/string/object")
+
+        role_atoms = set()
+        for atom in atoms:
+            normalized_atom = _normalize_grant_atom(atom)
+            if not normalized_atom:
+                continue
+
+            if normalized_atom.startswith("group:"):
+                group_name = normalized_atom.split(":", 1)[1]
+                if group_name not in _USER_GRANT_GROUPS:
+                    raise ValueError(f"Unknown grant group '{group_name}' for role {role_name}")
+                role_atoms.add(normalized_atom)
+                continue
+
+            if normalized_atom in _USER_GRANT_GROUPS:
+                role_atoms.add(f"group:{normalized_atom}")
+                continue
+
+            if normalized_atom not in _USER_GRANT_RIGHTS:
+                raise ValueError(f"Unknown right '{normalized_atom}' for role {role_name}")
+
+            role_atoms.add(normalized_atom)
+
+        normalized[role_name] = sorted(role_atoms)
+
+    return normalized
+
+
+def _expand_auto_grants(config: dict, username: str) -> set[str]:
+    role_map = config.get("AUTO_GRANTS_JSON") or {}
+    if not isinstance(role_map, dict):
+        return set()
+
+    implicit_flags = _implicit_role_flags(config, username)
+    expanded = set()
+
+    for role, enabled in implicit_flags.items():
+        if not enabled:
+            continue
+
+        role_atoms = role_map.get(role) or []
+        for raw_atom in role_atoms:
+            atom = _normalize_grant_atom(raw_atom)
+            if not atom:
+                continue
+
+            if atom.startswith("group:"):
+                group_name = atom.split(":", 1)[1]
+                expanded |= _USER_GRANT_GROUPS.get(group_name, set())
+                continue
+
+            if atom in _USER_GRANT_GROUPS:
+                expanded |= _USER_GRANT_GROUPS[atom]
+                continue
+
+            if atom in _USER_GRANT_RIGHTS:
+                expanded.add(atom)
+
+    return expanded
+
+
+def _expand_all_grants(config: dict, username: str) -> set[str]:
+    return _expand_user_grants(config, username) | _expand_auto_grants(config, username)
+
+
+def _get_user_grants_payload(
+    target_username: str,
+    config: dict,
+    commons_groups: set[str] | None = None,
+) -> dict:
     normalized_username = _normalize_username(target_username)
     grants_map = config.get("USER_GRANTS_JSON") or {}
     atoms = list(grants_map.get(normalized_username, []))
@@ -246,13 +416,10 @@ def _get_user_grants_payload(target_username: str, config: dict) -> dict:
     rights = sorted([atom for atom in atoms if not atom.startswith("group:")])
     expanded_rights = sorted(_expand_user_grants(config, normalized_username))
 
-    implicit = {
-        "bot_admin": bool(is_bot_admin(normalized_username)),
-        "maintainer": bool(is_maintainer(normalized_username)),
-        "tester": bool(normalized_username in config["USERS_TESTER"]),
-        "read_only": bool(normalized_username in config["USERS_READ_ONLY"]),
-        "extra_authorized": bool(normalized_username in config["EXTRA_AUTHORIZED_USERS"]),
-    }
+    resolved_groups = set(
+        commons_groups if commons_groups is not None else get_user_groups(normalized_username)
+    )
+    implicit = _implicit_role_flags(config, normalized_username, commons_groups=resolved_groups)
 
     return {
         "username": target_username,
@@ -262,6 +429,7 @@ def _get_user_grants_payload(target_username: str, config: dict) -> dict:
         "rights": rights,
         "expanded_rights": expanded_rights,
         "implicit": implicit,
+        "commons_groups": sorted(resolved_groups),
     }
 
 
@@ -295,18 +463,32 @@ def _parse_nonnegative_int(value, fallback: int) -> int:
 
 
 def _runtime_authz_defaults() -> dict:
+    _router = _r()
+    _extra = _router.EXTRA_AUTHORIZED_USERS if _router else EXTRA_AUTHORIZED_USERS
+    _read_only = _router.USERS_READ_ONLY if _router else USERS_READ_ONLY
+    _tester = _router.USERS_TESTER if _router else USERS_TESTER
+    _from_diff = _router.USERS_GRANTED_FROM_DIFF if _router else USERS_GRANTED_FROM_DIFF
+    _view_all = _router.USERS_GRANTED_VIEW_ALL if _router else USERS_GRANTED_VIEW_ALL
+    _batch = _router.USERS_GRANTED_BATCH if _router else USERS_GRANTED_BATCH
+    _cancel_any = _router.USERS_GRANTED_CANCEL_ANY if _router else USERS_GRANTED_CANCEL_ANY
+    _retry_any = _router.USERS_GRANTED_RETRY_ANY if _router else USERS_GRANTED_RETRY_ANY
+    _rate_limit = _router.RATE_LIMIT_JOBS_PER_HOUR if _router else RATE_LIMIT_JOBS_PER_HOUR
+    _rate_tester = _router.RATE_LIMIT_TESTER_JOBS_PER_HOUR if _router else RATE_LIMIT_TESTER_JOBS_PER_HOUR
     return {
-        "EXTRA_AUTHORIZED_USERS": set(EXTRA_AUTHORIZED_USERS),
-        "USERS_READ_ONLY": set(USERS_READ_ONLY),
-        "USERS_TESTER": set(USERS_TESTER),
-        "USERS_GRANTED_FROM_DIFF": set(USERS_GRANTED_FROM_DIFF),
-        "USERS_GRANTED_VIEW_ALL": set(USERS_GRANTED_VIEW_ALL),
-        "USERS_GRANTED_BATCH": set(USERS_GRANTED_BATCH),
-        "USERS_GRANTED_CANCEL_ANY": set(USERS_GRANTED_CANCEL_ANY),
-        "USERS_GRANTED_RETRY_ANY": set(USERS_GRANTED_RETRY_ANY),
-        "RATE_LIMIT_JOBS_PER_HOUR": int(RATE_LIMIT_JOBS_PER_HOUR),
-        "RATE_LIMIT_TESTER_JOBS_PER_HOUR": int(RATE_LIMIT_TESTER_JOBS_PER_HOUR),
+        "EXTRA_AUTHORIZED_USERS": set(_extra),
+        "USERS_READ_ONLY": set(_read_only),
+        "USERS_TESTER": set(_tester),
+        "USERS_GRANTED_FROM_DIFF": set(_from_diff),
+        "USERS_GRANTED_VIEW_ALL": set(_view_all),
+        "USERS_GRANTED_BATCH": set(_batch),
+        "USERS_GRANTED_CANCEL_ANY": set(_cancel_any),
+        "USERS_GRANTED_RETRY_ANY": set(_retry_any),
+        "RATE_LIMIT_JOBS_PER_HOUR": int(_rate_limit),
+        "RATE_LIMIT_TESTER_JOBS_PER_HOUR": int(_rate_tester),
         "USER_GRANTS_JSON": _parse_user_grants_env(os.getenv("USER_GRANTS_JSON", "")),
+        "AUTO_GRANTS_JSON": _normalize_auto_grants_map_input(
+            os.getenv("AUTO_GRANTS_JSON", "{}"), "AUTO_GRANTS_JSON"
+        ),
     }
 
 
@@ -343,7 +525,10 @@ def _load_runtime_authz_overrides() -> dict:
 
         if key in _JSON_CONFIG_KEYS:
             try:
-                overrides[key] = _normalize_user_grants_map_input(raw_value, key)
+                if key == "AUTO_GRANTS_JSON":
+                    overrides[key] = _normalize_auto_grants_map_input(raw_value, key)
+                else:
+                    overrides[key] = _normalize_user_grants_map_input(raw_value, key)
             except ValueError:
                 overrides[key] = defaults.get(key, {})
 
@@ -439,7 +624,10 @@ def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
 
         if key in _JSON_CONFIG_KEYS:
             try:
-                normalized[key] = _normalize_user_grants_map_input(value, key)
+                if key == "AUTO_GRANTS_JSON":
+                    normalized[key] = _normalize_auto_grants_map_input(value, key)
+                else:
+                    normalized[key] = _normalize_user_grants_map_input(value, key)
             except ValueError as exc:
                 errors.append(str(exc))
 
@@ -458,3 +646,45 @@ def _persist_runtime_authz_updates(updates: dict, updated_by: str) -> None:
 
     upsert_runtime_config(rows, updated_by=updated_by)
     _invalidate_runtime_authz_cache()
+
+
+def get_user_groups(username, force_refresh: bool = False):
+    now = time.time()
+
+    cached = _group_cache.get(username)
+    if not force_refresh and cached and (now - cached["ts"] < GROUP_CACHE_TTL):
+        return cached["groups"]
+
+    url = "https://commons.wikimedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "list": "users",
+        "ususers": username,
+        "usprop": "groups",
+        "format": "json",
+    }
+
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        users = data.get("query", {}).get("users", [])
+        groups = users[0].get("groups", []) if users else []
+    except Exception:
+        app.logger.exception("Failed to fetch groups for %s", username)
+        groups = []
+
+    _group_cache[username] = {"groups": groups, "ts": now}
+    return groups
+
+
+def is_bot_admin(username: str) -> bool:
+    """Return True if the user is one of the hardcoded bot-admin accounts (e.g. chuckbot).
+
+    Bot admins sit at the top of the user hierarchy: chuckbot > maintainer > admin > regular.
+    """
+    if not username:
+        return False
+    _router = _r()
+    accounts = _router.BOT_ADMIN_ACCOUNTS if _router else BOT_ADMIN_ACCOUNTS
+    return username.strip().lower() in accounts

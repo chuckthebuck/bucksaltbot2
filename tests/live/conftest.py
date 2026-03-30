@@ -22,6 +22,13 @@ import os
 import pathlib
 import sys
 
+# Live tests should exercise end-to-end execution without manual approval clicks.
+os.environ.setdefault("LIVE_TEST_AUTO_APPROVE_REQUESTS", "1")
+# Preserve created rollback rows by default so all-jobs/history inspection stays intact.
+os.environ.setdefault("LIVE_TEST_KEEP_JOBS", "1")
+# Avoid writing production on-wiki status pages during integration tests.
+os.environ.setdefault("LIVE_TEST_DISABLE_STATUS_UPDATES", "1")
+
 import pytest
 
 # ── Path setup ────────────────────────────────────────────────────────────────
@@ -143,11 +150,10 @@ def admin_client(live_client, monkeypatch):
     never consulted during the test.  The username is taken from the
     ``LIVE_TEST_USER`` environment variable (default: ``live-test-admin``).
     """
-    import router as _router  # noqa: F401 – ensures routes are registered
-    import router.permissions as _router_permissions
+    import router as _router
 
     test_user = os.environ.get("LIVE_TEST_USER", "live-test-admin")
-    monkeypatch.setattr(_router_permissions, "is_maintainer", lambda _u: True)
+    monkeypatch.setattr(_router, "is_maintainer", lambda _u: True)
 
     with live_client.session_transaction() as sess:
         sess["username"] = test_user
@@ -222,9 +228,7 @@ def live_wiki_edit(bot_site):
     # there is always a prior revision to roll back to.
     original_text = page.text if page.exists() else ""
     if not original_text.strip():
-        original_text = (
-            f"This page is used for automated rollback testing by [[User:{bot_username}]].\n"
-        )
+        original_text = f"This page is used for automated rollback testing by [[User:{bot_username}]].\n"
         page.text = original_text
         page.save(
             summary="Chuckbot rollback test: initialise test page",

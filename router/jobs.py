@@ -1,38 +1,56 @@
-"""Job creation and diff-rollback resolution."""
+"""Job creation and resolution logic for rollback requests."""
 
 import time
+from datetime import datetime, timezone
 
+from app import flask_app as app, MAX_JOB_ITEMS
+from rollback_queue import (
+    process_rollback_job,
+    resolve_diff_rollback_job_task as resolve_diff_rollback_job,
+)
+from toolsdb import get_conn
 import status_updater
 
-from app import MAX_JOB_ITEMS, flask_app as app
-from rollback_queue import process_rollback_job
-from router.authz import (
-    _ALLOWED_DIFF_REQUEST_ENDPOINTS,
-    _APPROVAL_REQUIRED_MAINTAINER,
-    _ENDPOINT_FROM_ACCOUNT,
-    _ENDPOINT_FROM_DIFF,
-    _REQUEST_TYPE_DIFF,
-)
+from router.authz import _effective_runtime_authz_config  # noqa: F401
 from router.diff_state import (
-    _ACCOUNT_ROLLBACK_MAX_LIMIT,
-    _ROLLBACKABLE_WINDOW_LIMIT,
-    _append_mw_debug,
     _load_diff_payload,
-    _set_diff_error,
     _store_diff_payload,
     _update_diff_payload,
+    _append_mw_debug,
+    _set_diff_error,
+    _ACCOUNT_ROLLBACK_MAX_LIMIT,
+    _ROLLBACKABLE_WINDOW_LIMIT,
 )
 from router.wiki_api import (
     _extract_oldid,
     _normalize_target_user_input,
-    _utc_now_iso,
-    fetch_contribs_after_timestamp,
     fetch_diff_author_and_timestamp,
-    fetch_recent_rollbackable_contribs,
+    _utc_now_iso,
     fetch_rollbackable_window_end_timestamp,
+    fetch_recent_rollbackable_contribs,
     iter_contribs_after_timestamp,
+    fetch_contribs_after_timestamp,
 )
-from toolsdb import get_conn
+
+_REQUEST_TYPE_QUEUE = "queue"
+_REQUEST_TYPE_BATCH = "batch"
+_REQUEST_TYPE_DIFF = "diff"
+
+_REQUEST_STATUS_PENDING_APPROVAL = "pending_approval"
+
+_APPROVAL_REQUIRED_ADMIN = "admin"
+_APPROVAL_REQUIRED_MAINTAINER = "maintainer"
+
+_ENDPOINT_BATCH = "batch"
+_ENDPOINT_FROM_DIFF = "from_diff"
+_ENDPOINT_FROM_ACCOUNT = "from_account"
+
+_ALLOWED_DIFF_REQUEST_ENDPOINTS = frozenset(
+    {_ENDPOINT_FROM_DIFF, _ENDPOINT_FROM_ACCOUNT}
+)
+_ALLOWED_REQUEST_TYPES = frozenset(
+    {_REQUEST_TYPE_QUEUE, _REQUEST_TYPE_BATCH, _REQUEST_TYPE_DIFF}
+)
 
 
 def create_rollback_jobs_from_diff(
@@ -130,8 +148,12 @@ def resolve_diff_rollback_job_impl(job_id: int):
     summary = payload.get("summary") or ""
     diff = payload.get("diff")
     limit = payload.get("limit")
-    requested_endpoint = str(payload.get("requested_endpoint") or _ENDPOINT_FROM_DIFF).strip().lower()
-    approved_endpoint = str(payload.get("approved_endpoint") or requested_endpoint).strip().lower()
+    requested_endpoint = (
+        str(payload.get("requested_endpoint") or _ENDPOINT_FROM_DIFF).strip().lower()
+    )
+    approved_endpoint = (
+        str(payload.get("approved_endpoint") or requested_endpoint).strip().lower()
+    )
 
     if approved_endpoint not in _ALLOWED_DIFF_REQUEST_ENDPOINTS:
         approved_endpoint = _ENDPOINT_FROM_DIFF
@@ -153,7 +175,9 @@ def resolve_diff_rollback_job_impl(job_id: int):
             oldid = _extract_oldid(diff)
             _update_diff_payload(job_id, {"oldid": oldid})
 
-            diff_metadata = fetch_diff_author_and_timestamp(oldid, debug_callback=_debug)
+            diff_metadata = fetch_diff_author_and_timestamp(
+                oldid, debug_callback=_debug
+            )
             target_user = target_user or diff_metadata["user"]
             start_timestamp = diff_metadata["timestamp"]
 
@@ -195,7 +219,10 @@ def resolve_diff_rollback_job_impl(job_id: int):
 
                 batch_id = row[0] or int(time.time() * 1000)
 
-                cursor.execute("DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,))
+                # Clear any stale items from previous failed attempts.
+                cursor.execute(
+                    "DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,)
+                )
 
                 def _persist_chunk(chunk_items, target_job_id):
                     for item in chunk_items:
@@ -222,7 +249,13 @@ def resolve_diff_rollback_job_impl(job_id: int):
                             SET status=%s, dry_run=%s, requested_by=%s, batch_id=%s
                             WHERE id=%s
                             """,
-                            ("staging", 1 if dry_run else 0, requested_by, batch_id, job_id),
+                            (
+                                "staging",
+                                1 if dry_run else 0,
+                                requested_by,
+                                batch_id,
+                                job_id,
+                            ),
                         )
                         return job_id
 
@@ -257,6 +290,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                     )
                     chunk_job_id = cursor.lastrowid
 
+                    # Keep the same diff/query context on every chunk job.
                     _store_diff_payload(
                         chunk_job_id,
                         {
@@ -279,13 +313,17 @@ def resolve_diff_rollback_job_impl(job_id: int):
                 if approved_endpoint == _ENDPOINT_FROM_ACCOUNT:
                     effective_limit = parsed_limit or _ACCOUNT_ROLLBACK_MAX_LIMIT
                     if effective_limit > _ACCOUNT_ROLLBACK_MAX_LIMIT:
-                        raise ValueError(f"limit must be <= {_ACCOUNT_ROLLBACK_MAX_LIMIT}")
+                        raise ValueError(
+                            f"limit must be <= {_ACCOUNT_ROLLBACK_MAX_LIMIT}"
+                        )
 
                     query_debug_payload["contribs_query"] = {
                         "action": "query",
                         "list": "usercontribs",
                         "ucuser": target_user,
-                        "uclimit": str(min(_ACCOUNT_ROLLBACK_MAX_LIMIT, int(effective_limit))),
+                        "uclimit": str(
+                            min(_ACCOUNT_ROLLBACK_MAX_LIMIT, int(effective_limit))
+                        ),
                         "ucprop": "ids|title|timestamp",
                         "ucshow": "top",
                         "ucstart": _utc_now_iso(),
@@ -321,15 +359,23 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         pending_chunk = []
                 else:
                     if not start_timestamp:
-                        raise ValueError("Missing diff timestamp for from-diff resolution")
+                        raise ValueError(
+                            "Missing diff timestamp for from-diff resolution"
+                        )
 
-                    first_uclimit = str(min(500, int(parsed_limit))) if parsed_limit is not None else "500"
+                    first_uclimit = (
+                        str(min(500, int(parsed_limit)))
+                        if parsed_limit is not None
+                        else "500"
+                    )
 
-                    rollbackable_end_timestamp = fetch_rollbackable_window_end_timestamp(
-                        target_user,
-                        start_timestamp,
-                        limit=_ROLLBACKABLE_WINDOW_LIMIT,
-                        debug_callback=_debug,
+                    rollbackable_end_timestamp = (
+                        fetch_rollbackable_window_end_timestamp(
+                            target_user,
+                            start_timestamp,
+                            limit=_ROLLBACKABLE_WINDOW_LIMIT,
+                            debug_callback=_debug,
+                        )
                     )
 
                     query_debug_payload["contribs_query"] = {
@@ -344,8 +390,12 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         "ucdir": "newer",
                         "format": "json",
                     }
-                    query_debug_payload["rollbackable_window_limit"] = _ROLLBACKABLE_WINDOW_LIMIT
-                    query_debug_payload["rollbackable_window_end_timestamp"] = rollbackable_end_timestamp
+                    query_debug_payload["rollbackable_window_limit"] = (
+                        _ROLLBACKABLE_WINDOW_LIMIT
+                    )
+                    query_debug_payload["rollbackable_window_end_timestamp"] = (
+                        rollbackable_end_timestamp
+                    )
 
                     _update_diff_payload(
                         job_id,
@@ -381,8 +431,11 @@ def resolve_diff_rollback_job_impl(job_id: int):
                     created_job_ids.append(target_job_id)
 
                 if not created_job_ids:
-                    raise ValueError("No rollbackable contributions found for the approved request")
+                    raise ValueError(
+                        "No rollbackable contributions found for the approved request"
+                    )
 
+                # Move all staged jobs to queued only after full list/chunks are built.
                 for staged_job_id in created_job_ids:
                     cursor.execute(
                         "UPDATE rollback_jobs SET status=%s WHERE id=%s",

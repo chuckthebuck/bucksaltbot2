@@ -9,9 +9,44 @@ the routes return the expected HTTP status codes and response shapes.
 
 from __future__ import annotations
 
+import os
+import requests
 import pytest
 
 pytestmark = pytest.mark.live
+
+_COMMONS_API = "https://commons.wikimedia.org/w/api.php"
+
+
+def _rollbacktest_revid() -> int | None:
+    """Return a recent revision id for User:Chuckbot/rollbacktest.
+
+    Using a dedicated test page avoids selecting anonymous/IP editors from
+    global recent changes.
+    """
+    try:
+        resp = requests.get(
+            _COMMONS_API,
+            params={
+                "action": "query",
+                "prop": "revisions",
+                "titles": "User:Chuckbot/rollbacktest",
+                "rvlimit": "1",
+                "rvprop": "ids",
+                "format": "json",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        pages = resp.json().get("query", {}).get("pages", {})
+        for page in pages.values():
+            revisions = page.get("revisions") or []
+            if revisions and revisions[0].get("revid"):
+                return int(revisions[0]["revid"])
+    except Exception:
+        return None
+
+    return None
 
 
 # ── Public (unauthenticated) endpoints ────────────────────────────────────────
@@ -55,7 +90,6 @@ class TestAuthRequired:
             ("POST", "/api/v1/rollback/jobs", {"requested_by": "x", "items": []}),
             ("GET", "/api/v1/rollback/jobs/progress?ids=1", None),
             ("POST", "/api/v1/rollback/from-diff", {"diff": "123"}),
-            ("GET", "/rollback-queue", None),
             ("GET", "/rollback-queue/all-jobs", None),
             ("GET", "/rollback_batch", None),
             ("GET", "/rollback-from-diff", None),
@@ -176,11 +210,22 @@ class TestFromDiffInputValidation:
         assert resp.status_code == 400
 
     def test_valid_diff_id_creates_resolving_job(self, admin_client, db_conn):
-        """A syntactically valid diff ID is accepted; the job starts as ``resolving``."""
+        """A valid diff ID is auto-approved in live tests and starts ``resolving``."""
         client, _user = admin_client
+
+        revid = _rollbacktest_revid()
+        if revid is None:
+            pytest.skip("Could not resolve revision id for User:Chuckbot/rollbacktest")
+
         resp = client.post(
             "/api/v1/rollback/from-diff",
-            json={"diff": "1", "dry_run": True},
+            json={
+                "diff": str(revid),
+                "dry_run": True,
+                "summary": (
+                    "LIVE TEST PROBE: validates from-diff request creation and auto-approval"
+                ),
+            },
         )
         assert resp.status_code == 200
         data = resp.get_json()
@@ -189,11 +234,12 @@ class TestFromDiffInputValidation:
 
         # Clean up the created job record.
         job_id = data["job_id"]
+        if os.environ.get("LIVE_TEST_KEEP_JOBS"):
+            return
+
         try:
             with db_conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,)
-                )
+                cur.execute("DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,))
                 cur.execute("DELETE FROM rollback_jobs WHERE id=%s", (job_id,))
             db_conn.commit()
         except Exception:

@@ -7,6 +7,21 @@ import {
   fetchJobDetails,
   type AllJobsRow as ApiAllJobsRow,
 } from "./api";
+import UnifiedTable from "./components/UnifiedTable.vue";
+import {
+  actionColumn,
+  type TableColumn,
+} from "./components/unifiedTable";
+import {
+  buttonCell,
+  dryRunModeColumn,
+  linkCell,
+  modeLabel,
+  progressPercent,
+  progressSummary,
+  statusTagColumn,
+  textColumn,
+} from "./components/tableColumnFactories";
 
 const pageProps = JSON.parse(
   document.getElementById("all-jobs-props")!.textContent || "{}"
@@ -28,12 +43,6 @@ interface AllJobsRow {
   approvalRequired: string | null;
   approvedBy: string | null;
   approvedAt: string | null;
-  total: number;
-  completed: number;
-  failed: number;
-}
-
-interface ProgressRow {
   total: number;
   completed: number;
   failed: number;
@@ -176,21 +185,6 @@ function onVisibilityChange() {
   }
 }
 
-function progressText(row: ProgressRow): string {
-  const done = (row.completed || 0) + (row.failed || 0);
-  return `${done}/${row.total || 0}`;
-}
-
-function progressPct(row: ProgressRow): number {
-  const done = (row.completed || 0) + (row.failed || 0);
-  return row.total ? Math.round((done / row.total) * 100) : 0;
-}
-
-function modeLabel(dryRun: boolean | null): string {
-  if (dryRun === null) return "Mixed";
-  return dryRun ? "Dry run" : "Live";
-}
-
 function esc(s: unknown): string {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -216,19 +210,6 @@ function summarizeBatchMode(batchJobs: AllJobsRow[]): boolean | null {
 
   if (hasDryRun && hasLive) return null;
   return hasDryRun;
-}
-
-function statusClassName(status: string): string {
-  if (status === "completed") return "cdx-tag--status-success";
-  if (status === "failed") return "cdx-tag--status-error";
-  if (status === "canceled") return "cdx-tag--status-muted";
-  if (ACTIVE_STATUSES.has(status)) return "cdx-tag--status-warning";
-  return "cdx-tag--status-muted";
-}
-
-function modeClassName(dryRun: boolean | null): string {
-  if (dryRun === null) return "cdx-tag--mode-mixed";
-  return dryRun ? "cdx-tag--mode-dry-run" : "cdx-tag--mode-live";
 }
 
 function canApproveRow(row: DisplayRow): boolean {
@@ -270,15 +251,11 @@ async function onApprove(row: DisplayJobRow, endpoint?: string) {
   }
 }
 
-function rowProgressAriaLabel(row: DisplayRow): string {
-  return row.kind === "batch" ? `Batch ${row.batchId} progress` : `Job ${row.id} progress`;
-}
-
 function buildBatchDetails(row: DisplayBatchRow): string {
   const jobsList = row.jobs
     .map(
       (job) =>
-        `<li><b>Job ${job.id}</b>: ${esc(job.status)} (${progressText(job)}) - ` +
+        `<li><b>Job ${job.id}</b>: ${esc(job.status)} (${progressSummary(job)}) - ` +
         `<a href="/api/v1/rollback/jobs/${job.id}" target="_blank" rel="noopener noreferrer">JSON</a> | ` +
         `<a href="/api/v1/rollback/jobs/${job.id}?format=log" target="_blank" rel="noopener noreferrer">Log</a></li>`
     )
@@ -290,7 +267,7 @@ function buildBatchDetails(row: DisplayBatchRow): string {
     <b>Requested by:</b> ${esc(row.requestedBy)}<br>
     <b>Status:</b> ${esc(row.status)}<br>
     <b>Mode:</b> ${esc(modeLabel(row.dryRun))}<br>
-    <b>Progress:</b> ${progressText(row)} (${progressPct(row)}%)<br>
+    <b>Progress:</b> ${progressSummary(row)} (${progressPercent(row)}%)<br>
     <ul>${jobsList}</ul>
   `;
 }
@@ -394,6 +371,110 @@ const displayedRows = computed<DisplayRow[]>(() => {
 
   return rows;
 });
+
+function buildApproveButton(
+  row: DisplayJobRow,
+  text: string,
+  endpoint: string,
+  options?: {
+    action?: "default" | "progressive" | "destructive";
+    weight?: "normal" | "primary" | "quiet";
+  }
+){
+  return buttonCell(
+    CdxButton,
+    pendingApprove.value[row.id] ? "Approving..." : text,
+    () => {
+      void onApprove(row, endpoint);
+    },
+    {
+      key: `${row.id}-${endpoint}`,
+      action: options?.action,
+      weight: options?.weight,
+      disabled: pendingApprove.value[row.id],
+    }
+  );
+}
+
+const tableColumns: TableColumn<DisplayRow>[] = [
+  {
+    key: "id",
+    label: "ID",
+    class: "all-jobs-table__id",
+    render: (row) => linkCell(row.label, "#", {
+      onClick: (event) => {
+        event.preventDefault();
+        void toggle(row);
+      },
+    }),
+  },
+  textColumn("requester", "Requested by", (row) => row.requestedBy),
+  statusTagColumn("status", "Status", (row) => row.status),
+  dryRunModeColumn("mode", "Mode", (row) => row.dryRun),
+  {
+    key: "progress",
+    label: "Progress",
+    render: (row) => `${progressSummary(row)} (${progressPercent(row)}%)`,
+    class: "all-jobs-table__progress",
+  },
+  textColumn("created", "Created", (row) => row.created, { class: "all-jobs-table__created" }),
+  actionColumn("json", "JSON", (row) => {
+    if (row.kind !== "job") return null;
+    return linkCell("JSON", `/api/v1/rollback/jobs/${row.id}`, {
+      target: "_blank",
+      rel: "noopener noreferrer",
+    });
+  }),
+  actionColumn("log", "Log", (row) => {
+    if (row.kind !== "job") return null;
+    return linkCell("Log", `/api/v1/rollback/jobs/${row.id}?format=log`, {
+      target: "_blank",
+      rel: "noopener noreferrer",
+    });
+  }),
+  actionColumn("approve", "Approve", (row) => {
+    if (row.kind !== "job" || !canApproveRow(row)) return null;
+
+    if (row.requestType === "batch") {
+      return buildApproveButton(row, "Approve batch", "batch", {
+        action: "progressive",
+        weight: "primary",
+      });
+    }
+
+    if (row.requestType === "diff") {
+      return buildApproveButton(row, "Approve as diff", "from_diff", {
+        action: "progressive",
+        weight: "primary",
+      });
+    }
+
+    return null;
+  }),
+  actionColumn("approve_account", "Approve acct", (row) => {
+    if (row.kind !== "job" || !canApproveRow(row) || row.requestType !== "diff") {
+      return null;
+    }
+
+    return buildApproveButton(row, "Approve as account", "from_account");
+  }),
+  {
+    key: "group",
+    label: "Group",
+    render: (row) => (row.kind === "batch" ? `${row.jobs.length} jobs` : "-"),
+    class: "all-jobs-table__batch-hint",
+  },
+];
+
+function isExpandedRow(row: unknown): boolean {
+  const key = (row as DisplayRow).rowKey;
+  return Boolean(openRows.value[key]);
+}
+
+function detailsHtml(row: unknown): string {
+  const key = (row as DisplayRow).rowKey;
+  return details.value[key] || "";
+}
 </script>
 
 <template>
@@ -414,102 +495,19 @@ const displayedRows = computed<DisplayRow[]>(() => {
 
     <div v-if="loading" class="all-jobs-table__empty">Loading jobs...</div>
     <div v-else-if="error" class="all-jobs-table__empty">{{ error }}</div>
-    <table v-else class="all-jobs-table">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Requested by</th>
-          <th>Status</th>
-          <th>Mode</th>
-          <th>Progress</th>
-          <th>Created</th>
-          <th>Links</th>
-        </tr>
-      </thead>
-      <tbody>
-        <template v-for="row in displayedRows" :key="row.rowKey">
-          <tr>
-            <td class="all-jobs-table__id"><a href="#" @click.prevent="toggle(row)">{{ row.label }}</a></td>
-            <td>{{ row.requestedBy }}</td>
-            <td>
-              <span class="cdx-tag" :class="statusClassName(row.status)">
-                {{ row.status }}
-              </span>
-            </td>
-            <td>
-              <span class="cdx-tag" :class="modeClassName(row.dryRun)">
-                {{ modeLabel(row.dryRun) }}
-              </span>
-            </td>
-            <td>
-              <div class="job-progress-track" :aria-label="rowProgressAriaLabel(row)">
-                <div class="job-progress-fill" :style="{ width: `${progressPct(row)}%` }"></div>
-              </div>
-              <div class="job-progress-text">
-                <span>{{ progressText(row) }}</span>
-                <span>{{ progressPct(row) }}%</span>
-              </div>
-            </td>
-            <td class="all-jobs-table__created">{{ row.created }}</td>
-            <td class="all-jobs-table__links">
-              <template v-if="row.kind === 'job'">
-                <a :href="`/api/v1/rollback/jobs/${row.id}`" target="_blank" rel="noopener noreferrer">JSON</a>
-                <span aria-hidden="true"> | </span>
-                <a :href="`/api/v1/rollback/jobs/${row.id}?format=log`" target="_blank" rel="noopener noreferrer">Log</a>
-
-                <template v-if="canApproveRow(row)">
-                  <div class="all-jobs-table__actions">
-                    <CdxButton
-                      v-if="row.requestType === 'batch'"
-                      action="progressive"
-                      weight="primary"
-                      size="small"
-                      :disabled="pendingApprove[row.id]"
-                      @click="onApprove(row, 'batch')"
-                    >
-                      {{ pendingApprove[row.id] ? 'Approving...' : 'Approve batch' }}
-                    </CdxButton>
-
-                    <template v-else-if="row.requestType === 'diff'">
-                      <CdxButton
-                        action="progressive"
-                        weight="primary"
-                        size="small"
-                        :disabled="pendingApprove[row.id]"
-                        @click="onApprove(row, 'from_diff')"
-                      >
-                        {{ pendingApprove[row.id] ? 'Approving...' : 'Approve as diff' }}
-                      </CdxButton>
-
-                      <CdxButton
-                        action="default"
-                        weight="quiet"
-                        size="small"
-                        :disabled="pendingApprove[row.id]"
-                        @click="onApprove(row, 'from_account')"
-                      >
-                        Approve as account
-                      </CdxButton>
-                    </template>
-                  </div>
-                </template>
-              </template>
-              <template v-else>
-                <span class="all-jobs-table__batch-hint">{{ row.jobs.length }} jobs</span>
-              </template>
-            </td>
-          </tr>
-          <tr v-if="openRows[row.rowKey]">
-            <td colspan="7">
-              <div class="job-details" style="display:block" v-html="details[row.rowKey]"></div>
-            </td>
-          </tr>
-        </template>
-        <tr v-if="!displayedRows.length">
-          <td colspan="7" class="all-jobs-table__empty">No jobs found.</td>
-        </tr>
-      </tbody>
-    </table>
+    <UnifiedTable
+      v-else
+      :rows="displayedRows"
+      :columns="tableColumns"
+      row-key="rowKey"
+      table-class="all-jobs-table"
+      empty-text="No jobs found."
+      :expanded="isExpandedRow"
+    >
+      <template #expanded="{ row }">
+        <div class="job-details" style="display:block" v-html="detailsHtml(row)"></div>
+      </template>
+    </UnifiedTable>
   </div>
 </template>
 
@@ -583,15 +581,8 @@ const displayedRows = computed<DisplayRow[]>(() => {
   font-variant-numeric: tabular-nums;
 }
 
-.all-jobs-table__links {
+.all-jobs-table__progress {
   white-space: nowrap;
-}
-
-.all-jobs-table__actions {
-  margin-top: 8px;
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
 }
 
 .all-jobs-table__batch-hint {
@@ -659,25 +650,7 @@ const displayedRows = computed<DisplayRow[]>(() => {
   color: var(--color-subtle, #54595d);
 }
 
-.job-progress-track {
-  width: 180px;
-  height: 10px;
-  border-radius: 9999px;
-  background: var(--background-color-neutral, #eaecf0);
-  border: 1px solid var(--border-color-subtle, #c8ccd1);
-  overflow: hidden;
-}
-
-.job-progress-fill {
-  height: 100%;
-  background: var(--color-progressive, #36c);
-}
-
-.job-progress-text {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 4px;
-  font-size: 0.8125rem;
+:deep(.all-jobs-table td) {
+  white-space: nowrap;
 }
 </style>
