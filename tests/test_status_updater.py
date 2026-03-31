@@ -299,6 +299,23 @@ def test_update_wiki_status_swallows_exceptions(monkeypatch):
         status_updater.update_wiki_status("Idle")
 
 
+def test_update_wiki_status_uses_provided_site_without_reauth(monkeypatch):
+    import status_updater
+
+    monkeypatch.setenv("NOTDEV", "1")
+
+    mock_page = MagicMock()
+    provided_site = MagicMock()
+
+    with (
+        patch("status_updater.pywikibot.Page", return_value=mock_page),
+        patch("status_updater._get_authenticated_site") as mock_get_site,
+    ):
+        status_updater.update_wiki_status("Idle", site=provided_site)
+
+    mock_get_site.assert_not_called()
+
+
 # ── notify_maintainers ────────────────────────────────────────────────────────
 
 

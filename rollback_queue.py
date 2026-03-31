@@ -256,6 +256,7 @@ def _bot_site() -> pywikibot.Site:
 
 @shared_task(ignore_result=True)
 def process_rollback_job(job_id: int):
+    site = None
     try:
         job = _fetch_job_meta(job_id)
 
@@ -275,7 +276,6 @@ def process_rollback_job(job_id: int):
             {"status": "running", "total": total_items, "completed": 0, "failed": 0},
         )
 
-        site = None
         if not dry_run:
             site = _bot_site()
 
@@ -304,6 +304,7 @@ def process_rollback_job(job_id: int):
 
         status_updater.update_wiki_status(
             editing="Actively editing",
+            site=site,
             current_job=f"Processing batch {batch_id} (job {job_id})",
             details=f"{total_items} items queued",
             warning=warning_text,
@@ -428,6 +429,7 @@ def process_rollback_job(job_id: int):
 
         status_updater.update_wiki_status(
             editing="Idle",
+            site=site,
             last_job=(
                 f"Failed batch {batch_id} (job {job_id})"
                 if final_status == "failed"
@@ -470,6 +472,7 @@ def process_rollback_job(job_id: int):
 
         status_updater.update_wiki_status(
             editing="Error",
+            site=site,
             details=error_text[:200],
         )
 

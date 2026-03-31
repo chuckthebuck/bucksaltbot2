@@ -8,6 +8,7 @@ development environments never accidentally touch the live wiki.
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -36,6 +37,10 @@ else:
     pywikibot = _pywikibot
 
 _PYWIKIBOT_AVAILABLE = bool(_pywikibot)
+
+
+def _log_status_debug(message: str) -> None:
+    print(f"[status_updater] {message}", file=sys.stderr)
 
 
 # ── Page titles ───────────────────────────────────────────────────────────────
@@ -82,8 +87,16 @@ def _get_authenticated_site() -> Any:
 def _is_live() -> bool:
     """Return True when running in production (``NOTDEV`` is set)."""
     if os.environ.get("LIVE_TEST_DISABLE_STATUS_UPDATES"):
+        _log_status_debug(
+            "status updates disabled by LIVE_TEST_DISABLE_STATUS_UPDATES"
+        )
         return False
-    return bool(os.environ.get("NOTDEV"))
+
+    if not os.environ.get("NOTDEV"):
+        _log_status_debug("status updates skipped because NOTDEV is not set")
+        return False
+
+    return True
 
 
 def _save_status_subpage(site: Any, key: str, text: str) -> None:
@@ -173,6 +186,7 @@ def update_wiki_status(
     editing: str,
     web: str = "Online",
     *,
+    site: Any = None,
     last_edit: str | None = None,
     current_job: str | None = None,
     last_job: str | None = None,
@@ -184,9 +198,9 @@ def update_wiki_status(
         return
 
     try:
-        site = _get_authenticated_site()
+        active_site = site or _get_authenticated_site()
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        resolved_last_edit = last_edit or get_last_bot_edit(site)
+        resolved_last_edit = last_edit or get_last_bot_edit(active_site)
 
         fields = {
             "editing": editing,
@@ -201,9 +215,9 @@ def update_wiki_status(
         }
 
         for key, value in fields.items():
-            _save_status_subpage(site, key, value)
-    except Exception:  # noqa: BLE001
-        pass
+            _save_status_subpage(active_site, key, value)
+    except Exception as exc:  # noqa: BLE001
+        _log_status_debug(f"update_wiki_status failed: {exc!r}")
 
 
 def run_status_cron_update() -> None:
@@ -248,7 +262,9 @@ def notify_maintainers(
                 botflag=True,
             )
         except Exception:  # noqa: BLE001
-            pass
+            _log_status_debug(
+                f"notify_maintainers failed for {username}: {sys.exc_info()[1]!r}"
+            )
 
 
 def notify_bot_user(
@@ -283,8 +299,8 @@ def notify_bot_user(
             minor=False,
             botflag=True,
         )
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        _log_status_debug(f"notify_bot_user failed for {username}: {exc!r}")
 
 
 if __name__ == "__main__":

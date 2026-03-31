@@ -15,16 +15,15 @@ def _desired_user_config(bot_username: str) -> str:
         "family = 'commons'\n"
         "mylang = 'commons'\n"
         f"usernames['commons']['commons'] = '{bot_username}'\n\n"
-        "consumer_key = os.getenv('CONSUMER_TOKEN')\n"
-        "consumer_secret = os.getenv('CONSUMER_SECRET')\n"
-        "access_token = os.getenv('ACCESS_TOKEN')\n"
-        "access_secret = os.getenv('ACCESS_SECRET')\n\n"
-        "if all([consumer_key, consumer_secret, access_token, access_secret]):\n"
+        "if all(\n"
+        "    os.getenv(name)\n"
+        "    for name in ('CONSUMER_TOKEN', 'CONSUMER_SECRET', 'ACCESS_TOKEN', 'ACCESS_SECRET')\n"
+        "):\n"
         "    authenticate['commons.wikimedia.org'] = (\n"
-        "        consumer_key,\n"
-        "        consumer_secret,\n"
-        "        access_token,\n"
-        "        access_secret,\n"
+        "        os.getenv('CONSUMER_TOKEN'),\n"
+        "        os.getenv('CONSUMER_SECRET'),\n"
+        "        os.getenv('ACCESS_TOKEN'),\n"
+        "        os.getenv('ACCESS_SECRET'),\n"
         "    )\n"
     )
 
@@ -75,6 +74,15 @@ def ensure_pywikibot_env(
         else:
             current = config_file.read_text(encoding="utf-8")
             has_auth = "authenticate['commons.wikimedia.org']" in current
+            has_legacy_oauth_vars = any(
+                marker in current
+                for marker in (
+                    "consumer_key = os.getenv",
+                    "consumer_secret = os.getenv",
+                    "access_token = os.getenv",
+                    "access_secret = os.getenv",
+                )
+            )
             minimal_legacy = (
                 "family = 'commons'" in current
                 and "mylang = 'commons'" in current
@@ -82,7 +90,7 @@ def ensure_pywikibot_env(
                 and "consumer_key = os.getenv" not in current
             )
 
-            if minimal_legacy and not has_auth:
+            if has_legacy_oauth_vars or (minimal_legacy and not has_auth):
                 config_file.write_text(desired, encoding="utf-8")
 
         return pywikibot_home
