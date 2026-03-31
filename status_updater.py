@@ -106,40 +106,15 @@ def _setup_pywikibot_dir() -> None:
         )
 
 
-def _get_authenticated_site() -> pywikibot.Site:
-    """Create and authenticate a Pywikibot Site using OAuth env vars.
+# ── Database initialization and access ─────────────────────────────────────
 
-    Returns:
-        An authenticated pywikibot.Site object for Commons.
-    """
-    # Ensure Pywikibot config is in the right place
+def _get_authenticated_site() -> pywikibot.Site:
     _setup_pywikibot_dir()
 
-    # Get OAuth credentials from environment
-    consumer_key = os.getenv("CONSUMER_TOKEN") or os.getenv("OAUTH_CONSUMER_KEY")
-    consumer_secret = os.getenv("CONSUMER_SECRET") or os.getenv("OAUTH_CONSUMER_SECRET")
-    access_token = os.getenv("ACCESS_TOKEN") or os.getenv("OAUTH_ACCESS_TOKEN")
-    access_secret = os.getenv("ACCESS_SECRET") or os.getenv("OAUTH_ACCESS_SECRET")
-
-    # Create site object
     site = pywikibot.Site("commons", "commons")
-
-    # Attempt OAuth login if credentials are available
-    if all([consumer_key, consumer_secret, access_token, access_secret]):
-        try:
-            site.login(
-                oauth_token=(consumer_key, consumer_secret, access_token, access_secret)
-            )
-        except Exception as e:
-            # Fall back to config-based auth if OAuth fails
-            try:
-                site.login()
-            except Exception:
-                # If all else fails, continue without authentication
-                pass
+    site.login()  
 
     return site
-
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
