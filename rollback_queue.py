@@ -16,6 +16,25 @@ import pywikibot
 _ROLLBACK_NOOP_CODES = frozenset({"alreadyrolled", "onlyauthor"})
 
 
+def _format_exception(exc: Exception) -> str:
+    """Return a useful non-empty error string for storage and logs."""
+    text = str(exc).strip()
+    if text:
+        return text
+
+    args = getattr(exc, "args", ())
+    if args:
+        joined = ", ".join(str(a) for a in args if str(a).strip())
+        if joined:
+            return f"{exc.__class__.__name__}: {joined}"
+
+    rendered = repr(exc).strip()
+    if rendered and rendered != f"{exc.__class__.__name__}()":
+        return f"{exc.__class__.__name__}: {rendered}"
+
+    return exc.__class__.__name__
+
+
 def _summary_with_requester(summary: str | None, requested_by: str) -> str:
     """Append requester attribution to rollback summary when missing."""
     requester_tag = f"requested-by={requested_by}"
@@ -222,9 +241,14 @@ def _bot_site() -> pywikibot.Site:
     # Authenticate with OAuth
     try:
         site.login()
-        print("Logged in as:", site.user())
+        logged_user = site.user()
+        if not logged_user:
+            raise RuntimeError(
+                "Login did not establish an authenticated user session"
+            )
+        print("Logged in as:", logged_user)
     except Exception as e:
-        print(f"OAuth login failed: {e}")
+        print(f"OAuth login failed: {_format_exception(e)}")
         raise
 
     return site
@@ -368,7 +392,7 @@ def process_rollback_job(job_id: int):
                     notified_bots[target_user] = notified_bots.get(target_user, 0) + 1
 
             except Exception as exc:  # noqa: BLE001
-                err_str = str(exc)
+                err_str = _format_exception(exc)
                 if any(code in err_str for code in _ROLLBACK_NOOP_CODES):
                     # Page is already in the desired state – not a real failure.
                     _update_item(item_id, "completed", err_str)
@@ -417,7 +441,7 @@ def process_rollback_job(job_id: int):
         )
 
     except Exception as exc:
-        error_text = str(exc)
+        error_text = _format_exception(exc)
         with get_conn() as conn:
             with conn.cursor() as cursor:
                 # Mark any in-flight or pending items failed with the task-level error.
@@ -446,7 +470,7 @@ def process_rollback_job(job_id: int):
 
         status_updater.update_wiki_status(
             editing="Error",
-            details=str(exc)[:200],
+            details=error_text[:200],
         )
 
         raise

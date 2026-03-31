@@ -8,6 +8,27 @@ from pathlib import Path
 _DEFAULT_BOT_USERNAME = "Chuckbot"
 
 
+def _desired_user_config(bot_username: str) -> str:
+    """Return a minimal but OAuth-capable Pywikibot user-config.py."""
+    return (
+        "import os\n\n"
+        "family = 'commons'\n"
+        "mylang = 'commons'\n"
+        f"usernames['commons']['commons'] = '{bot_username}'\n\n"
+        "consumer_key = os.getenv('CONSUMER_TOKEN')\n"
+        "consumer_secret = os.getenv('CONSUMER_SECRET')\n"
+        "access_token = os.getenv('ACCESS_TOKEN')\n"
+        "access_secret = os.getenv('ACCESS_SECRET')\n\n"
+        "if all([consumer_key, consumer_secret, access_token, access_secret]):\n"
+        "    authenticate['commons.wikimedia.org'] = (\n"
+        "        consumer_key,\n"
+        "        consumer_secret,\n"
+        "        access_token,\n"
+        "        access_secret,\n"
+        "    )\n"
+    )
+
+
 def resolve_pywikibot_dir() -> Path:
     """Return a writable directory for Pywikibot config files."""
     candidates: list[Path] = []
@@ -47,13 +68,22 @@ def ensure_pywikibot_env(
         os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
 
         config_file = pywikibot_home / "user-config.py"
+        desired = _desired_user_config(bot_username)
+
         if not config_file.exists():
-            config_file.write_text(
-                "family = 'commons'\n"
-                "mylang = 'commons'\n"
-                f"usernames['commons']['commons'] = '{bot_username}'\n",
-                encoding="utf-8",
+            config_file.write_text(desired, encoding="utf-8")
+        else:
+            current = config_file.read_text(encoding="utf-8")
+            has_auth = "authenticate['commons.wikimedia.org']" in current
+            minimal_legacy = (
+                "family = 'commons'" in current
+                and "mylang = 'commons'" in current
+                and "usernames['commons']['commons']" in current
+                and "consumer_key = os.getenv" not in current
             )
+
+            if minimal_legacy and not has_auth:
+                config_file.write_text(desired, encoding="utf-8")
 
         return pywikibot_home
     except Exception:

@@ -35,7 +35,7 @@ if _pywikibot is None:
 else:
     pywikibot = _pywikibot
 
-_PYWIKIBOT_READY = bool(_pywikibot) and _PYWIKIBOT_DIR_READY
+_PYWIKIBOT_AVAILABLE = bool(_pywikibot)
 
 
 # ── Page titles ───────────────────────────────────────────────────────────────
@@ -65,6 +65,9 @@ _NOTIFIED_BATCH_TTL = 7 * 24 * 3600  # 7 days
 # ── Database initialization and access ─────────────────────────────────────
 
 def _get_authenticated_site() -> Any:
+    if not _PYWIKIBOT_AVAILABLE:
+        raise RuntimeError("pywikibot is unavailable in this runtime")
+
     if ensure_pywikibot_env(strict=False) is None:
         raise RuntimeError("Unable to initialize PYWIKIBOT_DIR")
 
@@ -80,7 +83,7 @@ def _is_live() -> bool:
     """Return True when running in production (``NOTDEV`` is set)."""
     if os.environ.get("LIVE_TEST_DISABLE_STATUS_UPDATES"):
         return False
-    return bool(os.environ.get("NOTDEV")) and _PYWIKIBOT_READY
+    return bool(os.environ.get("NOTDEV"))
 
 
 def _save_status_subpage(site: Any, key: str, text: str) -> None:
