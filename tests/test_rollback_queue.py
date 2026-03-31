@@ -470,5 +470,5 @@ def test_bot_site_logs_in_using_pywikibot_oauth(monkeypatch):
         returned = rollback_queue._bot_site()
 
     mock_site_cls.assert_called_once_with("commons", "commons")
-    mock_site.login.assert_called_once_with(oauth_token=("ct", "cs", "at", "as"))
+    mock_site.login.assert_called_once_with()
     assert returned is mock_site

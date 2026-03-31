@@ -221,14 +221,7 @@ def _bot_site() -> pywikibot.Site:
 
     # Authenticate with OAuth
     try:
-        site.login(
-            oauth_token=(
-                consumer_token,
-                consumer_secret,
-                access_token,
-                access_secret,
-            )
-        )
+        site.login()
         print("Logged in as:", site.user())
     except Exception as e:
         print(f"OAuth login failed: {e}")
