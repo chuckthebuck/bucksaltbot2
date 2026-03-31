@@ -233,7 +233,7 @@ def live_wiki_edit(bot_site):
         page.save(
             summary="Chuckbot rollback test: initialise test page",
             minor=True,
-            botflag=True,
+            bot=True,
         )
 
     # Make the test edit: append a uniquely-tagged section so we can confirm
@@ -243,7 +243,7 @@ def live_wiki_edit(bot_site):
     page.save(
         summary=f"Chuckbot rollback test: adding marker {test_marker}",
         minor=False,
-        botflag=True,
+        bot=True,
     )
 
     yield _ROLLBACK_TEST_PAGE, bot_username, original_text, test_marker
@@ -256,7 +256,7 @@ def live_wiki_edit(bot_site):
         page.save(
             summary=f"Chuckbot rollback test: restoring page after marker {test_marker}",
             minor=True,
-            botflag=True,
+            bot=True,
         )
 
 
@@ -297,7 +297,7 @@ def noop_rollback_page(bot_site):
         page.save(
             summary="Chuckbot: create no-op rollback test page",
             minor=True,
-            botflag=True,
+            bot=True,
         )
 
     yield _NOOP_ROLLBACK_TEST_PAGE, bot_username

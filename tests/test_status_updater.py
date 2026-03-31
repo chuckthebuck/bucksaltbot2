@@ -230,7 +230,7 @@ def test_update_wiki_status_saves_page_when_live(monkeypatch):
     # Verify each call has the right parameters
     for call in mock_page.save.call_args_list:
         assert call.kwargs.get("minor") is True
-        assert call.kwargs.get("botflag") is True
+        assert call.kwargs.get("bot") is True
 
 
 def test_update_wiki_status_includes_warning_when_provided(monkeypatch):

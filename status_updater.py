@@ -103,7 +103,7 @@ def _save_status_subpage(site: Any, key: str, text: str) -> None:
     """Write a status field to its dedicated subpage."""
     page = pywikibot.Page(site, STATUS_SUBPAGES[key])
     page.text = text
-    page.save(summary="Updating Chuckbot status", minor=True, botflag=True)
+    page.save(summary="Updating Chuckbot status", minor=True, bot=True)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -259,7 +259,7 @@ def notify_maintainers(
             talk.save(
                 summary=f"Chuckbot large job notification (batch {batch_id})",
                 minor=False,
-                botflag=True,
+                bot=True,
             )
         except Exception:  # noqa: BLE001
             _log_status_debug(
@@ -297,7 +297,7 @@ def notify_bot_user(
         talk.save(
             summary=f"Notification: edits rolled back (batch {batch_id})",
             minor=False,
-            botflag=True,
+            bot=True,
         )
     except Exception as exc:  # noqa: BLE001
         _log_status_debug(f"notify_bot_user failed for {username}: {exc!r}")
