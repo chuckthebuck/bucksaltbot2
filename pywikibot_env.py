@@ -74,23 +74,29 @@ def ensure_pywikibot_env(
         else:
             current = config_file.read_text(encoding="utf-8")
             has_auth = "authenticate['commons.wikimedia.org']" in current
+            # Detect legacy OAuth variables - any assignment style, not just os.getenv
             has_legacy_oauth_vars = any(
                 marker in current
                 for marker in (
-                    "consumer_key = os.getenv",
-                    "consumer_secret = os.getenv",
-                    "access_token = os.getenv",
-                    "access_secret = os.getenv",
+                    "consumer_key",
+                    "consumer_secret",
+                    "access_token",
+                    "access_secret",
                 )
             )
-            minimal_legacy = (
-                "family = 'commons'" in current
-                and "mylang = 'commons'" in current
-                and "usernames['commons']['commons']" in current
-                and "consumer_key = os.getenv" not in current
+            # Check desired config is minimal and complete
+            has_all_desired_keys = all(
+                key in current
+                for key in (
+                    "family = 'commons'",
+                    "mylang = 'commons'",
+                    "usernames['commons']['commons']",
+                    "authenticate['commons.wikimedia.org']",
+                )
             )
 
-            if has_legacy_oauth_vars or (minimal_legacy and not has_auth):
+            # Rewrite if: legacy vars present, OR auth incomplete, OR config is too old
+            if has_legacy_oauth_vars or not has_all_desired_keys:
                 config_file.write_text(desired, encoding="utf-8")
 
         return pywikibot_home
