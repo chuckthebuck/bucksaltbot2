@@ -8,59 +8,34 @@ development environments never accidentally touch the live wiki.
 from __future__ import annotations
 
 import os
-import pywikibot
-
-
-import os
 from datetime import datetime, timezone
-from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from pywikibot_env import ensure_pywikibot_env
 from redis_state import r as _redis
 
 
-def _resolve_pywikibot_dir() -> Path:
-    """Return a writable directory for Pywikibot config files."""
-    candidates: list[Path] = []
-
-    env_dir = os.environ.get("PYWIKIBOT_DIR")
-    if env_dir:
-        candidates.append(Path(env_dir))
-
-    home = os.environ.get("HOME")
-    if home and home != "/":
-        candidates.append(Path(home) / ".pywikibot")
-
-    candidates.append(Path("/workspace") / ".pywikibot")
-    candidates.append(Path("/tmp") / f".pywikibot-{os.getuid()}")
-
-    for candidate in candidates:
-        try:
-            candidate.mkdir(parents=True, exist_ok=True)
-            return candidate
-        except OSError:
-            continue
-
-    raise RuntimeError("No writable directory available for PYWIKIBOT_DIR")
+def _pywikibot_unavailable(*args, **kwargs):
+    raise RuntimeError("pywikibot is unavailable in this runtime")
 
 
-def _bootstrap_pywikibot_env() -> None:
-    """Set PYWIKIBOT_DIR before importing pywikibot.
+_PYWIKIBOT_DIR_READY = ensure_pywikibot_env(strict=False) is not None
 
-    Pywikibot reads config paths during import. On Toolforge, defaulting to
-    /workspace can trigger ownership warnings, so force a safe home path first.
-    """
-    pywikibot_home = _resolve_pywikibot_dir()
-    os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
+try:
+    import pywikibot as _pywikibot  # type: ignore[import-not-found]
+except Exception:  # noqa: BLE001
+    _pywikibot = None
 
-    config_file = pywikibot_home / "user-config.py"
-    if not config_file.exists():
-        config_file.write_text(
-            "family = 'commons'\n"
-            "mylang = 'commons'\n"
-            "usernames['commons']['commons'] = 'Chuckbot'\n"
-        )
+if _pywikibot is None:
+    pywikibot = SimpleNamespace(
+        Site=_pywikibot_unavailable,
+        Page=_pywikibot_unavailable,
+        User=_pywikibot_unavailable,
+    )
+else:
+    pywikibot = _pywikibot
 
-
-_bootstrap_pywikibot_env()
+_PYWIKIBOT_READY = bool(_pywikibot) and _PYWIKIBOT_DIR_READY
 
 
 # ── Page titles ───────────────────────────────────────────────────────────────
@@ -87,29 +62,11 @@ _NOTIFIED_BATCH_TTL = 7 * 24 * 3600  # 7 days
 # ── Pywikibot OAuth configuration ─────────────────────────────────────────
 
 
-def _setup_pywikibot_dir() -> None:
-    """Configure Pywikibot to use ~/.pywikibot for config files.
-
-    This ensures Pywikibot uses the home directory instead of /workspace,
-    which avoids file ownership issues on Toolforge.
-    """
-    pywikibot_home = _resolve_pywikibot_dir()
-    os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
-
-    # Create minimal config if it doesn't exist
-    config_file = pywikibot_home / "user-config.py"
-    if not config_file.exists():
-        config_file.write_text(
-            "family = 'commons'\n"
-            "mylang = 'commons'\n"
-            "usernames['commons']['commons'] = 'Chuckbot'\n"
-        )
-
-
 # ── Database initialization and access ─────────────────────────────────────
 
-def _get_authenticated_site() -> pywikibot.Site:
-    _setup_pywikibot_dir()
+def _get_authenticated_site() -> Any:
+    if ensure_pywikibot_env(strict=False) is None:
+        raise RuntimeError("Unable to initialize PYWIKIBOT_DIR")
 
     site = pywikibot.Site("commons", "commons")
     site.login()  
@@ -123,10 +80,10 @@ def _is_live() -> bool:
     """Return True when running in production (``NOTDEV`` is set)."""
     if os.environ.get("LIVE_TEST_DISABLE_STATUS_UPDATES"):
         return False
-    return bool(os.environ.get("NOTDEV"))
+    return bool(os.environ.get("NOTDEV")) and _PYWIKIBOT_READY
 
 
-def _save_status_subpage(site: pywikibot.Site, key: str, text: str) -> None:
+def _save_status_subpage(site: Any, key: str, text: str) -> None:
     """Write a status field to its dedicated subpage."""
     page = pywikibot.Page(site, STATUS_SUBPAGES[key])
     page.text = text
@@ -161,7 +118,7 @@ def mark_batch_notified(batch_id: int) -> None:
         pass
 
 
-def get_notify_list(site: pywikibot.Site) -> list[str]:
+def get_notify_list(site: Any) -> list[str]:
     """Read the list of users to notify from ``NOTIFY_PAGE`` on the wiki.
 
     The page is expected to contain ``[[User:Username]]`` wikilinks, one per
@@ -181,7 +138,7 @@ def get_notify_list(site: pywikibot.Site) -> list[str]:
         return []
 
 
-def is_flagged_bot(site: pywikibot.Site, username: str) -> bool:
+def is_flagged_bot(site: Any, username: str) -> bool:
     """Return True if *username* has the ``bot`` user group on *site*."""
     try:
         return "bot" in pywikibot.User(site, username).groups()
@@ -190,7 +147,7 @@ def is_flagged_bot(site: pywikibot.Site, username: str) -> bool:
 
 
 def get_last_bot_edit(
-    site: pywikibot.Site | None = None,
+    site: Any = None,
     username: str | None = None,
 ) -> str:
     """Return the timestamp of the bot's most recent edit, or ``'Unknown'``."""
@@ -258,7 +215,7 @@ def run_status_cron_update() -> None:
 def notify_maintainers(
     batch_id: int,
     users: list[str],
-    site: pywikibot.Site | None = None,
+    site: Any = None,
 ) -> None:
     """Post a talk-page notice to each user in *users* for a large job.
 
@@ -292,7 +249,7 @@ def notify_maintainers(
 
 
 def notify_bot_user(
-    site: pywikibot.Site,
+    site: Any,
     username: str,
     batch_id: int,
     edit_count: int | None = None,

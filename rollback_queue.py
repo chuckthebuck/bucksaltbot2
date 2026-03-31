@@ -1,51 +1,12 @@
 import os
-from pathlib import Path
 from celery import shared_task
+from pywikibot_env import ensure_pywikibot_env
 from redis_state import set_progress, update_progress
 from toolsdb import get_conn
 import status_updater
 
 
-def _resolve_pywikibot_dir() -> Path:
-    """Return a writable directory for Pywikibot config files."""
-    candidates: list[Path] = []
-
-    env_dir = os.environ.get("PYWIKIBOT_DIR")
-    if env_dir:
-        candidates.append(Path(env_dir))
-
-    home = os.environ.get("HOME")
-    if home and home != "/":
-        candidates.append(Path(home) / ".pywikibot")
-
-    candidates.append(Path("/workspace") / ".pywikibot")
-    candidates.append(Path("/tmp") / f".pywikibot-{os.getuid()}")
-
-    for candidate in candidates:
-        try:
-            candidate.mkdir(parents=True, exist_ok=True)
-            return candidate
-        except OSError:
-            continue
-
-    raise RuntimeError("No writable directory available for PYWIKIBOT_DIR")
-
-
-def _bootstrap_pywikibot_env() -> None:
-    """Set PYWIKIBOT_DIR before importing pywikibot."""
-    pywikibot_home = _resolve_pywikibot_dir()
-    os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
-
-    config_file = pywikibot_home / "user-config.py"
-    if not config_file.exists():
-        config_file.write_text(
-            "family = 'commons'\n"
-            "mylang = 'commons'\n"
-            "usernames['commons']['commons'] = 'Chuckbot'\n"
-        )
-
-
-_bootstrap_pywikibot_env()
+ensure_pywikibot_env(strict=True)
 
 import pywikibot
 
@@ -242,24 +203,9 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
             conn.commit()
 
 
-def _setup_pywikibot_dir() -> None:
-    """Configure Pywikibot to use ~/.pywikibot for config files."""
-    pywikibot_home = _resolve_pywikibot_dir()
-    os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
-
-    # Create minimal config if it doesn't exist
-    config_file = pywikibot_home / "user-config.py"
-    if not config_file.exists():
-        config_file.write_text(
-            "family = 'commons'\n"
-            "mylang = 'commons'\n"
-            "usernames['commons']['commons'] = 'Chuckbot'\n"
-        )
-
-
 def _bot_site() -> pywikibot.Site:
     """Create and authenticate a Pywikibot Site using OAuth env vars."""
-    _setup_pywikibot_dir()
+    ensure_pywikibot_env(strict=True)
 
     consumer_token = os.environ.get("CONSUMER_TOKEN")
     consumer_secret = os.environ.get("CONSUMER_SECRET")
@@ -275,7 +221,14 @@ def _bot_site() -> pywikibot.Site:
 
     # Authenticate with OAuth
     try:
-        site.login()
+        site.login(
+            oauth_token=(
+                consumer_token,
+                consumer_secret,
+                access_token,
+                access_secret,
+            )
+        )
         print("Logged in as:", site.user())
     except Exception as e:
         print(f"OAuth login failed: {e}")
@@ -318,7 +271,7 @@ def process_rollback_job(job_id: int):
         notify_users: list[str] = []
         if large:
             if site is None:
-                _setup_pywikibot_dir()
+                ensure_pywikibot_env(strict=True)
             _notify_site = site or pywikibot.Site("commons", "commons")
             notify_users = status_updater.get_notify_list(_notify_site)
 
@@ -342,7 +295,7 @@ def process_rollback_job(job_id: int):
         # Notify maintainers once per large batch.
         if large and not status_updater.is_batch_already_notified(batch_id):
             if site is None:
-                _setup_pywikibot_dir()
+                ensure_pywikibot_env(strict=True)
             _notify_site = site or pywikibot.Site("commons", "commons")
             status_updater.notify_maintainers(batch_id, notify_users, site=_notify_site)
             status_updater.mark_batch_notified(batch_id)

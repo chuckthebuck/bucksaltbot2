@@ -19,7 +19,7 @@ def _make_mock_conn():
 
 
 def test_resolve_pywikibot_dir_falls_back_from_unwritable_home(monkeypatch):
-    import rollback_queue
+    import pywikibot_env
 
     monkeypatch.delenv("PYWIKIBOT_DIR", raising=False)
     monkeypatch.setenv("HOME", "/data/project/buckbot")
@@ -31,8 +31,8 @@ def test_resolve_pywikibot_dir_falls_back_from_unwritable_home(monkeypatch):
         if str(path_obj).startswith("/data/project"):
             raise PermissionError("denied")
 
-    with patch("rollback_queue.Path.mkdir", new=fake_mkdir):
-        resolved = rollback_queue._resolve_pywikibot_dir()
+    with patch("pywikibot_env.Path.mkdir", new=fake_mkdir):
+        resolved = pywikibot_env.resolve_pywikibot_dir()
 
     assert str(resolved) == "/workspace/.pywikibot"
     assert attempted[0] == "/data/project/buckbot/.pywikibot"

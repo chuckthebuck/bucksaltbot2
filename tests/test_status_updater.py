@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 
 def test_resolve_pywikibot_dir_falls_back_from_unwritable_home(monkeypatch):
-    import status_updater
+    import pywikibot_env
 
     monkeypatch.delenv("PYWIKIBOT_DIR", raising=False)
     monkeypatch.setenv("HOME", "/data/project/buckbot")
@@ -16,8 +16,8 @@ def test_resolve_pywikibot_dir_falls_back_from_unwritable_home(monkeypatch):
         if str(path_obj).startswith("/data/project"):
             raise PermissionError("denied")
 
-    with patch("status_updater.Path.mkdir", new=fake_mkdir):
-        resolved = status_updater._resolve_pywikibot_dir()
+    with patch("pywikibot_env.Path.mkdir", new=fake_mkdir):
+        resolved = pywikibot_env.resolve_pywikibot_dir()
 
     assert str(resolved) == "/workspace/.pywikibot"
     assert attempted[0] == "/data/project/buckbot/.pywikibot"
