@@ -192,6 +192,7 @@ def update_wiki_status(
     last_job: str | None = None,
     details: str = "",
     warning: str | None = None,
+    include_job_fields: bool = True,
 ) -> None:
     """Update Chuckbot status subpages consumed by the on-wiki template."""
     if not _is_live():
@@ -206,13 +207,15 @@ def update_wiki_status(
             "editing": editing,
             "web": web,
             "last_edit": resolved_last_edit,
-            "current_job": current_job or "None",
-            "last_job": last_job or "None",
             "details": details,
             # Always write the warning field so stale warnings are cleared.
             "warning": warning or "",
             "updated": now,
         }
+
+        if include_job_fields:
+            fields["current_job"] = current_job or "None"
+            fields["last_job"] = last_job or "None"
 
         for key, value in fields.items():
             _save_status_subpage(active_site, key, value)
@@ -226,6 +229,7 @@ def run_status_cron_update() -> None:
         editing="Idle",
         web="Online",
         details="Daily cron heartbeat",
+        include_job_fields=False,
     )
 
 

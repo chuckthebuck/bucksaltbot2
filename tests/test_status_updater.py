@@ -316,6 +316,26 @@ def test_update_wiki_status_uses_provided_site_without_reauth(monkeypatch):
     mock_get_site.assert_not_called()
 
 
+def test_run_status_cron_update_preserves_job_fields(monkeypatch):
+    import status_updater
+
+    monkeypatch.setenv("NOTDEV", "1")
+
+    written_keys = []
+
+    def track_save(site, key, text):
+        written_keys.append(key)
+
+    with (
+        patch("status_updater._save_status_subpage", side_effect=track_save),
+        patch("status_updater._get_authenticated_site", return_value=MagicMock()),
+    ):
+        status_updater.run_status_cron_update()
+
+    assert "current_job" not in written_keys
+    assert "last_job" not in written_keys
+
+
 # ── notify_maintainers ────────────────────────────────────────────────────────
 
 
