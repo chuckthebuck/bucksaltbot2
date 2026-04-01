@@ -2,18 +2,13 @@
 
 import os
 import sys as _sys
-import json
 import secrets
 import time
-from datetime import datetime, timezone
-from urllib.parse import parse_qs, urlparse
 
 import mwoauth
 import mwoauth.flask
-import requests
 import logging
 
-import status_updater
 from flask import (
     Response,
     abort,
@@ -27,7 +22,6 @@ from flask import (
 from app import BOT_ADMIN_ACCOUNTS, flask_app as app  # noqa: F401
 from redis_state import get_progress, r
 
-from toolsdb import get_runtime_config, upsert_runtime_config
 
 from router.authz import (  # noqa: F401
     _RUNTIME_AUTHZ_ALLOWED_KEYS,
@@ -64,12 +58,12 @@ from router.permissions import (
     _can_edit_runtime_config,
     _can_manage_user_grants,
 )
-from router.diff_state import _ACCOUNT_ROLLBACK_MAX_LIMIT
+from router.diff_state import _ACCOUNT_ROLLBACK_MAX_LIMIT, _ROLLBACKABLE_WINDOW_LIMIT
 
 
 def _r():
     """Return the router package module (supports test-side patching via router.X)."""
-    return _sys.modules.get('router')
+    return _sys.modules.get("router")
 
 
 def is_maintainer(u):
@@ -94,6 +88,7 @@ def get_conn():
 class _LazyTask:
     def __init__(self, name):
         self._name = name
+
     def delay(self, *a, **kw):
         return getattr(_r(), self._name).delay(*a, **kw)
 
@@ -164,8 +159,6 @@ def create_rollback_jobs_from_diff(*a, **kw):
 
 def resolve_diff_rollback_job_impl(*a, **kw):
     return _r().resolve_diff_rollback_job_impl(*a, **kw)
-
-
 
 
 def _user_permissions(*a, **kw):
@@ -340,27 +333,6 @@ def _parse_bool(value, default=False):
     return default
 
 
-_REQUEST_TYPE_QUEUE = "queue"
-_REQUEST_TYPE_BATCH = "batch"
-_REQUEST_TYPE_DIFF = "diff"
-
-_REQUEST_STATUS_PENDING_APPROVAL = "pending_approval"
-
-_APPROVAL_REQUIRED_ADMIN = "admin"
-_APPROVAL_REQUIRED_MAINTAINER = "maintainer"
-
-_ENDPOINT_BATCH = "batch"
-_ENDPOINT_FROM_DIFF = "from_diff"
-_ENDPOINT_FROM_ACCOUNT = "from_account"
-
-_ALLOWED_DIFF_REQUEST_ENDPOINTS = frozenset(
-    {_ENDPOINT_FROM_DIFF, _ENDPOINT_FROM_ACCOUNT}
-)
-_ALLOWED_REQUEST_TYPES = frozenset(
-    {_REQUEST_TYPE_QUEUE, _REQUEST_TYPE_BATCH, _REQUEST_TYPE_DIFF}
-)
-
-
 def _normalize_request_type(raw_value) -> str:
     value = str(raw_value or "").strip().lower()
     if value in _ALLOWED_REQUEST_TYPES:
@@ -383,7 +355,7 @@ def _approval_requirement_for_request(
     return None
 
 
-def _can_actor_approve(actor: str, required_level: str | None) -> bool:
+def _can_actor_approve_impl(actor: str, required_level: str | None) -> bool:
     if not actor or not required_level:
         return False
 
@@ -399,13 +371,33 @@ def _can_actor_approve(actor: str, required_level: str | None) -> bool:
     return False
 
 
-def _can_review_requests(username: str) -> bool:
+def _can_actor_approve(actor: str, required_level: str | None) -> bool:
+    """Entry point for route handlers; allows patching at ``router._can_actor_approve``."""
+    _router = _r()
+    fn = getattr(_router, "_can_actor_approve", None) if _router else None
+    if fn is not None and fn is not _can_actor_approve:
+        return fn(actor, required_level)
+    return _can_actor_approve_impl(actor, required_level)
+
+
+def _can_review_requests_impl(username: str) -> bool:
     if not username:
         return False
     return is_maintainer(username) or is_admin_user(username)
 
 
-def _can_run_live(actor: str, requested_by: str, approval_required: str | None) -> bool:
+def _can_review_requests(username: str) -> bool:
+    """Entry point for route handlers; allows patching at ``router._can_review_requests``."""
+    _router = _r()
+    fn = getattr(_router, "_can_review_requests", None) if _router else None
+    if fn is not None and fn is not _can_review_requests:
+        return fn(username)
+    return _can_review_requests_impl(username)
+
+
+def _can_run_live_impl(
+    actor: str, requested_by: str, approval_required: str | None
+) -> bool:
     """Return whether *actor* may re-run a completed dry-run job live."""
     if not actor:
         return False
@@ -417,6 +409,15 @@ def _can_run_live(actor: str, requested_by: str, approval_required: str | None) 
         return True
 
     return "retry_any" in _user_permissions(actor)
+
+
+def _can_run_live(actor: str, requested_by: str, approval_required: str | None) -> bool:
+    """Entry point for route handlers; allows patching at ``router._can_run_live``."""
+    _router = _r()
+    fn = getattr(_router, "_can_run_live", None) if _router else None
+    if fn is not None and fn is not _can_run_live:
+        return fn(actor, requested_by, approval_required)
+    return _can_run_live_impl(actor, requested_by, approval_required)
 
 
 def _should_autoapprove_request(actor: str, required_level: str | None) -> bool:
@@ -431,7 +432,9 @@ def _should_autoapprove_request(actor: str, required_level: str | None) -> bool:
     if not app.config.get("TESTING"):
         return False
 
-    if not _parse_bool(os.environ.get("LIVE_TEST_AUTO_APPROVE_REQUESTS"), default=False):
+    if not _parse_bool(
+        os.environ.get("LIVE_TEST_AUTO_APPROVE_REQUESTS"), default=False
+    ):
         return False
 
     if "autoapprove_jobs" not in _user_permissions(actor):
@@ -586,13 +589,9 @@ def goto():
         return redirect("/rollback-queue/all-jobs")
 
     if tab == "rollback-from-diff":
-        if "rollback_diff" not in perms:
-            abort(403)
         return redirect("/rollback-from-diff")
 
     if tab == "rollback-account":
-        if "rollback_account" not in perms:
-            abort(403)
         return redirect("/rollback-account")
 
     if tab == "rollback-requests":
@@ -701,8 +700,11 @@ def rollback_from_diff_api():
 
     perms = _user_permissions(username)
 
-    if "rollback_diff" not in perms:
-        return jsonify({"detail": "Forbidden: rollback_diff right required"}), 403
+    _has_submit_right = (
+        "write" in perms or "rollback_diff" in perms or "from_diff" in perms
+    )
+    if not _has_submit_right:
+        return jsonify({"detail": "Forbidden"}), 403
 
     if not _check_rate_limit(username):
         return jsonify({"detail": "Rate limit exceeded; try again later"}), 429
@@ -746,7 +748,10 @@ def rollback_from_diff_api():
 
     dry_run = _parse_bool(dry_run_raw, default=False)
 
-    if "rollback_diff_dry_run_only" in perms and not dry_run:
+    _dry_run_only = (
+        "rollback_diff_dry_run_only" in perms or "from_diff_dry_run_only" in perms
+    )
+    if _dry_run_only and not dry_run:
         return jsonify(
             {"detail": "Forbidden: from-diff access is limited to dry-run mode"}
         ), 403
@@ -859,8 +864,11 @@ def rollback_from_account_api():
 
     perms = _user_permissions(username)
 
-    if "rollback_account" not in perms:
-        return jsonify({"detail": "Forbidden: rollback_account right required"}), 403
+    _has_submit_right = (
+        "write" in perms or "rollback_account" in perms or "from_diff" in perms
+    )
+    if not _has_submit_right:
+        return jsonify({"detail": "Forbidden"}), 403
 
     if not _check_rate_limit(username):
         return jsonify({"detail": "Rate limit exceeded; try again later"}), 429
@@ -911,7 +919,10 @@ def rollback_from_account_api():
 
     dry_run = _parse_bool(dry_run_raw, default=False)
 
-    if "rollback_diff_dry_run_only" in perms and not dry_run:
+    _dry_run_only = (
+        "rollback_diff_dry_run_only" in perms or "from_diff_dry_run_only" in perms
+    )
+    if _dry_run_only and not dry_run:
         return jsonify(
             {"detail": "Forbidden: from-diff access is limited to dry-run mode"}
         ), 403
@@ -1291,11 +1302,8 @@ def rollback_request_preview_api(job_id: int):
     if not payload:
         return jsonify({"detail": "Missing request payload"}), 404
 
-    endpoint = (
-        requested_endpoint
-        or _normalize_request_endpoint(
-            stored_endpoint or payload.get("requested_endpoint") or _ENDPOINT_FROM_DIFF
-        )
+    endpoint = requested_endpoint or _normalize_request_endpoint(
+        stored_endpoint or payload.get("requested_endpoint") or _ENDPOINT_FROM_DIFF
     )
     if endpoint not in _ALLOWED_DIFF_REQUEST_ENDPOINTS:
         return jsonify({"detail": "Invalid endpoint"}), 400
@@ -1580,12 +1588,12 @@ def get_runtime_authz_user_grants(target_username: str):
     if not normalized_target:
         return jsonify({"detail": "Username is required"}), 400
 
-    refresh_commons = _parse_bool(
-        request.args.get("refresh_commons"), default=False
-    )
+    refresh_commons = _parse_bool(request.args.get("refresh_commons"), default=False)
 
     config = _effective_runtime_authz_config()
-    commons_groups = set(get_user_groups(normalized_target, force_refresh=refresh_commons))
+    commons_groups = set(
+        get_user_groups(normalized_target, force_refresh=refresh_commons)
+    )
     payload = _get_user_grants_payload(
         normalized_target, config, commons_groups=commons_groups
     )
@@ -1921,11 +1929,6 @@ def approve_rollback_job(job_id: int):
             if not _can_actor_approve(actor, approval_required):
                 return jsonify(
                     {"detail": "Forbidden: insufficient approval rights"}
-                ), 403
-
-            if "force_dry_run" not in _user_permissions(actor):
-                return jsonify(
-                    {"detail": "Forbidden: force_dry_run right required"}
                 ), 403
 
             approved_endpoint = endpoint_override or requested_endpoint

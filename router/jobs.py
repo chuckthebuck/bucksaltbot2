@@ -1,12 +1,10 @@
 """Job creation and resolution logic for rollback requests."""
 
 import time
-from datetime import datetime, timezone
 
 from app import flask_app as app, MAX_JOB_ITEMS
 from rollback_queue import (
     process_rollback_job,
-    resolve_diff_rollback_job_task as resolve_diff_rollback_job,
 )
 from toolsdb import get_conn
 import status_updater

@@ -5,6 +5,7 @@ environment variable (the same convention used elsewhere in this codebase).
 When ``NOTDEV`` is unset the functions return immediately so that tests and
 development environments never accidentally touch the live wiki.
 """
+
 from __future__ import annotations
 
 import os
@@ -69,6 +70,7 @@ _NOTIFIED_BATCH_TTL = 7 * 24 * 3600  # 7 days
 
 # ── Database initialization and access ─────────────────────────────────────
 
+
 def _get_authenticated_site() -> Any:
     if not _PYWIKIBOT_AVAILABLE:
         raise RuntimeError("pywikibot is unavailable in this runtime")
@@ -77,9 +79,10 @@ def _get_authenticated_site() -> Any:
         raise RuntimeError("Unable to initialize PYWIKIBOT_DIR")
 
     site = pywikibot.Site("commons", "commons")
-    site.login()  
+    site.login()
 
     return site
+
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -87,9 +90,7 @@ def _get_authenticated_site() -> Any:
 def _is_live() -> bool:
     """Return True when running in production (``NOTDEV`` is set)."""
     if os.environ.get("LIVE_TEST_DISABLE_STATUS_UPDATES"):
-        _log_status_debug(
-            "status updates disabled by LIVE_TEST_DISABLE_STATUS_UPDATES"
-        )
+        _log_status_debug("status updates disabled by LIVE_TEST_DISABLE_STATUS_UPDATES")
         return False
 
     if not os.environ.get("NOTDEV"):

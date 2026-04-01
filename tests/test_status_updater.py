@@ -238,7 +238,6 @@ def test_update_wiki_status_includes_warning_when_provided(monkeypatch):
 
     monkeypatch.setenv("NOTDEV", "1")
 
-    mock_page = MagicMock()
     mock_site = MagicMock()
     page_texts = {}
 

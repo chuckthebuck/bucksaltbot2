@@ -14,7 +14,7 @@ from toolsdb import get_runtime_config, upsert_runtime_config
 
 def _r():
     """Return the router package module (supports test-side patching via router.X)."""
-    return _sys.modules.get('router')
+    return _sys.modules.get("router")
 
 
 ALLOWED_GROUPS = {"sysop", "rollbacker"}
@@ -168,14 +168,28 @@ def _normalize_username(raw_value: str) -> str:
 
 
 def _normalize_grant_atom(atom: str) -> str:
-    normalized = str(atom or "").strip().lower().replace(" ", "_")
+    """Return a lowercase-normalised form of a grant atom.
+
+    Legacy aliases (e.g. ``group:operator`` → ``group:admin``) are *not*
+    resolved here so that the user-visible stored value matches what was
+    submitted.  Alias resolution only happens at grant-expansion time inside
+    :func:`_expand_user_grants` and :func:`_expand_auto_grants`.
+    """
+    return str(atom or "").strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def _resolve_grant_atom(atom: str) -> str:
+    """Return the canonical form of a grant atom, resolving all legacy aliases.
+
+    Used at expansion time (``_expand_user_grants``, ``_expand_auto_grants``).
+    """
+    normalized = str(atom or "").strip().lower().replace(" ", "_").replace("-", "_")
     if normalized.startswith("group:"):
         group_name = normalized.split(":", 1)[1]
         group_name = _LEGACY_GROUP_ALIASES.get(group_name, group_name)
         return f"group:{group_name}"
 
-    normalized = _LEGACY_RIGHT_ALIASES.get(normalized, normalized)
-    return normalized
+    return _LEGACY_RIGHT_ALIASES.get(normalized, normalized)
 
 
 def _normalize_user_grants_map_input(value, key: str) -> dict:
@@ -215,6 +229,8 @@ def _normalize_user_grants_map_input(value, key: str) -> dict:
             raise ValueError(f"{key}.{user} must be a list/string/object")
 
         user_atoms = set()
+        _all_valid_groups = set(_USER_GRANT_GROUPS) | set(_LEGACY_GROUP_ALIASES)
+        _all_valid_rights = set(_USER_GRANT_RIGHTS) | set(_LEGACY_RIGHT_ALIASES)
         for atom in atoms:
             normalized_atom = _normalize_grant_atom(atom)
             if not normalized_atom:
@@ -222,16 +238,16 @@ def _normalize_user_grants_map_input(value, key: str) -> dict:
 
             if normalized_atom.startswith("group:"):
                 group_name = normalized_atom.split(":", 1)[1]
-                if group_name not in _USER_GRANT_GROUPS:
+                if group_name not in _all_valid_groups:
                     raise ValueError(f"Unknown grant group '{group_name}' for {user}")
                 user_atoms.add(normalized_atom)
                 continue
 
-            if normalized_atom in _USER_GRANT_GROUPS:
+            if normalized_atom in _all_valid_groups:
                 user_atoms.add(f"group:{normalized_atom}")
                 continue
 
-            if normalized_atom not in _USER_GRANT_RIGHTS:
+            if normalized_atom not in _all_valid_rights:
                 raise ValueError(f"Unknown right '{normalized_atom}' for {user}")
 
             user_atoms.add(normalized_atom)
@@ -255,7 +271,8 @@ def _expand_user_grants(config: dict, username: str) -> set[str]:
     expanded = set()
 
     for raw_atom in atoms:
-        atom = _normalize_grant_atom(raw_atom)
+        # Resolve legacy aliases at expansion time (atoms are stored as-is).
+        atom = _resolve_grant_atom(raw_atom)
         if not atom:
             continue
 
@@ -281,7 +298,11 @@ def _implicit_role_flags(
     if not normalized_username:
         return {role: False for role in _USER_IMPLICIT_FLAGS}
 
-    groups = set(commons_groups if commons_groups is not None else get_user_groups(normalized_username))
+    groups = set(
+        commons_groups
+        if commons_groups is not None
+        else get_user_groups(normalized_username)
+    )
 
     _router = _r()
     _is_bot_admin = _router.is_bot_admin if _router else is_bot_admin
@@ -294,7 +315,9 @@ def _implicit_role_flags(
         "commons_rollbacker": bool("rollbacker" in groups),
         "tester": bool(normalized_username in config["USERS_TESTER"]),
         "read_only": bool(normalized_username in config["USERS_READ_ONLY"]),
-        "extra_authorized": bool(normalized_username in config["EXTRA_AUTHORIZED_USERS"]),
+        "extra_authorized": bool(
+            normalized_username in config["EXTRA_AUTHORIZED_USERS"]
+        ),
     }
 
 
@@ -338,6 +361,8 @@ def _normalize_auto_grants_map_input(value, key: str) -> dict:
             raise ValueError(f"{key}.{role_name} must be a list/string/object")
 
         role_atoms = set()
+        _all_valid_groups = set(_USER_GRANT_GROUPS) | set(_LEGACY_GROUP_ALIASES)
+        _all_valid_rights = set(_USER_GRANT_RIGHTS) | set(_LEGACY_RIGHT_ALIASES)
         for atom in atoms:
             normalized_atom = _normalize_grant_atom(atom)
             if not normalized_atom:
@@ -345,17 +370,21 @@ def _normalize_auto_grants_map_input(value, key: str) -> dict:
 
             if normalized_atom.startswith("group:"):
                 group_name = normalized_atom.split(":", 1)[1]
-                if group_name not in _USER_GRANT_GROUPS:
-                    raise ValueError(f"Unknown grant group '{group_name}' for role {role_name}")
+                if group_name not in _all_valid_groups:
+                    raise ValueError(
+                        f"Unknown grant group '{group_name}' for role {role_name}"
+                    )
                 role_atoms.add(normalized_atom)
                 continue
 
-            if normalized_atom in _USER_GRANT_GROUPS:
+            if normalized_atom in _all_valid_groups:
                 role_atoms.add(f"group:{normalized_atom}")
                 continue
 
-            if normalized_atom not in _USER_GRANT_RIGHTS:
-                raise ValueError(f"Unknown right '{normalized_atom}' for role {role_name}")
+            if normalized_atom not in _all_valid_rights:
+                raise ValueError(
+                    f"Unknown right '{normalized_atom}' for role {role_name}"
+                )
 
             role_atoms.add(normalized_atom)
 
@@ -378,7 +407,8 @@ def _expand_auto_grants(config: dict, username: str) -> set[str]:
 
         role_atoms = role_map.get(role) or []
         for raw_atom in role_atoms:
-            atom = _normalize_grant_atom(raw_atom)
+            # Resolve legacy aliases at expansion time.
+            atom = _resolve_grant_atom(raw_atom)
             if not atom:
                 continue
 
@@ -417,9 +447,13 @@ def _get_user_grants_payload(
     expanded_rights = sorted(_expand_user_grants(config, normalized_username))
 
     resolved_groups = set(
-        commons_groups if commons_groups is not None else get_user_groups(normalized_username)
+        commons_groups
+        if commons_groups is not None
+        else get_user_groups(normalized_username)
     )
-    implicit = _implicit_role_flags(config, normalized_username, commons_groups=resolved_groups)
+    implicit = _implicit_role_flags(
+        config, normalized_username, commons_groups=resolved_groups
+    )
 
     return {
         "username": target_username,
@@ -470,10 +504,18 @@ def _runtime_authz_defaults() -> dict:
     _from_diff = _router.USERS_GRANTED_FROM_DIFF if _router else USERS_GRANTED_FROM_DIFF
     _view_all = _router.USERS_GRANTED_VIEW_ALL if _router else USERS_GRANTED_VIEW_ALL
     _batch = _router.USERS_GRANTED_BATCH if _router else USERS_GRANTED_BATCH
-    _cancel_any = _router.USERS_GRANTED_CANCEL_ANY if _router else USERS_GRANTED_CANCEL_ANY
+    _cancel_any = (
+        _router.USERS_GRANTED_CANCEL_ANY if _router else USERS_GRANTED_CANCEL_ANY
+    )
     _retry_any = _router.USERS_GRANTED_RETRY_ANY if _router else USERS_GRANTED_RETRY_ANY
-    _rate_limit = _router.RATE_LIMIT_JOBS_PER_HOUR if _router else RATE_LIMIT_JOBS_PER_HOUR
-    _rate_tester = _router.RATE_LIMIT_TESTER_JOBS_PER_HOUR if _router else RATE_LIMIT_TESTER_JOBS_PER_HOUR
+    _rate_limit = (
+        _router.RATE_LIMIT_JOBS_PER_HOUR if _router else RATE_LIMIT_JOBS_PER_HOUR
+    )
+    _rate_tester = (
+        _router.RATE_LIMIT_TESTER_JOBS_PER_HOUR
+        if _router
+        else RATE_LIMIT_TESTER_JOBS_PER_HOUR
+    )
     return {
         "EXTRA_AUTHORIZED_USERS": set(_extra),
         "USERS_READ_ONLY": set(_read_only),

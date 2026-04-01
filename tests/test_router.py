@@ -2184,7 +2184,6 @@ def test_cancel_job_allowed_when_owner_is_regular_maintainer_and_actor_is_also_m
     client,
 ):
     """A maintainer can cancel another regular maintainer's job."""
-    import router
 
     _set_session(client, "maint_alice")
     mock_conn, mock_cursor = _make_mock_conn()
@@ -2204,7 +2203,6 @@ def test_cancel_job_allowed_when_owner_is_regular_maintainer_and_actor_is_also_m
 
 def test_cancel_job_allowed_when_owner_is_maintainer_and_actor_is_bot_admin(client):
     """A bot admin can cancel a maintainer's job."""
-    import router
 
     _set_session(client, "chuckbot")
     mock_conn, mock_cursor = _make_mock_conn()
@@ -2226,7 +2224,6 @@ def test_cancel_job_returns_403_when_owner_is_bot_admin_and_actor_is_regular_mai
     client,
 ):
     """A regular maintainer cannot cancel chuckbot's job."""
-    import router
 
     _set_session(client, "maint_alice")
     mock_conn, mock_cursor = _make_mock_conn()
@@ -2246,7 +2243,6 @@ def test_cancel_job_returns_403_when_owner_is_bot_admin_and_actor_is_regular_mai
 
 def test_cancel_job_allowed_when_owner_is_bot_admin_and_actor_is_also_bot_admin(client):
     """A bot admin can cancel another bot admin's own job."""
-    import router
 
     _set_session(client, "chuckbot2")
     mock_conn, mock_cursor = _make_mock_conn()
@@ -2288,7 +2284,6 @@ def test_cancel_job_returns_403_when_owner_is_admin_and_actor_has_only_cancel_an
 
 def test_cancel_job_allowed_when_owner_is_admin_and_actor_is_maintainer(client):
     """A maintainer can cancel a sysop admin's job."""
-    import router
 
     _set_session(client, "maint_alice")
     mock_conn, mock_cursor = _make_mock_conn()
@@ -2308,7 +2303,6 @@ def test_cancel_job_allowed_when_owner_is_admin_and_actor_is_maintainer(client):
 
 def test_cancel_job_returns_403_when_regular_user_tries_to_cancel_admin_job(client):
     """A regular (non-maintainer) user cannot cancel an admin's job."""
-    import router
 
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()

@@ -73,7 +73,6 @@ def ensure_pywikibot_env(
             config_file.write_text(desired, encoding="utf-8")
         else:
             current = config_file.read_text(encoding="utf-8")
-            has_auth = "authenticate['commons.wikimedia.org']" in current
             # Detect legacy OAuth variables - any assignment style, not just os.getenv
             has_legacy_oauth_vars = any(
                 marker in current

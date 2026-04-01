@@ -3,14 +3,11 @@
 import sys as _sys
 import time
 
-import requests
 
 from app import flask_app as app, is_maintainer
 from redis_state import r
 from router.authz import (
     ALLOWED_GROUPS,
-    GROUP_CACHE_TTL,
-    _group_cache,
     is_bot_admin,
     _effective_runtime_authz_config,
     _expand_all_grants,
@@ -21,10 +18,9 @@ from router.authz import (
 )
 
 
-
 def _r():
     """Return the router package module (supports test-side patching via router.X)."""
-    return _sys.modules.get('router')
+    return _sys.modules.get("router")
 
 
 def is_authorized(username):
@@ -33,7 +29,11 @@ def is_authorized(username):
 
     _router = _r()
     _is_maintainer = _router.is_maintainer if _router else is_maintainer
-    _erc = (_router._effective_runtime_authz_config if _router else _effective_runtime_authz_config)
+    _erc = (
+        _router._effective_runtime_authz_config
+        if _router
+        else _effective_runtime_authz_config
+    )
     config = _erc()
 
     if _is_maintainer(username):
@@ -158,9 +158,15 @@ def _user_permissions(username: str) -> frozenset:
     _router = _r()
     _is_maintainer = _router.is_maintainer if _router else is_maintainer
     _is_bot_admin = _router.is_bot_admin if _router else is_bot_admin
+    _is_tester = _router.is_tester if _router else is_tester
+    _erc = (
+        _router._effective_runtime_authz_config
+        if _router
+        else _effective_runtime_authz_config
+    )
 
     lower = username.lower()
-    config = _effective_runtime_authz_config()
+    config = _erc()
 
     # Read-only users may only view their own jobs.
     if lower in config["USERS_READ_ONLY"]:
@@ -188,7 +194,7 @@ def _user_permissions(username: str) -> frozenset:
         # Bot admins (chuckbot) sit above all maintainers and can cancel their jobs too.
         if _is_bot_admin(username):
             perms.add("cancel_maintainer_jobs")
-    elif is_tester(username):  # noqa
+    elif _is_tester(username):
         # Testers get rollback access but no cross-user actions.
         perms |= {
             "view_all",
