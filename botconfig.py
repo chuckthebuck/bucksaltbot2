@@ -104,3 +104,10 @@ EDIT_SUMMARY_DEFAULT: str = os.getenv(
     "EDIT_SUMMARY_DEFAULT",
     "automated match and split edit, revert if incorrect",
 )
+
+# ── API route prefix ──────────────────────────────────────────────────────────
+
+# Prefix segment used in all /api/v1/<prefix>/... routes.  Defaults to
+# "rollback" so all existing API contracts remain unchanged.
+# Example: BOT_ROUTE_PREFIX=mytool  →  /api/v1/mytool/jobs
+BOT_ROUTE_PREFIX: str = os.getenv("BOT_ROUTE_PREFIX", "rollback")

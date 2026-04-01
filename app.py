@@ -7,6 +7,7 @@ from flask_cors import CORS
 from flask import Flask, session
 
 from blueprint import assets_blueprint
+from botconfig import TOOLHUB_API_URL, CORS_ALLOWED_ORIGINS
 from celery_init import celery_init_app
 
 
@@ -16,7 +17,7 @@ BOT_ADMIN_ACCOUNTS = {
     if u.strip()
 }
 
-TOOLHUB_API = "https://toolhub.wikimedia.org/api/tools/buckbot/"
+TOOLHUB_API = TOOLHUB_API_URL
 
 MAX_JOB_ITEMS = int(os.getenv("MAX_JOB_ITEMS", "500"))
 
@@ -124,7 +125,7 @@ CORS(
     flask_app,
     resources={
         r"/api/*": {
-            "origins": ["https://commons.wikimedia.org"],
+            "origins": CORS_ALLOWED_ORIGINS,
             "supports_credentials": True,
         }
     },

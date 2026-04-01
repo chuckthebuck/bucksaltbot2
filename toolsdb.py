@@ -1,6 +1,14 @@
 import pymysql as sql
 
 from cnf import config
+from botconfig import DB_NAME_SUFFIX
+
+# ── Table name constants ──────────────────────────────────────────────────────
+# All SQL in this project uses these names so a single change here (or via the
+# migration script) renames the physical tables across the whole application.
+
+TABLE_JOBS = "bot_jobs"
+TABLE_JOB_ITEMS = "bot_job_items"
 
 
 def _ensure_column(
@@ -18,7 +26,7 @@ def _db_user() -> str:
 
 
 def _db_name() -> str:
-    return f"{_db_user()}__match_and_split"
+    return f"{_db_user()}__{DB_NAME_SUFFIX}"
 
 
 def _connect(database=None):
@@ -38,13 +46,14 @@ def init_db():
             cursor.execute(f"USE {_db_name()}")
 
             cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS rollback_jobs (
+                f"""
+                CREATE TABLE IF NOT EXISTS {TABLE_JOBS} (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     requested_by VARCHAR(255) NOT NULL,
                     status VARCHAR(32) NOT NULL,
                     dry_run TINYINT(1) NOT NULL DEFAULT 0,
                     batch_id BIGINT NULL,
+                    job_type VARCHAR(32) NULL,
                     request_type VARCHAR(32) NULL,
                     requested_endpoint VARCHAR(32) NULL,
                     approved_endpoint VARCHAR(32) NULL,
@@ -57,42 +66,45 @@ def init_db():
             )
 
             # Ensure approval columns exist for legacy deployments where
-            # rollback_jobs was created before request/approval workflows.
+            # the table was created before request/approval workflows.
             _ensure_column(
-                cursor, "rollback_jobs", "request_type", "request_type VARCHAR(32) NULL"
+                cursor, TABLE_JOBS, "job_type", "job_type VARCHAR(32) NULL"
+            )
+            _ensure_column(
+                cursor, TABLE_JOBS, "request_type", "request_type VARCHAR(32) NULL"
             )
             _ensure_column(
                 cursor,
-                "rollback_jobs",
+                TABLE_JOBS,
                 "requested_endpoint",
                 "requested_endpoint VARCHAR(32) NULL",
             )
             _ensure_column(
                 cursor,
-                "rollback_jobs",
+                TABLE_JOBS,
                 "approved_endpoint",
                 "approved_endpoint VARCHAR(32) NULL",
             )
             _ensure_column(
                 cursor,
-                "rollback_jobs",
+                TABLE_JOBS,
                 "approval_required",
                 "approval_required VARCHAR(32) NULL",
             )
             _ensure_column(
-                cursor, "rollback_jobs", "approved_by", "approved_by VARCHAR(255) NULL"
+                cursor, TABLE_JOBS, "approved_by", "approved_by VARCHAR(255) NULL"
             )
             _ensure_column(
-                cursor, "rollback_jobs", "approved_at", "approved_at TIMESTAMP NULL"
+                cursor, TABLE_JOBS, "approved_at", "approved_at TIMESTAMP NULL"
             )
 
             cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS rollback_job_items (
+                f"""
+                CREATE TABLE IF NOT EXISTS {TABLE_JOB_ITEMS} (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     job_id INT NOT NULL,
-                    file_title VARCHAR(512) NOT NULL,
-                    target_user VARCHAR(255) NOT NULL,
+                    item_key VARCHAR(512) NOT NULL,
+                    item_target VARCHAR(255) NOT NULL,
                     summary TEXT NULL,
                     status VARCHAR(255) NOT NULL DEFAULT 'queued',
                     attempts INT NOT NULL DEFAULT 0,
@@ -106,13 +118,13 @@ def init_db():
             # Ensure legacy deployments keep the same default item-state model.
             _ensure_column(
                 cursor,
-                "rollback_job_items",
+                TABLE_JOB_ITEMS,
                 "attempts",
                 "attempts INT NOT NULL DEFAULT 0",
             )
             cursor.execute(
-                """
-                ALTER TABLE rollback_job_items
+                f"""
+                ALTER TABLE {TABLE_JOB_ITEMS}
                 MODIFY COLUMN status VARCHAR(255) NOT NULL DEFAULT 'queued'
                 """
             )

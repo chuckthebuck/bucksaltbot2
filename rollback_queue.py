@@ -2,7 +2,8 @@ import os
 from celery import shared_task
 from pywikibot_env import ensure_pywikibot_env
 from redis_state import set_progress, update_progress
-from toolsdb import get_conn
+from toolsdb import get_conn, TABLE_JOBS, TABLE_JOB_ITEMS
+from botconfig import BOT_NAME, BOT_HELP_PAGE
 import status_updater
 
 
@@ -50,13 +51,13 @@ def _summary_with_requester(summary: str | None, requested_by: str) -> str:
 
 
 def _fetch_job_meta(job_id: int):
-    """Return rollback_jobs row without preloading rollback_job_items."""
+    """Return bot_jobs row without preloading bot_job_items."""
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT id, requested_by, status, dry_run, batch_id
-                FROM rollback_jobs
+                FROM {TABLE_JOBS}
                 WHERE id=%s
                 """,
                 (job_id,),
@@ -68,7 +69,7 @@ def _update_job_status(job_id: int, status: str):
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                "UPDATE rollback_jobs SET status=%s WHERE id=%s",
+                f"UPDATE {TABLE_JOBS} SET status=%s WHERE id=%s",
                 (status, job_id),
             )
         conn.commit()
@@ -79,7 +80,7 @@ def _count_batch_jobs(batch_id: int) -> int:
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT COUNT(*) FROM rollback_jobs WHERE batch_id=%s",
+                f"SELECT COUNT(*) FROM {TABLE_JOBS} WHERE batch_id=%s",
                 (batch_id,),
             )
             row = cursor.fetchone()
