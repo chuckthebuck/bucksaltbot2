@@ -8,59 +8,39 @@ development environments never accidentally touch the live wiki.
 from __future__ import annotations
 
 import os
-import pywikibot
-
-
-import os
+import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from pywikibot_env import ensure_pywikibot_env
 from redis_state import r as _redis
 
 
-def _resolve_pywikibot_dir() -> Path:
-    """Return a writable directory for Pywikibot config files."""
-    candidates: list[Path] = []
-
-    env_dir = os.environ.get("PYWIKIBOT_DIR")
-    if env_dir:
-        candidates.append(Path(env_dir))
-
-    home = os.environ.get("HOME")
-    if home and home != "/":
-        candidates.append(Path(home) / ".pywikibot")
-
-    candidates.append(Path("/workspace") / ".pywikibot")
-    candidates.append(Path("/tmp") / f".pywikibot-{os.getuid()}")
-
-    for candidate in candidates:
-        try:
-            candidate.mkdir(parents=True, exist_ok=True)
-            return candidate
-        except OSError:
-            continue
-
-    raise RuntimeError("No writable directory available for PYWIKIBOT_DIR")
+def _pywikibot_unavailable(*args, **kwargs):
+    raise RuntimeError("pywikibot is unavailable in this runtime")
 
 
-def _bootstrap_pywikibot_env() -> None:
-    """Set PYWIKIBOT_DIR before importing pywikibot.
+_PYWIKIBOT_DIR_READY = ensure_pywikibot_env(strict=False) is not None
 
-    Pywikibot reads config paths during import. On Toolforge, defaulting to
-    /workspace can trigger ownership warnings, so force a safe home path first.
-    """
-    pywikibot_home = _resolve_pywikibot_dir()
-    os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
+try:
+    import pywikibot as _pywikibot  # type: ignore[import-not-found]
+except Exception:  # noqa: BLE001
+    _pywikibot = None
 
-    config_file = pywikibot_home / "user-config.py"
-    if not config_file.exists():
-        config_file.write_text(
-            "family = 'commons'\n"
-            "mylang = 'commons'\n"
-            "usernames['commons']['commons'] = 'Chuckbot'\n"
-        )
+if _pywikibot is None:
+    pywikibot = SimpleNamespace(
+        Site=_pywikibot_unavailable,
+        Page=_pywikibot_unavailable,
+        User=_pywikibot_unavailable,
+    )
+else:
+    pywikibot = _pywikibot
+
+_PYWIKIBOT_AVAILABLE = bool(_pywikibot)
 
 
-_bootstrap_pywikibot_env()
+def _log_status_debug(message: str) -> None:
+    print(f"[status_updater] {message}", file=sys.stderr)
 
 
 # ── Page titles ───────────────────────────────────────────────────────────────
@@ -87,59 +67,19 @@ _NOTIFIED_BATCH_TTL = 7 * 24 * 3600  # 7 days
 # ── Pywikibot OAuth configuration ─────────────────────────────────────────
 
 
-def _setup_pywikibot_dir() -> None:
-    """Configure Pywikibot to use ~/.pywikibot for config files.
+# ── Database initialization and access ─────────────────────────────────────
 
-    This ensures Pywikibot uses the home directory instead of /workspace,
-    which avoids file ownership issues on Toolforge.
-    """
-    pywikibot_home = _resolve_pywikibot_dir()
-    os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
+def _get_authenticated_site() -> Any:
+    if not _PYWIKIBOT_AVAILABLE:
+        raise RuntimeError("pywikibot is unavailable in this runtime")
 
-    # Create minimal config if it doesn't exist
-    config_file = pywikibot_home / "user-config.py"
-    if not config_file.exists():
-        config_file.write_text(
-            "family = 'commons'\n"
-            "mylang = 'commons'\n"
-            "usernames['commons']['commons'] = 'Chuckbot'\n"
-        )
+    if ensure_pywikibot_env(strict=False) is None:
+        raise RuntimeError("Unable to initialize PYWIKIBOT_DIR")
 
-
-def _get_authenticated_site() -> pywikibot.Site:
-    """Create and authenticate a Pywikibot Site using OAuth env vars.
-
-    Returns:
-        An authenticated pywikibot.Site object for Commons.
-    """
-    # Ensure Pywikibot config is in the right place
-    _setup_pywikibot_dir()
-
-    # Get OAuth credentials from environment
-    consumer_key = os.getenv("CONSUMER_TOKEN") or os.getenv("OAUTH_CONSUMER_KEY")
-    consumer_secret = os.getenv("CONSUMER_SECRET") or os.getenv("OAUTH_CONSUMER_SECRET")
-    access_token = os.getenv("ACCESS_TOKEN") or os.getenv("OAUTH_ACCESS_TOKEN")
-    access_secret = os.getenv("ACCESS_SECRET") or os.getenv("OAUTH_ACCESS_SECRET")
-
-    # Create site object
     site = pywikibot.Site("commons", "commons")
-
-    # Attempt OAuth login if credentials are available
-    if all([consumer_key, consumer_secret, access_token, access_secret]):
-        try:
-            site.login(
-                oauth_token=(consumer_key, consumer_secret, access_token, access_secret)
-            )
-        except Exception as e:
-            # Fall back to config-based auth if OAuth fails
-            try:
-                site.login()
-            except Exception:
-                # If all else fails, continue without authentication
-                pass
+    site.login()  
 
     return site
-
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -147,15 +87,23 @@ def _get_authenticated_site() -> pywikibot.Site:
 def _is_live() -> bool:
     """Return True when running in production (``NOTDEV`` is set)."""
     if os.environ.get("LIVE_TEST_DISABLE_STATUS_UPDATES"):
+        _log_status_debug(
+            "status updates disabled by LIVE_TEST_DISABLE_STATUS_UPDATES"
+        )
         return False
-    return bool(os.environ.get("NOTDEV"))
+
+    if not os.environ.get("NOTDEV"):
+        _log_status_debug("status updates skipped because NOTDEV is not set")
+        return False
+
+    return True
 
 
-def _save_status_subpage(site: pywikibot.Site, key: str, text: str) -> None:
+def _save_status_subpage(site: Any, key: str, text: str) -> None:
     """Write a status field to its dedicated subpage."""
     page = pywikibot.Page(site, STATUS_SUBPAGES[key])
     page.text = text
-    page.save(summary="Updating Chuckbot status", minor=True, botflag=True)
+    page.save(summary="Updating Chuckbot status", minor=True, bot=True)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -186,7 +134,7 @@ def mark_batch_notified(batch_id: int) -> None:
         pass
 
 
-def get_notify_list(site: pywikibot.Site) -> list[str]:
+def get_notify_list(site: Any) -> list[str]:
     """Read the list of users to notify from ``NOTIFY_PAGE`` on the wiki.
 
     The page is expected to contain ``[[User:Username]]`` wikilinks, one per
@@ -206,7 +154,7 @@ def get_notify_list(site: pywikibot.Site) -> list[str]:
         return []
 
 
-def is_flagged_bot(site: pywikibot.Site, username: str) -> bool:
+def is_flagged_bot(site: Any, username: str) -> bool:
     """Return True if *username* has the ``bot`` user group on *site*."""
     try:
         return "bot" in pywikibot.User(site, username).groups()
@@ -215,7 +163,7 @@ def is_flagged_bot(site: pywikibot.Site, username: str) -> bool:
 
 
 def get_last_bot_edit(
-    site: pywikibot.Site | None = None,
+    site: Any = None,
     username: str | None = None,
 ) -> str:
     """Return the timestamp of the bot's most recent edit, or ``'Unknown'``."""
@@ -238,37 +186,41 @@ def update_wiki_status(
     editing: str,
     web: str = "Online",
     *,
+    site: Any = None,
     last_edit: str | None = None,
     current_job: str | None = None,
     last_job: str | None = None,
     details: str = "",
     warning: str | None = None,
+    include_job_fields: bool = True,
 ) -> None:
     """Update Chuckbot status subpages consumed by the on-wiki template."""
     if not _is_live():
         return
 
     try:
-        site = _get_authenticated_site()
+        active_site = site or _get_authenticated_site()
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        resolved_last_edit = last_edit or get_last_bot_edit(site)
+        resolved_last_edit = last_edit or get_last_bot_edit(active_site)
 
         fields = {
             "editing": editing,
             "web": web,
             "last_edit": resolved_last_edit,
-            "current_job": current_job or "None",
-            "last_job": last_job or "None",
             "details": details,
             # Always write the warning field so stale warnings are cleared.
             "warning": warning or "",
             "updated": now,
         }
 
+        if include_job_fields:
+            fields["current_job"] = current_job or "None"
+            fields["last_job"] = last_job or "None"
+
         for key, value in fields.items():
-            _save_status_subpage(site, key, value)
-    except Exception:  # noqa: BLE001
-        pass
+            _save_status_subpage(active_site, key, value)
+    except Exception as exc:  # noqa: BLE001
+        _log_status_debug(f"update_wiki_status failed: {exc!r}")
 
 
 def run_status_cron_update() -> None:
@@ -277,13 +229,14 @@ def run_status_cron_update() -> None:
         editing="Idle",
         web="Online",
         details="Daily cron heartbeat",
+        include_job_fields=False,
     )
 
 
 def notify_maintainers(
     batch_id: int,
     users: list[str],
-    site: pywikibot.Site | None = None,
+    site: Any = None,
 ) -> None:
     """Post a talk-page notice to each user in *users* for a large job.
 
@@ -310,14 +263,16 @@ def notify_maintainers(
             talk.save(
                 summary=f"Chuckbot large job notification (batch {batch_id})",
                 minor=False,
-                botflag=True,
+                bot=True,
             )
         except Exception:  # noqa: BLE001
-            pass
+            _log_status_debug(
+                f"notify_maintainers failed for {username}: {sys.exc_info()[1]!r}"
+            )
 
 
 def notify_bot_user(
-    site: pywikibot.Site,
+    site: Any,
     username: str,
     batch_id: int,
     edit_count: int | None = None,
@@ -346,10 +301,10 @@ def notify_bot_user(
         talk.save(
             summary=f"Notification: edits rolled back (batch {batch_id})",
             minor=False,
-            botflag=True,
+            bot=True,
         )
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        _log_status_debug(f"notify_bot_user failed for {username}: {exc!r}")
 
 
 if __name__ == "__main__":

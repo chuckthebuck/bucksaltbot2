@@ -15,4 +15,4 @@ def safe_put(page: pwb.Page, text: str, summary: str, logger: Logger):
     logger.log("SUMMARY:" + summary)
     if os.environ.get("NOTDEV"):
         page.text = text
-        page.save(summary=str(summary), botflag=True)
+        page.save(summary=str(summary), bot=True)

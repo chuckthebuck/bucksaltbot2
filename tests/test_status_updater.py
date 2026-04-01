@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 
 def test_resolve_pywikibot_dir_falls_back_from_unwritable_home(monkeypatch):
-    import status_updater
+    import pywikibot_env
 
     monkeypatch.delenv("PYWIKIBOT_DIR", raising=False)
     monkeypatch.setenv("HOME", "/data/project/buckbot")
@@ -16,8 +16,8 @@ def test_resolve_pywikibot_dir_falls_back_from_unwritable_home(monkeypatch):
         if str(path_obj).startswith("/data/project"):
             raise PermissionError("denied")
 
-    with patch("status_updater.Path.mkdir", new=fake_mkdir):
-        resolved = status_updater._resolve_pywikibot_dir()
+    with patch("pywikibot_env.Path.mkdir", new=fake_mkdir):
+        resolved = pywikibot_env.resolve_pywikibot_dir()
 
     assert str(resolved) == "/workspace/.pywikibot"
     assert attempted[0] == "/data/project/buckbot/.pywikibot"
@@ -230,7 +230,7 @@ def test_update_wiki_status_saves_page_when_live(monkeypatch):
     # Verify each call has the right parameters
     for call in mock_page.save.call_args_list:
         assert call.kwargs.get("minor") is True
-        assert call.kwargs.get("botflag") is True
+        assert call.kwargs.get("bot") is True
 
 
 def test_update_wiki_status_includes_warning_when_provided(monkeypatch):
@@ -297,6 +297,43 @@ def test_update_wiki_status_swallows_exceptions(monkeypatch):
     with patch("status_updater.pywikibot.Site", side_effect=RuntimeError("oops")):
         # Should not raise
         status_updater.update_wiki_status("Idle")
+
+
+def test_update_wiki_status_uses_provided_site_without_reauth(monkeypatch):
+    import status_updater
+
+    monkeypatch.setenv("NOTDEV", "1")
+
+    mock_page = MagicMock()
+    provided_site = MagicMock()
+
+    with (
+        patch("status_updater.pywikibot.Page", return_value=mock_page),
+        patch("status_updater._get_authenticated_site") as mock_get_site,
+    ):
+        status_updater.update_wiki_status("Idle", site=provided_site)
+
+    mock_get_site.assert_not_called()
+
+
+def test_run_status_cron_update_preserves_job_fields(monkeypatch):
+    import status_updater
+
+    monkeypatch.setenv("NOTDEV", "1")
+
+    written_keys = []
+
+    def track_save(site, key, text):
+        written_keys.append(key)
+
+    with (
+        patch("status_updater._save_status_subpage", side_effect=track_save),
+        patch("status_updater._get_authenticated_site", return_value=MagicMock()),
+    ):
+        status_updater.run_status_cron_update()
+
+    assert "current_job" not in written_keys
+    assert "last_job" not in written_keys
 
 
 # ── notify_maintainers ────────────────────────────────────────────────────────

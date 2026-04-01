@@ -1,51 +1,12 @@
 import os
-from pathlib import Path
 from celery import shared_task
+from pywikibot_env import ensure_pywikibot_env
 from redis_state import set_progress, update_progress
 from toolsdb import get_conn
 import status_updater
 
 
-def _resolve_pywikibot_dir() -> Path:
-    """Return a writable directory for Pywikibot config files."""
-    candidates: list[Path] = []
-
-    env_dir = os.environ.get("PYWIKIBOT_DIR")
-    if env_dir:
-        candidates.append(Path(env_dir))
-
-    home = os.environ.get("HOME")
-    if home and home != "/":
-        candidates.append(Path(home) / ".pywikibot")
-
-    candidates.append(Path("/workspace") / ".pywikibot")
-    candidates.append(Path("/tmp") / f".pywikibot-{os.getuid()}")
-
-    for candidate in candidates:
-        try:
-            candidate.mkdir(parents=True, exist_ok=True)
-            return candidate
-        except OSError:
-            continue
-
-    raise RuntimeError("No writable directory available for PYWIKIBOT_DIR")
-
-
-def _bootstrap_pywikibot_env() -> None:
-    """Set PYWIKIBOT_DIR before importing pywikibot."""
-    pywikibot_home = _resolve_pywikibot_dir()
-    os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
-
-    config_file = pywikibot_home / "user-config.py"
-    if not config_file.exists():
-        config_file.write_text(
-            "family = 'commons'\n"
-            "mylang = 'commons'\n"
-            "usernames['commons']['commons'] = 'Chuckbot'\n"
-        )
-
-
-_bootstrap_pywikibot_env()
+ensure_pywikibot_env(strict=True)
 
 import pywikibot
 
@@ -53,6 +14,25 @@ import pywikibot
 # MediaWiki API error codes that mean the rollback is already in the desired
 # state.  The page does not need to change, so these are not real failures.
 _ROLLBACK_NOOP_CODES = frozenset({"alreadyrolled", "onlyauthor"})
+
+
+def _format_exception(exc: Exception) -> str:
+    """Return a useful non-empty error string for storage and logs."""
+    text = str(exc).strip()
+    if text:
+        return text
+
+    args = getattr(exc, "args", ())
+    if args:
+        joined = ", ".join(str(a) for a in args if str(a).strip())
+        if joined:
+            return f"{exc.__class__.__name__}: {joined}"
+
+    rendered = repr(exc).strip()
+    if rendered and rendered != f"{exc.__class__.__name__}()":
+        return f"{exc.__class__.__name__}: {rendered}"
+
+    return exc.__class__.__name__
 
 
 def _summary_with_requester(summary: str | None, requested_by: str) -> str:
@@ -242,24 +222,9 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
             conn.commit()
 
 
-def _setup_pywikibot_dir() -> None:
-    """Configure Pywikibot to use ~/.pywikibot for config files."""
-    pywikibot_home = _resolve_pywikibot_dir()
-    os.environ["PYWIKIBOT_DIR"] = str(pywikibot_home)
-
-    # Create minimal config if it doesn't exist
-    config_file = pywikibot_home / "user-config.py"
-    if not config_file.exists():
-        config_file.write_text(
-            "family = 'commons'\n"
-            "mylang = 'commons'\n"
-            "usernames['commons']['commons'] = 'Chuckbot'\n"
-        )
-
-
 def _bot_site() -> pywikibot.Site:
     """Create and authenticate a Pywikibot Site using OAuth env vars."""
-    _setup_pywikibot_dir()
+    ensure_pywikibot_env(strict=True)
 
     consumer_token = os.environ.get("CONSUMER_TOKEN")
     consumer_secret = os.environ.get("CONSUMER_SECRET")
@@ -275,12 +240,15 @@ def _bot_site() -> pywikibot.Site:
 
     # Authenticate with OAuth
     try:
-        site.login(
-            oauth_token=(consumer_token, consumer_secret, access_token, access_secret)
-        )
-        print("Logged in as:", site.user())
+        site.login()
+        logged_user = site.user()
+        if not logged_user:
+            raise RuntimeError(
+                "Login did not establish an authenticated user session"
+            )
+        print("Logged in as:", logged_user)
     except Exception as e:
-        print(f"OAuth login failed: {e}")
+        print(f"OAuth login failed: {_format_exception(e)}")
         raise
 
     return site
@@ -288,6 +256,7 @@ def _bot_site() -> pywikibot.Site:
 
 @shared_task(ignore_result=True)
 def process_rollback_job(job_id: int):
+    site = None
     try:
         job = _fetch_job_meta(job_id)
 
@@ -307,7 +276,6 @@ def process_rollback_job(job_id: int):
             {"status": "running", "total": total_items, "completed": 0, "failed": 0},
         )
 
-        site = None
         if not dry_run:
             site = _bot_site()
 
@@ -320,7 +288,7 @@ def process_rollback_job(job_id: int):
         notify_users: list[str] = []
         if large:
             if site is None:
-                _setup_pywikibot_dir()
+                ensure_pywikibot_env(strict=True)
             _notify_site = site or pywikibot.Site("commons", "commons")
             notify_users = status_updater.get_notify_list(_notify_site)
 
@@ -336,6 +304,7 @@ def process_rollback_job(job_id: int):
 
         status_updater.update_wiki_status(
             editing="Actively editing",
+            site=site,
             current_job=f"Processing batch {batch_id} (job {job_id})",
             details=f"{total_items} items queued",
             warning=warning_text,
@@ -344,7 +313,7 @@ def process_rollback_job(job_id: int):
         # Notify maintainers once per large batch.
         if large and not status_updater.is_batch_already_notified(batch_id):
             if site is None:
-                _setup_pywikibot_dir()
+                ensure_pywikibot_env(strict=True)
             _notify_site = site or pywikibot.Site("commons", "commons")
             status_updater.notify_maintainers(batch_id, notify_users, site=_notify_site)
             status_updater.mark_batch_notified(batch_id)
@@ -424,7 +393,7 @@ def process_rollback_job(job_id: int):
                     notified_bots[target_user] = notified_bots.get(target_user, 0) + 1
 
             except Exception as exc:  # noqa: BLE001
-                err_str = str(exc)
+                err_str = _format_exception(exc)
                 if any(code in err_str for code in _ROLLBACK_NOOP_CODES):
                     # Page is already in the desired state – not a real failure.
                     _update_item(item_id, "completed", err_str)
@@ -460,6 +429,7 @@ def process_rollback_job(job_id: int):
 
         status_updater.update_wiki_status(
             editing="Idle",
+            site=site,
             last_job=(
                 f"Failed batch {batch_id} (job {job_id})"
                 if final_status == "failed"
@@ -473,7 +443,7 @@ def process_rollback_job(job_id: int):
         )
 
     except Exception as exc:
-        error_text = str(exc)
+        error_text = _format_exception(exc)
         with get_conn() as conn:
             with conn.cursor() as cursor:
                 # Mark any in-flight or pending items failed with the task-level error.
@@ -502,7 +472,8 @@ def process_rollback_job(job_id: int):
 
         status_updater.update_wiki_status(
             editing="Error",
-            details=str(exc)[:200],
+            site=site,
+            details=error_text[:200],
         )
 
         raise

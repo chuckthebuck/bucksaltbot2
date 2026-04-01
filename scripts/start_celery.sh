@@ -2,6 +2,7 @@
 set -e
 
 export C_FORCE_ROOT=true
+export NOTDEV=1
 
 
 rm -f user-config.py
