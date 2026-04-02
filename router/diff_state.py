@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from app import flask_app as app
 from redis_state import r
+from router.framework_config import DIFF_ERROR_KEY_PREFIX, DIFF_PAYLOAD_KEY_PREFIX
 from toolsdb import get_conn
 
 _DIFF_PAYLOAD_TTL = 7 * 24 * 3600
@@ -18,11 +19,11 @@ _ACCOUNT_ROLLBACK_MAX_LIMIT = 500
 
 
 def _diff_payload_key(job_id: int) -> str:
-    return f"rollback:diff:payload:{job_id}"
+    return f"{DIFF_PAYLOAD_KEY_PREFIX}:{job_id}"
 
 
 def _diff_error_key(job_id: int) -> str:
-    return f"rollback:diff:error:{job_id}"
+    return f"{DIFF_ERROR_KEY_PREFIX}:{job_id}"
 
 
 def _store_diff_payload(job_id: int, payload: dict) -> None:

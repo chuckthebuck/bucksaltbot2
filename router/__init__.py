@@ -71,6 +71,21 @@ from router.diff_state import (  # noqa: F401
     _store_diff_payload,
     _update_diff_payload,
 )
+from router.framework_config import (  # noqa: F401
+    ALLOWED_GROUPS as FRAMEWORK_ALLOWED_GROUPS,
+    BOT_NAME,
+    DIFF_ERROR_KEY_PREFIX,
+    DIFF_PAYLOAD_KEY_PREFIX,
+    DOCS_URL,
+    MWOAUTH_BASE_URL,
+    MWOAUTH_INDEX_URL,
+    RATE_LIMIT_KEY_PREFIX,
+    REDIS_KEY_PREFIX,
+    UNAUTHORIZED_MESSAGE,
+    WIKI_API_URL,
+    WORKER_HEARTBEAT_KEY,
+    oauth_callback_url,
+)
 from router.jobs import (  # noqa: F401
     create_rollback_jobs_from_diff,
     resolve_diff_rollback_job_impl,

@@ -12,6 +12,7 @@ from router.diff_state import (
     _ROLLBACKABLE_WINDOW_LIMIT,
     _ACCOUNT_ROLLBACK_MAX_LIMIT,
 )
+from router.framework_config import WIKI_API_URL
 
 
 def _extract_oldid(diff_value):
@@ -51,7 +52,7 @@ def _normalize_target_user_input(raw_value):
 
 
 def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
-    url = "https://commons.wikimedia.org/w/api.php"
+    url = WIKI_API_URL
     params = {
         "action": "query",
         "prop": "revisions",
@@ -123,7 +124,7 @@ def fetch_rollbackable_window_end_timestamp(
     We use Action API usercontribs with ucshow=top (rollbackable candidates),
     bounded by ucend=start_timestamp and uclimit<=500.
     """
-    url = "https://commons.wikimedia.org/w/api.php"
+    url = WIKI_API_URL
     params = {
         "action": "query",
         "list": "usercontribs",
@@ -185,7 +186,7 @@ def fetch_recent_rollbackable_contribs(
     This powers account-wide rollback requests and is hard-capped at 500 items
     to match Action API ``usercontribs`` constraints.
     """
-    url = "https://commons.wikimedia.org/w/api.php"
+    url = WIKI_API_URL
     params = {
         "action": "query",
         "list": "usercontribs",
@@ -248,7 +249,7 @@ def iter_contribs_after_timestamp(
     rollbackable_only=False,
     debug_callback=None,
 ):
-    url = "https://commons.wikimedia.org/w/api.php"
+    url = WIKI_API_URL
 
     continue_params = None
     yielded = 0

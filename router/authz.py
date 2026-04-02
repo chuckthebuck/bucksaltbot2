@@ -9,6 +9,7 @@ import sys as _sys
 import requests
 
 from app import BOT_ADMIN_ACCOUNTS, flask_app as app, is_maintainer  # noqa: F401
+from router.framework_config import ALLOWED_GROUPS, WIKI_API_URL
 from toolsdb import get_runtime_config, upsert_runtime_config
 
 
@@ -17,7 +18,6 @@ def _r():
     return _sys.modules.get("router")
 
 
-ALLOWED_GROUPS = {"sysop", "rollbacker"}
 GROUP_CACHE_TTL = 300
 _group_cache: dict = {}
 
@@ -697,7 +697,7 @@ def get_user_groups(username, force_refresh: bool = False):
     if not force_refresh and cached and (now - cached["ts"] < GROUP_CACHE_TTL):
         return cached["groups"]
 
-    url = "https://commons.wikimedia.org/w/api.php"
+    url = WIKI_API_URL
     params = {
         "action": "query",
         "list": "users",

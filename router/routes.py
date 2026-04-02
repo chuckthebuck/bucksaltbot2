@@ -59,6 +59,14 @@ from router.permissions import (
     _can_manage_user_grants,
 )
 from router.diff_state import _ACCOUNT_ROLLBACK_MAX_LIMIT, _ROLLBACKABLE_WINDOW_LIMIT
+from router.framework_config import (
+    DOCS_URL,
+    MWOAUTH_BASE_URL,
+    MWOAUTH_INDEX_URL,
+    UNAUTHORIZED_MESSAGE,
+    WORKER_HEARTBEAT_KEY,
+    oauth_callback_url,
+)
 
 
 def _r():
@@ -282,14 +290,7 @@ def _deserialize_request_token(payload):
 
 
 def _oauth_callback_url():
-    configured = os.environ.get("USER_OAUTH_CALLBACK_URL")
-
-    if configured:
-        return configured
-
-    tool_name = os.environ.get("TOOL_NAME") or "buckbot"
-
-    return f"https://{tool_name}.toolforge.org/mas-oauth-callback"
+    return oauth_callback_url()
 
 
 def _rollback_api_actor():
@@ -603,16 +604,14 @@ def goto():
         return redirect("/rollback-config")
 
     if tab == "documentation":
-        return redirect(
-            "https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot"
-        )
+        return redirect(DOCS_URL)
 
     return redirect("/rollback-queue")
 
 
 @app.route("/api/v1/rollback/worker")
 def worker_status():
-    hb = r.get("rollback:worker:heartbeat")
+    hb = r.get(WORKER_HEARTBEAT_KEY)
 
     if not hb:
         return jsonify({"status": "offline"})
@@ -2704,7 +2703,7 @@ def login():
 
     try:
         redirect_loc, request_token = mwoauth.initiate(
-            "https://meta.wikimedia.org",
+            MWOAUTH_BASE_URL,
             consumer_token,
             callback=_oauth_callback_url(),
         )
@@ -2741,13 +2740,13 @@ def oauth_callback():
 
     try:
         access_token = mwoauth.complete(
-            "https://meta.wikimedia.org/w/index.php",
+            MWOAUTH_INDEX_URL,
             consumer_token,
             _deserialize_request_token(session["request_token"]),
             request.query_string,
         )
         identity = mwoauth.identify(
-            "https://meta.wikimedia.org/w/index.php",
+            MWOAUTH_INDEX_URL,
             consumer_token,
             access_token,
         )
@@ -2758,7 +2757,7 @@ def oauth_callback():
 
         if not is_authorized(username):
             session.clear()
-            return "This tool is restricted to Commons admins and maintainers.", 403
+            return UNAUTHORIZED_MESSAGE, 403
 
         session["access_token"] = dict(zip(access_token._fields, access_token))
         session["username"] = username

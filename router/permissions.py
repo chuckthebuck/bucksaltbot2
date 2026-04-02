@@ -6,6 +6,7 @@ import time
 
 from app import flask_app as app, is_maintainer
 from redis_state import r
+from router.framework_config import RATE_LIMIT_KEY_PREFIX
 from router.authz import (
     ALLOWED_GROUPS,
     is_bot_admin,
@@ -305,7 +306,7 @@ def _check_rate_limit(username: str) -> bool:
         return True
 
     hour_bucket = int(time.time() // 3600)
-    key = f"rollback:ratelimit:{username.lower()}:{hour_bucket}"
+    key = f"{RATE_LIMIT_KEY_PREFIX}:{username.lower()}:{hour_bucket}"
 
     _router = _r()
     _redis = _router.r if _router else r
