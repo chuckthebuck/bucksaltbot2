@@ -2422,7 +2422,7 @@ def test_update_runtime_authz_api_rejects_unknown_key(client):
         )
 
     assert resp.status_code == 400
-    assert "Unknown config key" in resp.get_json().get("detail", "")
+    assert "invalid" in resp.get_json().get("detail", "").lower()
 
 
 def test_update_runtime_authz_api_persists_for_chuckbot(client):

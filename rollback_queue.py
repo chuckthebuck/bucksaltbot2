@@ -4,7 +4,7 @@ from pywikibot_env import ensure_pywikibot_env
 from redis_state import set_progress, update_progress
 from toolsdb import get_conn, TABLE_JOBS, TABLE_JOB_ITEMS
 from botconfig import BOT_NAME
-from framework.action import get_registered_action
+from framework.action import get_registered_action, register_action
 import status_updater
 
 
@@ -49,6 +49,17 @@ def _summary_with_requester(summary: str | None, requested_by: str) -> str:
         return base
 
     return f"{base}; {requester_tag}"
+
+
+def _get_action():
+    """Return the registered action, auto-registering the default if needed."""
+    try:
+        return get_registered_action()
+    except RuntimeError:
+        from actions.rollback_action import RollbackAction
+
+        register_action(RollbackAction())
+        return get_registered_action()
 
 
 def _fetch_job_meta(job_id: int):
@@ -375,7 +386,7 @@ def process_rollback_job(job_id: int):
                     update_progress(claimed_job_id, "completed")
                     continue
 
-                get_registered_action().execute_item(
+                _get_action().execute_item(
                     item_key=file_title,
                     item_target=target_user,
                     summary=summary,

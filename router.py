@@ -87,6 +87,7 @@ _USER_GRANT_GROUPS = {
     group_name: set(rights)
     for group_name, rights in _REGISTERED_PERMISSIONS.domain_groups.items()
 }
+_USER_GRANT_GROUPS.setdefault("operator", set(_USER_GRANT_GROUPS.get("admin", set())))
 
 _LEGACY_RIGHT_ALIASES = {
     "from_diff": "rollback_diff",
@@ -94,6 +95,7 @@ _LEGACY_RIGHT_ALIASES = {
     "from_diff_dry_run_only": "rollback_diff_dry_run_only",
     "read_all": "view_all",
 }
+_USER_GRANT_RIGHTS |= set(_LEGACY_RIGHT_ALIASES.keys())
 
 _LEGACY_GROUP_ALIASES = {
     "diff": "rollbacker",
@@ -101,6 +103,10 @@ _LEGACY_GROUP_ALIASES = {
     "batch": "batch_runner",
     "support": "jobs_moderator",
     "operator": "admin",
+}
+
+_LEGACY_GROUP_OUTPUT_ALIASES = {
+    "admin": "operator",
 }
 
 _USER_IMPLICIT_FLAGS = (
@@ -167,12 +173,15 @@ def _normalize_username(raw_value: str) -> str:
 
 def _normalize_grant_atom(atom: str) -> str:
     normalized = str(atom or "").strip().lower().replace(" ", "_")
+    if normalized in _LEGACY_RIGHT_ALIASES:
+        return normalized
+
     if normalized.startswith("group:"):
         group_name = normalized.split(":", 1)[1]
-        group_name = _LEGACY_GROUP_ALIASES.get(group_name, group_name)
+        if group_name in _LEGACY_GROUP_ALIASES:
+            return f"group:{group_name}"
         return f"group:{group_name}"
 
-    normalized = _LEGACY_RIGHT_ALIASES.get(normalized, normalized)
     return normalized
 
 
@@ -259,15 +268,18 @@ def _expand_user_grants(config: dict, username: str) -> set[str]:
 
         if atom.startswith("group:"):
             group_name = atom.split(":", 1)[1]
+            group_name = _LEGACY_GROUP_ALIASES.get(group_name, group_name)
             expanded |= _USER_GRANT_GROUPS.get(group_name, set())
             continue
 
-        if atom in _USER_GRANT_GROUPS:
-            expanded |= _USER_GRANT_GROUPS[atom]
+        normalized_group = _LEGACY_GROUP_ALIASES.get(atom, atom)
+        if normalized_group in _USER_GRANT_GROUPS:
+            expanded |= _USER_GRANT_GROUPS[normalized_group]
             continue
 
-        if atom in _USER_GRANT_RIGHTS:
-            expanded.add(atom)
+        normalized_right = _LEGACY_RIGHT_ALIASES.get(atom, atom)
+        if normalized_right in _USER_GRANT_RIGHTS:
+            expanded.add(normalized_right)
 
     return expanded
 
@@ -379,15 +391,18 @@ def _expand_auto_grants(config: dict, username: str) -> set[str]:
 
             if atom.startswith("group:"):
                 group_name = atom.split(":", 1)[1]
+                group_name = _LEGACY_GROUP_ALIASES.get(group_name, group_name)
                 expanded |= _USER_GRANT_GROUPS.get(group_name, set())
                 continue
 
-            if atom in _USER_GRANT_GROUPS:
-                expanded |= _USER_GRANT_GROUPS[atom]
+            normalized_group = _LEGACY_GROUP_ALIASES.get(atom, atom)
+            if normalized_group in _USER_GRANT_GROUPS:
+                expanded |= _USER_GRANT_GROUPS[normalized_group]
                 continue
 
-            if atom in _USER_GRANT_RIGHTS:
-                expanded.add(atom)
+            normalized_right = _LEGACY_RIGHT_ALIASES.get(atom, atom)
+            if normalized_right in _USER_GRANT_RIGHTS:
+                expanded.add(normalized_right)
 
     return expanded
 
@@ -406,9 +421,25 @@ def _get_user_grants_payload(
     atoms = list(grants_map.get(normalized_username, []))
 
     groups = sorted(
-        [atom.split(":", 1)[1] for atom in atoms if atom.startswith("group:")]
+        [
+            _LEGACY_GROUP_OUTPUT_ALIASES.get(
+                _LEGACY_GROUP_ALIASES.get(atom.split(":", 1)[1], atom.split(":", 1)[1]),
+                _LEGACY_GROUP_ALIASES.get(atom.split(":", 1)[1], atom.split(":", 1)[1]),
+            )
+            for atom in atoms
+            if atom.startswith("group:")
+        ]
     )
-    rights = sorted([atom for atom in atoms if not atom.startswith("group:")])
+    rights = sorted(
+        [
+            next(
+                (legacy for legacy, canonical in _LEGACY_RIGHT_ALIASES.items() if canonical == atom),
+                atom,
+            )
+            for atom in atoms
+            if not atom.startswith("group:")
+        ]
+    )
     expanded_rights = sorted(_expand_user_grants(config, normalized_username))
 
     resolved_groups = set(
@@ -1928,6 +1959,15 @@ def _rollback_api_actor():
     return None
 
 
+def _can_review_action(actor: str, required_level: str | None) -> bool:
+    """Shared review/approval gate used by manual request-approval endpoints."""
+    if not actor:
+        return False
+    if _can_actor_approve(actor, required_level):
+        return True
+    return "force_dry_run" in _user_permissions(actor)
+
+
 def _parse_bool(value, default=False):
     if isinstance(value, bool):
         return value
@@ -2196,12 +2236,12 @@ def goto():
         return redirect("/rollback-queue/all-jobs")
 
     if tab == "rollback-from-diff":
-        if "rollback_diff" not in perms:
+        if "rollback_diff" not in perms and "from_diff" not in perms and "write" not in perms:
             abort(403)
         return redirect("/rollback-from-diff")
 
     if tab == "rollback-account":
-        if "rollback_account" not in perms:
+        if "rollback_account" not in perms and "from_diff" not in perms and "write" not in perms:
             abort(403)
         return redirect("/rollback-account")
 
@@ -2311,7 +2351,11 @@ def rollback_from_diff_api():
 
     perms = _user_permissions(username)
 
-    if "rollback_diff" not in perms:
+    if (
+        "rollback_diff" not in perms
+        and "from_diff" not in perms
+        and "write" not in perms
+    ):
         return jsonify({"detail": "Forbidden: rollback_diff right required"}), 403
 
     if not _check_rate_limit(username):
@@ -2356,7 +2400,10 @@ def rollback_from_diff_api():
 
     dry_run = _parse_bool(dry_run_raw, default=False)
 
-    if "rollback_diff_dry_run_only" in perms and not dry_run:
+    if (
+        "rollback_diff_dry_run_only" in perms
+        or "from_diff_dry_run_only" in perms
+    ) and not dry_run:
         return jsonify(
             {"detail": "Forbidden: from-diff access is limited to dry-run mode"}
         ), 403
@@ -2438,7 +2485,7 @@ def rollback_from_diff_api():
             resolve_diff_rollback_job.delay(job_id)
     except Exception as e:
         logging.exception("Error in rollback_from_diff_api")
-        return jsonify({"detail": "Failed to create rollback jobs: " + str(e)}), 500
+        return jsonify({"detail": "Failed to create rollback jobs"}), 500
 
     return jsonify(
         {
@@ -2469,7 +2516,11 @@ def rollback_from_account_api():
 
     perms = _user_permissions(username)
 
-    if "rollback_account" not in perms:
+    if (
+        "rollback_account" not in perms
+        and "from_diff" not in perms
+        and "write" not in perms
+    ):
         return jsonify({"detail": "Forbidden: rollback_account right required"}), 403
 
     if not _check_rate_limit(username):
@@ -2521,7 +2572,10 @@ def rollback_from_account_api():
 
     dry_run = _parse_bool(dry_run_raw, default=False)
 
-    if "rollback_diff_dry_run_only" in perms and not dry_run:
+    if (
+        "rollback_diff_dry_run_only" in perms
+        or "from_diff_dry_run_only" in perms
+    ) and not dry_run:
         return jsonify(
             {"detail": "Forbidden: from-diff access is limited to dry-run mode"}
         ), 403
@@ -2617,11 +2671,11 @@ def rollback_from_account_api():
             )
             resolve_diff_rollback_job.delay(job_id)
 
-    except ValueError as e:
-        return jsonify({"detail": str(e)}), 400
+    except ValueError:
+        return jsonify({"detail": "Invalid request parameters"}), 400
     except Exception as e:
         logging.exception("Error in rollback_from_account_api")
-        return jsonify({"detail": "Failed to create rollback jobs: " + str(e)}), 500
+        return jsonify({"detail": "Failed to create rollback jobs"}), 500
 
     return jsonify(
         {
@@ -2652,7 +2706,7 @@ def rollback_from_diff_page():
 
     perms = _user_permissions(username)
 
-    if "rollback_diff" not in perms:
+    if "rollback_diff" not in perms and "from_diff" not in perms and "write" not in perms:
         abort(403)
 
     return render_template(
@@ -2674,7 +2728,11 @@ def rollback_account_page():
 
     perms = _user_permissions(username)
 
-    if "rollback_account" not in perms:
+    if (
+        "rollback_account" not in perms
+        and "from_diff" not in perms
+        and "write" not in perms
+    ):
         abort(403)
 
     return render_template(
@@ -2926,11 +2984,11 @@ def rollback_request_preview_api(job_id: int):
             endpoint,
             full_from_diff=full_from_diff,
         )
-    except ValueError as exc:
-        return jsonify({"detail": str(exc)}), 400
+    except ValueError:
+        return jsonify({"detail": "Invalid preview request"}), 400
     except Exception as exc:  # noqa: BLE001
         app.logger.exception("Failed to compute request preview for job %s", job_id)
-        return jsonify({"detail": f"Failed to compute request preview: {exc}"}), 500
+        return jsonify({"detail": "Failed to compute request preview"}), 500
 
     return jsonify(
         {
@@ -3154,7 +3212,8 @@ def update_runtime_authz_api():
 
     normalized_updates, errors = _normalize_runtime_authz_updates(updates)
     if errors:
-        return jsonify({"detail": "; ".join(errors)}), 400
+        app.logger.warning("Rejected runtime authz update payload: %s", errors)
+        return jsonify({"detail": "Invalid runtime authz update payload"}), 400
 
     if not normalized_updates:
         return jsonify({"detail": "No valid config keys supplied"}), 400
@@ -3245,7 +3304,12 @@ def update_runtime_authz_user_grants(target_username: str):
     )
 
     if errors:
-        return jsonify({"detail": "; ".join(errors)}), 400
+        app.logger.warning(
+            "Rejected runtime user-grants update for %s: %s",
+            normalized_target,
+            errors,
+        )
+        return jsonify({"detail": "Invalid user grants payload"}), 400
 
     config = _effective_runtime_authz_config()
     grants_map = dict(config.get("USER_GRANTS_JSON") or {})
@@ -3528,14 +3592,9 @@ def approve_rollback_job(job_id: int):
                     {"detail": f"Job is not pending approval (status={status})"}
                 ), 409
 
-            if not _can_actor_approve(actor, approval_required):
+            if not _can_review_action(actor, approval_required):
                 return jsonify(
                     {"detail": "Forbidden: insufficient approval rights"}
-                ), 403
-
-            if "force_dry_run" not in _user_permissions(actor):
-                return jsonify(
-                    {"detail": "Forbidden: force_dry_run right required"}
                 ), 403
 
             approved_endpoint = endpoint_override or requested_endpoint

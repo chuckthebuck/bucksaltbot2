@@ -78,7 +78,7 @@ def _get_authenticated_site() -> Any:
         raise RuntimeError("Unable to initialize PYWIKIBOT_DIR")
 
     site = pywikibot.Site("commons", "commons")
-    site.login()  
+    site.login()
 
     return site
 

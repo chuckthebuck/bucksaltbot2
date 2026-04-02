@@ -238,7 +238,6 @@ def test_update_wiki_status_includes_warning_when_provided(monkeypatch):
 
     monkeypatch.setenv("NOTDEV", "1")
 
-    mock_page = MagicMock()
     mock_site = MagicMock()
     page_texts = {}
 
@@ -482,7 +481,7 @@ def test_count_batch_jobs_returns_count_from_db():
 
     assert count == 3
     mock_cursor.execute.assert_called_once_with(
-        "SELECT COUNT(*) FROM rollback_jobs WHERE batch_id=%s",
+        "SELECT COUNT(*) FROM bot_jobs WHERE batch_id=%s",
         (12345,),
     )
 

@@ -97,8 +97,10 @@ STATUS_PAGE_PREFIX: str = os.getenv(
 # Provide localised overrides via env vars.
 EDIT_SUMMARY_EN: str = os.getenv(
     "EDIT_SUMMARY_EN",
-    "automated match and split edit, revert if incorrect"
-    "  ([[Wikisource:Scriptorium#SodiumBot|bot request]])",
+    (
+        "automated match and split edit, revert if incorrect"
+        "  ([[Wikisource:Scriptorium#SodiumBot|bot request]])"
+    ),
 )
 EDIT_SUMMARY_DEFAULT: str = os.getenv(
     "EDIT_SUMMARY_DEFAULT",
