@@ -243,9 +243,7 @@ def _bot_site() -> pywikibot.Site:
         site.login()
         logged_user = site.user()
         if not logged_user:
-            raise RuntimeError(
-                "Login did not establish an authenticated user session"
-            )
+            raise RuntimeError("Login did not establish an authenticated user session")
         print("Logged in as:", logged_user)
     except Exception as e:
         print(f"OAuth login failed: {_format_exception(e)}")
