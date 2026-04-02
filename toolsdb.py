@@ -103,8 +103,8 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS {TABLE_JOB_ITEMS} (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     job_id INT NOT NULL,
-                    item_key VARCHAR(512) NOT NULL,
-                    item_target VARCHAR(255) NOT NULL,
+                    file_title VARCHAR(512) NOT NULL,
+                    target_user VARCHAR(255) NOT NULL,
                     summary TEXT NULL,
                     status VARCHAR(255) NOT NULL DEFAULT 'queued',
                     attempts INT NOT NULL DEFAULT 0,

@@ -77,7 +77,7 @@ def test_update_job_status_executes_correct_sql():
         rollback_queue._update_job_status(1, "completed")
 
     mock_cursor.execute.assert_called_once_with(
-        "UPDATE rollback_jobs SET status=%s WHERE id=%s",
+        "UPDATE bot_jobs SET status=%s WHERE id=%s",
         ("completed", 1),
     )
     mock_conn.commit.assert_called_once()
@@ -95,7 +95,7 @@ def test_update_item_sets_status_and_error():
         rollback_queue._update_item(10, "failed", "some error")
 
     mock_cursor.execute.assert_called_once_with(
-        "UPDATE rollback_job_items SET status=%s, error=%s WHERE id=%s",
+        "UPDATE bot_job_items SET status=%s, error=%s WHERE id=%s",
         ("failed", "some error", 10),
     )
     mock_conn.commit.assert_called_once()

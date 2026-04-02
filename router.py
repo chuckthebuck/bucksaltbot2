@@ -729,7 +729,7 @@ def _maybe_mark_stale_resolving_job_failed(
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                "UPDATE rollback_jobs SET status=%s WHERE id=%s AND status=%s",
+                "UPDATE bot_jobs SET status=%s WHERE id=%s AND status=%s",
                 ("failed", job_id, "resolving"),
             )
         conn.commit()
@@ -1111,7 +1111,7 @@ def create_rollback_jobs_from_diff(
 
                 cursor.execute(
                     """
-                    INSERT INTO rollback_jobs
+                    INSERT INTO bot_jobs
                     (requested_by, status, dry_run, batch_id)
                     VALUES (%s, %s, %s, %s)
                     """,
@@ -1124,7 +1124,7 @@ def create_rollback_jobs_from_diff(
                 for item in chunk:
                     cursor.execute(
                         """
-                        INSERT INTO rollback_job_items
+                        INSERT INTO bot_job_items
                         (job_id, file_title, target_user, summary, status)
                         VALUES (%s, %s, %s, %s, %s)
                         """,
@@ -1162,7 +1162,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
         with get_conn() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "UPDATE rollback_jobs SET status=%s WHERE id=%s",
+                    "UPDATE bot_jobs SET status=%s WHERE id=%s",
                     ("failed", job_id),
                 )
             conn.commit()
@@ -1235,7 +1235,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
         with get_conn() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "SELECT batch_id FROM rollback_jobs WHERE id=%s",
+                    "SELECT batch_id FROM bot_jobs WHERE id=%s",
                     (job_id,),
                 )
                 row = cursor.fetchone()
@@ -1247,14 +1247,14 @@ def resolve_diff_rollback_job_impl(job_id: int):
 
                 # Clear any stale items from previous failed attempts.
                 cursor.execute(
-                    "DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,)
+                    "DELETE FROM bot_job_items WHERE job_id=%s", (job_id,)
                 )
 
                 def _persist_chunk(chunk_items, target_job_id):
                     for item in chunk_items:
                         cursor.execute(
                             """
-                            INSERT INTO rollback_job_items
+                            INSERT INTO bot_job_items
                             (job_id, file_title, target_user, summary, status)
                             VALUES (%s, %s, %s, %s, %s)
                             """,
@@ -1271,7 +1271,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                     if not created_job_ids:
                         cursor.execute(
                             """
-                            UPDATE rollback_jobs
+                            UPDATE bot_jobs
                             SET status=%s, dry_run=%s, requested_by=%s, batch_id=%s
                             WHERE id=%s
                             """,
@@ -1287,7 +1287,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
 
                     cursor.execute(
                         """
-                        INSERT INTO rollback_jobs
+                        INSERT INTO bot_jobs
                         (
                             requested_by,
                             status,
@@ -1464,7 +1464,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                 # Move all staged jobs to queued only after full list/chunks are built.
                 for staged_job_id in created_job_ids:
                     cursor.execute(
-                        "UPDATE rollback_jobs SET status=%s WHERE id=%s",
+                        "UPDATE bot_jobs SET status=%s WHERE id=%s",
                         ("queued", staged_job_id),
                     )
 
@@ -1486,7 +1486,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
         with get_conn() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "UPDATE rollback_jobs SET status=%s WHERE id=%s",
+                    "UPDATE bot_jobs SET status=%s WHERE id=%s",
                     ("failed", job_id),
                 )
             conn.commit()
@@ -2056,7 +2056,7 @@ def _pending_batch_request_job_ids(
     cursor.execute(
         """
         SELECT id
-        FROM rollback_jobs
+        FROM bot_jobs
         WHERE batch_id=%s AND request_type=%s AND status=%s
         ORDER BY id ASC
         """,
@@ -2278,7 +2278,7 @@ def rollback_queue_ui():
                 cursor.execute(
                     """
                     SELECT id, requested_by, status, dry_run, created_at
-                    FROM rollback_jobs
+                    FROM bot_jobs
                     WHERE requested_by=%s
                       AND (
                         status NOT IN ('completed', 'failed', 'canceled')
@@ -2369,7 +2369,7 @@ def rollback_from_diff_api():
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO rollback_jobs
+                    INSERT INTO bot_jobs
                     (
                         requested_by,
                         status,
@@ -2402,7 +2402,7 @@ def rollback_from_diff_api():
                 if autoapproved:
                     cursor.execute(
                         """
-                        UPDATE rollback_jobs
+                        UPDATE bot_jobs
                         SET
                             status=%s,
                             approved_endpoint=%s,
@@ -2549,7 +2549,7 @@ def rollback_from_account_api():
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO rollback_jobs
+                    INSERT INTO bot_jobs
                     (
                         requested_by,
                         status,
@@ -2582,7 +2582,7 @@ def rollback_from_account_api():
                 if autoapproved:
                     cursor.execute(
                         """
-                        UPDATE rollback_jobs
+                        UPDATE bot_jobs
                         SET
                             status=%s,
                             approved_endpoint=%s,
@@ -2757,8 +2757,8 @@ def list_rollback_requests_api():
                     COUNT(i.id) AS total_items,
                     COALESCE(SUM(CASE WHEN i.status='completed' THEN 1 ELSE 0 END), 0) AS completed_items,
                     COALESCE(SUM(CASE WHEN i.status='failed' THEN 1 ELSE 0 END), 0) AS failed_items
-                FROM rollback_jobs j
-                LEFT JOIN rollback_job_items i ON i.job_id = j.id
+                FROM bot_jobs j
+                LEFT JOIN bot_job_items i ON i.job_id = j.id
                 WHERE {where_sql}
                 GROUP BY
                     j.id,
@@ -2844,7 +2844,7 @@ def rollback_request_preview_api(job_id: int):
             cursor.execute(
                 """
                 SELECT id, requested_by, request_type, requested_endpoint
-                FROM rollback_jobs
+                FROM bot_jobs
                 WHERE id=%s
                 """,
                 (job_id,),
@@ -2865,7 +2865,7 @@ def rollback_request_preview_api(job_id: int):
                 cursor.execute(
                     """
                     SELECT file_title, target_user, summary, status, error
-                    FROM rollback_job_items
+                    FROM bot_job_items
                     WHERE job_id=%s
                     ORDER BY id ASC
                     """,
@@ -2971,8 +2971,8 @@ def rollback_queue_all_jobs_ui():
                     COUNT(i.id) AS total_items,
                     COALESCE(SUM(CASE WHEN i.status='completed' THEN 1 ELSE 0 END), 0) AS completed_items,
                     COALESCE(SUM(CASE WHEN i.status='failed' THEN 1 ELSE 0 END), 0) AS failed_items
-                FROM rollback_jobs j
-                LEFT JOIN rollback_job_items i ON i.job_id = j.id
+                FROM bot_jobs j
+                LEFT JOIN bot_job_items i ON i.job_id = j.id
                 GROUP BY
                     j.id,
                     j.batch_id,
@@ -3288,7 +3288,7 @@ def list_rollback_jobs():
                     approval_required,
                     approved_by,
                     approved_at
-                FROM rollback_jobs
+                FROM bot_jobs
                 WHERE requested_by=%s
                                     AND (
                                         status NOT IN ('completed', 'failed', 'canceled')
@@ -3400,7 +3400,7 @@ def create_rollback_job():
 
                 cursor.execute(
                     """
-                    INSERT INTO rollback_jobs
+                    INSERT INTO bot_jobs
                     (
                         requested_by,
                         status,
@@ -3438,7 +3438,7 @@ def create_rollback_job():
 
                     cursor.execute(
                         """
-                        INSERT INTO rollback_job_items
+                        INSERT INTO bot_job_items
                         (job_id, file_title, target_user, summary, status)
                         VALUES (%s, %s, %s, %s, %s)
                         """,
@@ -3492,7 +3492,7 @@ def approve_rollback_job(job_id: int):
                     requested_endpoint,
                     approved_endpoint,
                     approval_required
-                FROM rollback_jobs
+                FROM bot_jobs
                 WHERE id=%s
                 """,
                 (job_id,),
@@ -3562,7 +3562,7 @@ def approve_rollback_job(job_id: int):
 
                 cursor.execute(
                     """
-                    UPDATE rollback_jobs
+                    UPDATE bot_jobs
                     SET
                         status=%s,
                         approved_endpoint=%s,
@@ -3618,7 +3618,7 @@ def approve_rollback_job(job_id: int):
                 cursor.execute(
                     """
                     SELECT id
-                    FROM rollback_jobs
+                    FROM bot_jobs
                     WHERE batch_id=%s AND request_type=%s AND status=%s
                     ORDER BY id ASC
                     """,
@@ -3632,7 +3632,7 @@ def approve_rollback_job(job_id: int):
             for approved_job_id in approved_job_ids:
                 cursor.execute(
                     """
-                    UPDATE rollback_jobs
+                    UPDATE bot_jobs
                     SET
                         status=%s,
                         approved_endpoint=%s,
@@ -3644,7 +3644,7 @@ def approve_rollback_job(job_id: int):
                 )
                 cursor.execute(
                     """
-                    UPDATE rollback_job_items
+                    UPDATE bot_job_items
                     SET status=%s
                     WHERE job_id=%s AND status=%s
                     """,
@@ -3692,7 +3692,7 @@ def reject_rollback_request(job_id: int):
                     request_type,
                     requested_endpoint,
                     approval_required
-                FROM rollback_jobs
+                FROM bot_jobs
                 WHERE id=%s
                 """,
                 (job_id,),
@@ -3739,7 +3739,7 @@ def reject_rollback_request(job_id: int):
             for rejected_job_id in rejected_job_ids:
                 cursor.execute(
                     """
-                    UPDATE rollback_jobs
+                    UPDATE bot_jobs
                     SET status=%s, approved_by=%s, approved_at=CURRENT_TIMESTAMP
                     WHERE id=%s
                     """,
@@ -3747,7 +3747,7 @@ def reject_rollback_request(job_id: int):
                 )
                 cursor.execute(
                     """
-                    UPDATE rollback_job_items
+                    UPDATE bot_job_items
                     SET status=%s, error=%s
                     WHERE job_id=%s AND status=%s
                     """,
@@ -3790,7 +3790,7 @@ def force_dry_run_rollback_request(job_id: int):
                     request_type,
                     requested_endpoint,
                     approval_required
-                FROM rollback_jobs
+                FROM bot_jobs
                 WHERE id=%s
                 """,
                 (job_id,),
@@ -3835,7 +3835,7 @@ def force_dry_run_rollback_request(job_id: int):
 
             for updated_job_id in updated_job_ids:
                 cursor.execute(
-                    "UPDATE rollback_jobs SET dry_run=1 WHERE id=%s",
+                    "UPDATE bot_jobs SET dry_run=1 WHERE id=%s",
                     (updated_job_id,),
                 )
                 if request_type == _REQUEST_TYPE_DIFF:
@@ -3875,7 +3875,7 @@ def run_dry_run_job_live(job_id: int):
                     request_type,
                     requested_endpoint,
                     approval_required
-                FROM rollback_jobs
+                FROM bot_jobs
                 WHERE id=%s
                 """,
                 (job_id,),
@@ -3914,7 +3914,7 @@ def run_dry_run_job_live(job_id: int):
                 return jsonify({"detail": "Forbidden"}), 403
 
             cursor.execute(
-                "SELECT COUNT(*) FROM rollback_job_items WHERE job_id=%s",
+                "SELECT COUNT(*) FROM bot_job_items WHERE job_id=%s",
                 (job_id,),
             )
             item_count_row = cursor.fetchone()
@@ -3935,7 +3935,7 @@ def run_dry_run_job_live(job_id: int):
                     ), 400
 
                 cursor.execute(
-                    "UPDATE rollback_jobs SET dry_run=0, status='resolving' WHERE id=%s",
+                    "UPDATE bot_jobs SET dry_run=0, status='resolving' WHERE id=%s",
                     (job_id,),
                 )
                 conn.commit()
@@ -3946,12 +3946,12 @@ def run_dry_run_job_live(job_id: int):
                 queue_status = "resolving"
             else:
                 cursor.execute(
-                    "UPDATE rollback_jobs SET dry_run=0, status='queued' WHERE id=%s",
+                    "UPDATE bot_jobs SET dry_run=0, status='queued' WHERE id=%s",
                     (job_id,),
                 )
                 cursor.execute(
                     """
-                    UPDATE rollback_job_items
+                    UPDATE bot_job_items
                     SET status='queued', error=NULL
                     WHERE job_id=%s
                     """,
@@ -3981,7 +3981,7 @@ def retry_job(job_id):
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT requested_by, status, request_type FROM rollback_jobs WHERE id=%s",
+                "SELECT requested_by, status, request_type FROM bot_jobs WHERE id=%s",
                 (job_id,),
             )
 
@@ -4007,7 +4007,7 @@ def retry_job(job_id):
                 ), 409
 
             cursor.execute(
-                "SELECT COUNT(*) FROM rollback_job_items WHERE job_id=%s",
+                "SELECT COUNT(*) FROM bot_job_items WHERE job_id=%s",
                 (job_id,),
             )
             item_count_row = cursor.fetchone()
@@ -4029,7 +4029,7 @@ def retry_job(job_id):
                     ), 409
 
                 cursor.execute(
-                    "UPDATE rollback_jobs SET status='resolving' WHERE id=%s",
+                    "UPDATE bot_jobs SET status='resolving' WHERE id=%s",
                     (job_id,),
                 )
                 conn.commit()
@@ -4042,13 +4042,13 @@ def retry_job(job_id):
                 return jsonify({"job_id": job_id, "status": "resolving"})
 
             cursor.execute(
-                "UPDATE rollback_jobs SET status='queued' WHERE id=%s",
+                "UPDATE bot_jobs SET status='queued' WHERE id=%s",
                 (job_id,),
             )
 
             cursor.execute(
                 """
-                UPDATE rollback_job_items
+                UPDATE bot_job_items
                 SET status='queued', error=NULL
                 WHERE job_id=%s
                 """,
@@ -4078,7 +4078,7 @@ def cancel_rollback_job(job_id):
             cursor.execute(
                 """
                 SELECT id, requested_by, status
-                FROM rollback_jobs
+                FROM bot_jobs
                 WHERE id=%s
                 """,
                 (job_id,),
@@ -4128,13 +4128,13 @@ def cancel_rollback_job(job_id):
                 return jsonify({"job_id": job_id, "status": job[2]})
 
             cursor.execute(
-                "UPDATE rollback_jobs SET status=%s WHERE id=%s",
+                "UPDATE bot_jobs SET status=%s WHERE id=%s",
                 ("canceled", job_id),
             )
 
             cursor.execute(
                 """
-                UPDATE rollback_job_items
+                UPDATE bot_job_items
                 SET status=%s, error=%s
                 WHERE job_id=%s AND status IN (%s, %s, %s, %s, %s)
                 """,
@@ -4184,7 +4184,7 @@ def get_rollback_job(job_id):
                     approval_required,
                     approved_by,
                     approved_at
-                FROM rollback_jobs
+                FROM bot_jobs
                 WHERE id=%s
                 """,
                 (job_id,),
@@ -4201,7 +4201,7 @@ def get_rollback_job(job_id):
             cursor.execute(
                 """
                 SELECT id, file_title, target_user, summary, status, error
-                FROM rollback_job_items
+                FROM bot_job_items
                 WHERE job_id=%s
                 ORDER BY id ASC
                 """,

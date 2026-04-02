@@ -777,7 +777,7 @@ def test_fetch_contribs_after_timestamp_requests_timestamp_and_filters_strictly(
         }
     }
 
-    with patch("router.requests.get", return_value=mock_resp) as mock_get:
+    with patch("router._mw_client.get", return_value=mock_resp) as mock_get:
         results = router.fetch_contribs_after_timestamp(
             "TargetUser", start_ts, limit=10
         )
@@ -809,7 +809,7 @@ def test_fetch_contribs_after_timestamp_respects_limit():
         }
     }
 
-    with patch("router.requests.get", return_value=mock_resp):
+    with patch("router._mw_client.get", return_value=mock_resp):
         results = router.fetch_contribs_after_timestamp("TargetUser", start_ts, limit=1)
 
     assert results == [{"title": "File:One.jpg", "user": "TargetUser"}]
@@ -833,7 +833,7 @@ def test_fetch_rollbackable_window_end_timestamp_uses_top_and_ucend():
     mock_resp.text = "{}"
     mock_resp.status_code = 200
 
-    with patch("router.requests.get", return_value=mock_resp) as mock_get:
+    with patch("router._mw_client.get", return_value=mock_resp) as mock_get:
         end_ts = router.fetch_rollbackable_window_end_timestamp("TargetUser", start_ts)
 
     assert end_ts == "2024-01-15T00:00:00Z"
@@ -852,7 +852,7 @@ def test_fetch_rollbackable_window_end_timestamp_returns_none_when_empty():
     mock_resp.text = "{}"
     mock_resp.status_code = 200
 
-    with patch("router.requests.get", return_value=mock_resp):
+    with patch("router._mw_client.get", return_value=mock_resp):
         end_ts = router.fetch_rollbackable_window_end_timestamp(
             "TargetUser", "2024-01-01T00:00:00Z"
         )
@@ -876,7 +876,7 @@ def test_fetch_recent_rollbackable_contribs_uses_top_and_limit_cap():
     mock_resp.text = "{}"
     mock_resp.status_code = 200
 
-    with patch("router.requests.get", return_value=mock_resp) as mock_get:
+    with patch("router._mw_client.get", return_value=mock_resp) as mock_get:
         items = router.fetch_recent_rollbackable_contribs("BadUser", limit=999)
 
     assert items == [
@@ -893,7 +893,7 @@ def test_fetch_diff_author_and_timestamp_handles_network_error():
     import router
     import requests
 
-    with patch("router.requests.get") as mock_get:
+    with patch("router._mw_client.get") as mock_get:
         mock_get.side_effect = requests.Timeout("Connection timeout")
         with pytest.raises(ValueError, match="Failed to fetch revision metadata"):
             router.fetch_diff_author_and_timestamp(123456)
@@ -903,7 +903,7 @@ def test_fetch_contribs_after_timestamp_handles_network_error():
     import router
     import requests
 
-    with patch("router.requests.get") as mock_get:
+    with patch("router._mw_client.get") as mock_get:
         mock_get.side_effect = requests.ConnectionError("Connection failed")
         with pytest.raises(ValueError, match="Failed to fetch user contributions"):
             router.fetch_contribs_after_timestamp("TestUser", "2024-01-01T00:00:00Z")

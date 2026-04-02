@@ -168,7 +168,7 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                 if job_id is not None:
                     cursor.execute(
                         f"""
-                        SELECT id, item_key, item_target, summary
+                        SELECT id, file_title, target_user, summary
                         FROM {TABLE_JOB_ITEMS}
                         WHERE job_id=%s AND status='queued'
                         ORDER BY id ASC
@@ -180,7 +180,7 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                     if preferred_batch_id is None:
                         cursor.execute(
                             f"""
-                            SELECT i.id, i.job_id, i.item_key, i.item_target, i.summary
+                            SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary
                             FROM {TABLE_JOB_ITEMS} i
                             JOIN {TABLE_JOBS} j ON j.id = i.job_id
                             WHERE i.status='queued' AND j.status IN ('queued', 'running')
@@ -191,7 +191,7 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                     else:
                         cursor.execute(
                             f"""
-                            SELECT i.id, i.job_id, i.item_key, i.item_target, i.summary
+                            SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary
                             FROM {TABLE_JOB_ITEMS} i
                             JOIN {TABLE_JOBS} j ON j.id = i.job_id
                             WHERE i.status='queued' AND j.status IN ('queued', 'running')

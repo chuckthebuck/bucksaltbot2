@@ -12,26 +12,26 @@ def _make_mock_conn():
     return mock_conn, mock_cursor
 
 
-def test_init_db_creates_rollback_jobs_table():
-    """init_db executes a CREATE TABLE statement for rollback_jobs."""
+def test_init_db_creates_bot_jobs_table():
+    """init_db executes a CREATE TABLE statement for bot_jobs."""
     mock_conn, mock_cursor = _make_mock_conn()
     with patch("pymysql.connections.Connection", return_value=mock_conn):
         import toolsdb
 
         toolsdb.init_db()
     executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
-    assert "rollback_jobs" in executed
+    assert "bot_jobs" in executed
 
 
-def test_init_db_creates_rollback_job_items_table():
-    """init_db executes a CREATE TABLE statement for rollback_job_items."""
+def test_init_db_creates_bot_job_items_table():
+    """init_db executes a CREATE TABLE statement for bot_job_items."""
     mock_conn, mock_cursor = _make_mock_conn()
     with patch("pymysql.connections.Connection", return_value=mock_conn):
         import toolsdb
 
         toolsdb.init_db()
     executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
-    assert "rollback_job_items" in executed
+    assert "bot_job_items" in executed
 
 
 def test_init_db_sets_item_status_default_and_attempts_column():
