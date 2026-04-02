@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys as _sys
 import time
 from datetime import datetime, timezone
 
@@ -16,6 +17,36 @@ _MW_DEBUG_BODY_MAX = 1200
 _RESOLVING_TIMEOUT_SECONDS = int(os.getenv("RESOLVING_TIMEOUT_SECONDS", "1800"))
 _ROLLBACKABLE_WINDOW_LIMIT = 500
 _ACCOUNT_ROLLBACK_MAX_LIMIT = 500
+
+
+def _r():
+    return _sys.modules.get("router")
+
+
+def _get_conn():
+    _router = _r()
+    router_get_conn = getattr(_router, "get_conn", None) if _router else None
+    if callable(router_get_conn):
+        return router_get_conn()
+    return get_conn()
+
+
+def _set_diff_error_via_router(job_id: int, error_message: str | None) -> None:
+    _router = _r()
+    router_setter = getattr(_router, "_set_diff_error", None) if _router else None
+    if callable(router_setter) and router_setter is not _set_diff_error:
+        router_setter(job_id, error_message)
+        return
+    _set_diff_error(job_id, error_message)
+
+
+def _update_diff_payload_via_router(job_id: int, updates: dict) -> None:
+    _router = _r()
+    router_updater = getattr(_router, "_update_diff_payload", None) if _router else None
+    if callable(router_updater) and router_updater is not _update_diff_payload:
+        router_updater(job_id, updates)
+        return
+    _update_diff_payload(job_id, updates)
 
 
 def _diff_payload_key(job_id: int) -> str:
@@ -104,7 +135,7 @@ def _maybe_mark_stale_resolving_job_failed(
         "marking failed. Retry the job to re-run resolution."
     )
 
-    with get_conn() as conn:
+    with _get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
                 "UPDATE rollback_jobs SET status=%s WHERE id=%s AND status=%s",
@@ -112,8 +143,8 @@ def _maybe_mark_stale_resolving_job_failed(
             )
         conn.commit()
 
-    _set_diff_error(job_id, error_message)
-    _update_diff_payload(job_id, {"resolve_error": error_message})
+    _set_diff_error_via_router(job_id, error_message)
+    _update_diff_payload_via_router(job_id, {"resolve_error": error_message})
     return True
 
 

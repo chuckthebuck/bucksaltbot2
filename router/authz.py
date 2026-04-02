@@ -9,7 +9,7 @@ import sys as _sys
 import requests
 
 from app import BOT_ADMIN_ACCOUNTS, flask_app as app, is_maintainer  # noqa: F401
-from router.framework_config import ALLOWED_GROUPS, WIKI_API_URL
+from router.framework_config import WIKI_API_URL
 from toolsdb import get_runtime_config, upsert_runtime_config
 
 
@@ -25,6 +25,9 @@ _group_cache: dict = {}
 def _env_user_set(env_var: str) -> set[str]:
     """Parse a comma-separated environment variable into a lower-cased set of usernames."""
     return {u.strip().lower() for u in os.getenv(env_var, "").split(",") if u.strip()}
+
+
+ALLOWED_GROUPS = _env_user_set("ALLOWED_GROUPS") or {"sysop", "rollbacker"}
 
 
 EXTRA_AUTHORIZED_USERS: set[str] = _env_user_set("EXTRA_AUTHORIZED_USERS")

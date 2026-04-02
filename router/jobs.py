@@ -1,5 +1,6 @@
 """Job creation and resolution logic for rollback requests."""
 
+import sys as _sys
 import time
 
 from app import flask_app as app, MAX_JOB_ITEMS
@@ -51,6 +52,152 @@ _ALLOWED_REQUEST_TYPES = frozenset(
 )
 
 
+def _r():
+    return _sys.modules.get("router")
+
+
+def _get_conn():
+    _router = _r()
+    router_get_conn = getattr(_router, "get_conn", None) if _router else None
+    if callable(router_get_conn):
+        return router_get_conn()
+    return get_conn()
+
+
+def _max_job_items() -> int:
+    _router = _r()
+    if _router and hasattr(_router, "MAX_JOB_ITEMS"):
+        value = getattr(_router, "MAX_JOB_ITEMS")
+        if callable(value):
+            value = value()
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            pass
+    return int(MAX_JOB_ITEMS)
+
+
+def _load_diff_payload_via_router(job_id: int):
+    _router = _r()
+    fn = getattr(_router, "_load_diff_payload", None) if _router else None
+    if callable(fn) and fn is not _load_diff_payload:
+        return fn(job_id)
+    return _load_diff_payload(job_id)
+
+
+def _update_diff_payload_via_router(job_id: int, updates: dict) -> None:
+    _router = _r()
+    fn = getattr(_router, "_update_diff_payload", None) if _router else None
+    if callable(fn) and fn is not _update_diff_payload:
+        fn(job_id, updates)
+        return
+    _update_diff_payload(job_id, updates)
+
+
+def _store_diff_payload_via_router(job_id: int, payload: dict) -> None:
+    _router = _r()
+    fn = getattr(_router, "_store_diff_payload", None) if _router else None
+    if callable(fn) and fn is not _store_diff_payload:
+        fn(job_id, payload)
+        return
+    _store_diff_payload(job_id, payload)
+
+
+def _set_diff_error_via_router(job_id: int, message: str | None) -> None:
+    _router = _r()
+    fn = getattr(_router, "_set_diff_error", None) if _router else None
+    if callable(fn) and fn is not _set_diff_error:
+        fn(job_id, message)
+        return
+    _set_diff_error(job_id, message)
+
+
+def _append_mw_debug_via_router(job_id: int, event: dict) -> None:
+    _router = _r()
+    fn = getattr(_router, "_append_mw_debug", None) if _router else None
+    if callable(fn) and fn is not _append_mw_debug:
+        fn(job_id, event)
+        return
+    _append_mw_debug(job_id, event)
+
+
+def _fetch_diff_author_and_timestamp_via_router(oldid, debug_callback=None):
+    _router = _r()
+    fn = getattr(_router, "fetch_diff_author_and_timestamp", None) if _router else None
+    if callable(fn) and fn is not fetch_diff_author_and_timestamp:
+        return fn(oldid, debug_callback=debug_callback)
+    return fetch_diff_author_and_timestamp(oldid, debug_callback=debug_callback)
+
+
+def _fetch_rollbackable_window_end_timestamp_via_router(
+    target_user, start_timestamp, limit, debug_callback=None
+):
+    _router = _r()
+    fn = (
+        getattr(_router, "fetch_rollbackable_window_end_timestamp", None)
+        if _router
+        else None
+    )
+    if callable(fn) and fn is not fetch_rollbackable_window_end_timestamp:
+        return fn(
+            target_user,
+            start_timestamp,
+            limit=limit,
+            debug_callback=debug_callback,
+        )
+    return fetch_rollbackable_window_end_timestamp(
+        target_user,
+        start_timestamp,
+        limit=limit,
+        debug_callback=debug_callback,
+    )
+
+
+def _fetch_recent_rollbackable_contribs_via_router(
+    target_user, limit, debug_callback=None
+):
+    _router = _r()
+    fn = (
+        getattr(_router, "fetch_recent_rollbackable_contribs", None)
+        if _router
+        else None
+    )
+    if callable(fn) and fn is not fetch_recent_rollbackable_contribs:
+        return fn(target_user, limit=limit, debug_callback=debug_callback)
+    return fetch_recent_rollbackable_contribs(
+        target_user, limit=limit, debug_callback=debug_callback
+    )
+
+
+def _iter_contribs_after_timestamp_via_router(
+    target_user,
+    start_timestamp,
+    limit=None,
+    end_timestamp=None,
+    rollbackable_only=False,
+    debug_callback=None,
+):
+    _router = _r()
+    fn = getattr(_router, "iter_contribs_after_timestamp", None) if _router else None
+    if callable(fn) and fn is not iter_contribs_after_timestamp:
+        return fn(
+            target_user,
+            start_timestamp,
+            limit=limit,
+            end_timestamp=end_timestamp,
+            rollbackable_only=rollbackable_only,
+            debug_callback=debug_callback,
+        )
+    return iter_contribs_after_timestamp(
+        target_user,
+        start_timestamp,
+        limit=limit,
+        end_timestamp=end_timestamp,
+        rollbackable_only=rollbackable_only,
+        debug_callback=debug_callback,
+    )
+
+
 def create_rollback_jobs_from_diff(
     diff,
     summary,
@@ -59,7 +206,7 @@ def create_rollback_jobs_from_diff(
     limit=None,
 ):
     oldid = _extract_oldid(diff)
-    diff_metadata = fetch_diff_author_and_timestamp(oldid)
+    diff_metadata = _fetch_diff_author_and_timestamp_via_router(oldid)
 
     target_user = diff_metadata["user"]
     start_timestamp = diff_metadata["timestamp"]
@@ -76,10 +223,11 @@ def create_rollback_jobs_from_diff(
     batch_id = int(time.time() * 1000)
     job_ids = []
 
-    with get_conn() as conn:
+    with _get_conn() as conn:
         with conn.cursor() as cursor:
-            for i in range(0, len(items), MAX_JOB_ITEMS):
-                chunk = items[i : i + MAX_JOB_ITEMS]
+            max_items = _max_job_items()
+            for i in range(0, len(items), max_items):
+                chunk = items[i : i + max_items]
 
                 cursor.execute(
                     """
@@ -128,17 +276,19 @@ def create_rollback_jobs_from_diff(
 
 
 def resolve_diff_rollback_job_impl(job_id: int):
-    payload = _load_diff_payload(job_id)
+    payload = _load_diff_payload_via_router(job_id)
 
     if not payload:
-        with get_conn() as conn:
+        with _get_conn() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     "UPDATE rollback_jobs SET status=%s WHERE id=%s",
                     ("failed", job_id),
                 )
             conn.commit()
-        _set_diff_error(job_id, "Missing queued diff payload; resubmit the job.")
+        _set_diff_error_via_router(
+            job_id, "Missing queued diff payload; resubmit the job."
+        )
         return
 
     requested_by = payload.get("requested_by")
@@ -157,7 +307,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
         approved_endpoint = _ENDPOINT_FROM_DIFF
 
     def _debug(event: dict) -> None:
-        _append_mw_debug(job_id, event)
+        _append_mw_debug_via_router(job_id, event)
 
     try:
         oldid = None
@@ -171,9 +321,9 @@ def resolve_diff_rollback_job_impl(job_id: int):
 
         if diff not in (None, ""):
             oldid = _extract_oldid(diff)
-            _update_diff_payload(job_id, {"oldid": oldid})
+            _update_diff_payload_via_router(job_id, {"oldid": oldid})
 
-            diff_metadata = fetch_diff_author_and_timestamp(
+            diff_metadata = _fetch_diff_author_and_timestamp_via_router(
                 oldid, debug_callback=_debug
             )
             target_user = target_user or diff_metadata["user"]
@@ -204,7 +354,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
         total_items = 0
         pending_chunk = []
 
-        with get_conn() as conn:
+        with _get_conn() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     "SELECT batch_id FROM rollback_jobs WHERE id=%s",
@@ -289,7 +439,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                     chunk_job_id = cursor.lastrowid
 
                     # Keep the same diff/query context on every chunk job.
-                    _store_diff_payload(
+                    _store_diff_payload_via_router(
                         chunk_job_id,
                         {
                             "diff": diff,
@@ -329,7 +479,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         "format": "json",
                     }
 
-                    _update_diff_payload(
+                    _update_diff_payload_via_router(
                         job_id,
                         {
                             **query_debug_payload,
@@ -338,7 +488,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         },
                     )
 
-                    account_items = fetch_recent_rollbackable_contribs(
+                    account_items = _fetch_recent_rollbackable_contribs_via_router(
                         target_user,
                         limit=effective_limit,
                         debug_callback=_debug,
@@ -348,7 +498,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         pending_chunk.append(item)
                         total_items += 1
 
-                        if len(pending_chunk) < MAX_JOB_ITEMS:
+                        if len(pending_chunk) < _max_job_items():
                             continue
 
                         target_job_id = _next_target_job_id()
@@ -368,7 +518,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                     )
 
                     rollbackable_end_timestamp = (
-                        fetch_rollbackable_window_end_timestamp(
+                        _fetch_rollbackable_window_end_timestamp_via_router(
                             target_user,
                             start_timestamp,
                             limit=_ROLLBACKABLE_WINDOW_LIMIT,
@@ -395,7 +545,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         rollbackable_end_timestamp
                     )
 
-                    _update_diff_payload(
+                    _update_diff_payload_via_router(
                         job_id,
                         {
                             **query_debug_payload,
@@ -404,7 +554,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         },
                     )
 
-                    for item in iter_contribs_after_timestamp(
+                    for item in _iter_contribs_after_timestamp_via_router(
                         target_user,
                         start_timestamp,
                         limit=parsed_limit,
@@ -415,7 +565,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         pending_chunk.append(item)
                         total_items += 1
 
-                        if len(pending_chunk) < MAX_JOB_ITEMS:
+                        if len(pending_chunk) < _max_job_items():
                             continue
 
                         target_job_id = _next_target_job_id()
@@ -442,7 +592,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
 
             conn.commit()
 
-        _set_diff_error(job_id, None)
+        _set_diff_error_via_router(job_id, None)
 
         status_updater.update_wiki_status(
             editing="Actively editing",
@@ -455,15 +605,15 @@ def resolve_diff_rollback_job_impl(job_id: int):
 
     except Exception as e:  # noqa: BLE001
         app.logger.exception("Failed to resolve diff rollback job %s", job_id)
-        with get_conn() as conn:
+        with _get_conn() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     "UPDATE rollback_jobs SET status=%s WHERE id=%s",
                     ("failed", job_id),
                 )
             conn.commit()
-        _set_diff_error(job_id, str(e))
-        _update_diff_payload(job_id, {"resolve_error": str(e)})
+        _set_diff_error_via_router(job_id, str(e))
+        _update_diff_payload_via_router(job_id, {"resolve_error": str(e)})
         status_updater.update_wiki_status(
             editing="Error",
             last_job=f"Failed to resolve diff for job {job_id}",
