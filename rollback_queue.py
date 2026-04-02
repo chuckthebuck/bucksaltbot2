@@ -3,7 +3,8 @@ from celery import shared_task
 from pywikibot_env import ensure_pywikibot_env
 from redis_state import set_progress, update_progress
 from toolsdb import get_conn, TABLE_JOBS, TABLE_JOB_ITEMS
-from botconfig import BOT_NAME, BOT_HELP_PAGE
+from botconfig import BOT_NAME
+from framework.action import get_registered_action
 import status_updater
 
 
@@ -91,7 +92,7 @@ def _update_item(item_id: int, status: str, error: str | None = None):
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                "UPDATE rollback_job_items SET status=%s, error=%s WHERE id=%s",
+                f"UPDATE {TABLE_JOB_ITEMS} SET status=%s, error=%s WHERE id=%s",
                 (status, error, item_id),
             )
         conn.commit()
@@ -101,7 +102,7 @@ def _count_job_items(job_id: int) -> int:
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT COUNT(*) FROM rollback_job_items WHERE job_id=%s",
+                f"SELECT COUNT(*) FROM {TABLE_JOB_ITEMS} WHERE job_id=%s",
                 (job_id,),
             )
             row = cursor.fetchone()
@@ -113,9 +114,9 @@ def _get_item_status_counts(job_id: int) -> dict[str, int]:
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT status, COUNT(*)
-                FROM rollback_job_items
+                FROM {TABLE_JOB_ITEMS}
                 WHERE job_id=%s
                 GROUP BY status
                 """,
@@ -166,9 +167,9 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
             with conn.cursor() as cursor:
                 if job_id is not None:
                     cursor.execute(
-                        """
-                        SELECT id, file_title, target_user, summary
-                        FROM rollback_job_items
+                        f"""
+                        SELECT id, item_key, item_target, summary
+                        FROM {TABLE_JOB_ITEMS}
                         WHERE job_id=%s AND status='queued'
                         ORDER BY id ASC
                         LIMIT 1
@@ -178,10 +179,10 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                 else:
                     if preferred_batch_id is None:
                         cursor.execute(
-                            """
-                            SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary
-                            FROM rollback_job_items i
-                            JOIN rollback_jobs j ON j.id = i.job_id
+                            f"""
+                            SELECT i.id, i.job_id, i.item_key, i.item_target, i.summary
+                            FROM {TABLE_JOB_ITEMS} i
+                            JOIN {TABLE_JOBS} j ON j.id = i.job_id
                             WHERE i.status='queued' AND j.status IN ('queued', 'running')
                             ORDER BY i.id ASC
                             LIMIT 1
@@ -189,10 +190,10 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                         )
                     else:
                         cursor.execute(
-                            """
-                            SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary
-                            FROM rollback_job_items i
-                            JOIN rollback_jobs j ON j.id = i.job_id
+                            f"""
+                            SELECT i.id, i.job_id, i.item_key, i.item_target, i.summary
+                            FROM {TABLE_JOB_ITEMS} i
+                            JOIN {TABLE_JOBS} j ON j.id = i.job_id
                             WHERE i.status='queued' AND j.status IN ('queued', 'running')
                             ORDER BY
                                 CASE WHEN j.batch_id=%s THEN 0 ELSE 1 END,
@@ -208,8 +209,8 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
 
                 item_id = item[0]
                 cursor.execute(
-                    """
-                    UPDATE rollback_job_items
+                    f"""
+                    UPDATE {TABLE_JOB_ITEMS}
                     SET status='running', error=NULL, attempts=attempts+1
                     WHERE id=%s AND status='queued'
                     """,
@@ -329,8 +330,8 @@ def process_rollback_job(job_id: int):
                 with get_conn() as conn:
                     with conn.cursor() as cursor:
                         cursor.execute(
-                            """
-                            UPDATE rollback_job_items
+                            f"""
+                            UPDATE {TABLE_JOB_ITEMS}
                             SET status='canceled', error='Canceled by requester'
                             WHERE job_id=%s AND status IN ('queued', 'running')
                             """,
@@ -352,7 +353,7 @@ def process_rollback_job(job_id: int):
 
             claimed_job = _fetch_job_meta(claimed_job_id)
             if not claimed_job:
-                _update_item(item_id, "failed", "Missing rollback_jobs row")
+                _update_item(item_id, "failed", "Missing bot_jobs row")
                 continue
 
             (
@@ -374,17 +375,14 @@ def process_rollback_job(job_id: int):
                     update_progress(claimed_job_id, "completed")
                     continue
 
-                token = site.tokens["rollback"]
-
-                site.simple_request(
-                    action="rollback",
-                    title=file_title,
-                    user=target_user,
-                    token=token,
-                    summary=_summary_with_requester(summary, claimed_requested_by),
-                    markbot=True,
-                    bot=True,
-                ).submit()
+                get_registered_action().execute_item(
+                    item_key=file_title,
+                    item_target=target_user,
+                    summary=summary,
+                    requested_by=claimed_requested_by,
+                    site=site,
+                    dry_run=bool(claimed_dry_run),
+                )
 
                 _update_item(item_id, "completed", None)
                 update_progress(claimed_job_id, "completed")
@@ -449,8 +447,8 @@ def process_rollback_job(job_id: int):
             with conn.cursor() as cursor:
                 # Mark any in-flight or pending items failed with the task-level error.
                 cursor.execute(
-                    """
-                    UPDATE rollback_job_items
+                    f"""
+                    UPDATE {TABLE_JOB_ITEMS}
                     SET status='failed', error=%s
                     WHERE job_id=%s AND status IN ('queued', 'running')
                     """,
@@ -480,7 +478,7 @@ def process_rollback_job(job_id: int):
         raise
 
 
-@shared_task(name="buckbot.resolve_diff_rollback_job", ignore_result=True)
+@shared_task(name=f"{BOT_NAME}.resolve_diff_rollback_job", ignore_result=True)
 def resolve_diff_rollback_job_task(job_id: int):
     """Resolve a from-diff job into rollback_job_items.
 

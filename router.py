@@ -11,6 +11,9 @@ import requests
 import logging
 
 import status_updater
+from botconfig import BOT_ROUTE_PREFIX
+from framework.mediawiki_client import MediaWikiClient
+from framework.permissions import get_registered_permissions
 from flask import (
     Response,
     abort,
@@ -27,11 +30,12 @@ from rollback_queue import (
     process_rollback_job,
     resolve_diff_rollback_job_task as resolve_diff_rollback_job,
 )
-from toolsdb import get_conn, get_runtime_config, upsert_runtime_config
+from toolsdb import TABLE_JOB_ITEMS, TABLE_JOBS, get_conn, get_runtime_config, upsert_runtime_config
 
 ALLOWED_GROUPS = {"sysop", "rollbacker"}
 GROUP_CACHE_TTL = 300
 _group_cache = {}
+_mw_client = MediaWikiClient()
 
 
 def _env_user_set(env_var: str) -> set[str]:
@@ -77,49 +81,11 @@ _CONFIG_EDIT_PRIMARY_ACCOUNT = (
     os.getenv("CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot").strip().lower()
 )
 
-_USER_GRANT_RIGHTS = {
-    "rollback_diff",
-    "rollback_account",
-    "rollback_batch",
-    "rollback_diff_dry_run_only",
-    "approve_jobs",
-    "autoapprove_jobs",
-    "force_dry_run",
-    "view_all",
-    "edit_config",
-    "manage_user_grants",
-    "cancel_any",
-    "retry_any",
-}
-
+_REGISTERED_PERMISSIONS = get_registered_permissions()
+_USER_GRANT_RIGHTS = set(_REGISTERED_PERMISSIONS.domain_rights)
 _USER_GRANT_GROUPS = {
-    "viewer": {"view_all"},
-    "rollbacker": {"rollback_diff", "rollback_account"},
-    "rollbacker_dry_run": {
-        "rollback_diff",
-        "rollback_account",
-        "rollback_diff_dry_run_only",
-    },
-    "batch_runner": {"rollback_batch"},
-    "jobs_moderator": {
-        "approve_jobs",
-        "force_dry_run",
-        "cancel_any",
-        "retry_any",
-    },
-    "admin": {
-        "view_all",
-        "rollback_diff",
-        "rollback_account",
-        "rollback_batch",
-        "approve_jobs",
-        "autoapprove_jobs",
-        "force_dry_run",
-        "cancel_any",
-        "retry_any",
-        "edit_config",
-        "manage_user_grants",
-    },
+    group_name: set(rights)
+    for group_name, rights in _REGISTERED_PERMISSIONS.domain_groups.items()
 }
 
 _LEGACY_RIGHT_ALIASES = {
@@ -820,7 +786,6 @@ def _normalize_target_user_input(raw_value):
 
 
 def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
-    url = "https://commons.wikimedia.org/w/api.php"
     params = {
         "action": "query",
         "prop": "revisions",
@@ -831,7 +796,7 @@ def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
 
     started = time.perf_counter()
     try:
-        resp = requests.get(url, params=params, timeout=15)
+        resp = _mw_client.get(params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
@@ -892,7 +857,6 @@ def fetch_rollbackable_window_end_timestamp(
     We use Action API usercontribs with ucshow=top (rollbackable candidates),
     bounded by ucend=start_timestamp and uclimit<=500.
     """
-    url = "https://commons.wikimedia.org/w/api.php"
     params = {
         "action": "query",
         "list": "usercontribs",
@@ -908,7 +872,7 @@ def fetch_rollbackable_window_end_timestamp(
 
     started = time.perf_counter()
     try:
-        resp = requests.get(url, params=params, timeout=15)
+        resp = _mw_client.get(params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
@@ -954,7 +918,6 @@ def fetch_recent_rollbackable_contribs(
     This powers account-wide rollback requests and is hard-capped at 500 items
     to match Action API ``usercontribs`` constraints.
     """
-    url = "https://commons.wikimedia.org/w/api.php"
     params = {
         "action": "query",
         "list": "usercontribs",
@@ -969,7 +932,7 @@ def fetch_recent_rollbackable_contribs(
 
     started = time.perf_counter()
     try:
-        resp = requests.get(url, params=params, timeout=15)
+        resp = _mw_client.get(params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
@@ -1017,7 +980,6 @@ def iter_contribs_after_timestamp(
     rollbackable_only=False,
     debug_callback=None,
 ):
-    url = "https://commons.wikimedia.org/w/api.php"
 
     continue_params = None
     yielded = 0
@@ -1053,7 +1015,7 @@ def iter_contribs_after_timestamp(
 
         started = time.perf_counter()
         try:
-            resp = requests.get(url, params=params, timeout=15)
+            resp = _mw_client.get(params=params, timeout=15)
             resp.raise_for_status()
             data = resp.json()
 
@@ -1543,6 +1505,9 @@ if not os.environ.get("NOTDEV"):
     load_dotenv()
 
 
+API_PREFIX = f"/api/v1/{BOT_ROUTE_PREFIX}"
+
+
 def get_user_groups(username, force_refresh: bool = False):
     now = time.time()
 
@@ -1550,7 +1515,6 @@ def get_user_groups(username, force_refresh: bool = False):
     if not force_refresh and cached and (now - cached["ts"] < GROUP_CACHE_TTL):
         return cached["groups"]
 
-    url = "https://commons.wikimedia.org/w/api.php"
     params = {
         "action": "query",
         "list": "users",
@@ -1560,7 +1524,7 @@ def get_user_groups(username, force_refresh: bool = False):
     }
 
     try:
-        resp = requests.get(url, params=params, timeout=10)
+        resp = _mw_client.get(params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         users = data.get("query", {}).get("users", [])
@@ -2257,7 +2221,7 @@ def goto():
     return redirect("/rollback-queue")
 
 
-@app.route("/api/v1/rollback/worker")
+@app.route(f"{API_PREFIX}/worker")
 def worker_status():
     hb = r.get("rollback:worker:heartbeat")
 
@@ -2274,7 +2238,7 @@ def worker_status():
     )
 
 
-@app.route("/api/v1/rollback/jobs/progress")
+@app.route(f"{API_PREFIX}/jobs/progress")
 def batch_job_progress():
     if session.get("username") is None:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -2338,7 +2302,7 @@ def rollback_queue_ui():
     )
 
 
-@app.route("/api/v1/rollback/from-diff", methods=["POST"])
+@app.route(f"{API_PREFIX}/from-diff", methods=["POST"])
 def rollback_from_diff_api():
     username = session.get("username")
 
@@ -2496,7 +2460,7 @@ def rollback_from_diff_api():
     )
 
 
-@app.route("/api/v1/rollback/from-account", methods=["POST"])
+@app.route(f"{API_PREFIX}/from-account", methods=["POST"])
 def rollback_from_account_api():
     username = session.get("username")
 
@@ -2742,7 +2706,7 @@ def rollback_requests_page():
     )
 
 
-@app.route("/api/v1/rollback/requests", methods=["GET"])
+@app.route(f"{API_PREFIX}/requests", methods=["GET"])
 def list_rollback_requests_api():
     username = session.get("username")
     if not username:
@@ -2866,7 +2830,7 @@ def list_rollback_requests_api():
     )
 
 
-@app.route("/api/v1/rollback/requests/<int:job_id>/preview", methods=["GET"])
+@app.route(f"{API_PREFIX}/requests/<int:job_id>/preview", methods=["GET"])
 def rollback_request_preview_api(job_id: int):
     username = session.get("username")
     if not username:
@@ -3302,7 +3266,7 @@ def update_runtime_authz_user_grants(target_username: str):
     return jsonify(response_payload)
 
 
-@app.route("/api/v1/rollback/jobs", methods=["GET"])
+@app.route(f"{API_PREFIX}/jobs", methods=["GET"])
 def list_rollback_jobs():
     username = session.get("username")
     if username is None:
@@ -3363,7 +3327,7 @@ def list_rollback_jobs():
     )
 
 
-@app.route("/api/v1/rollback/jobs", methods=["POST"])
+@app.route(f"{API_PREFIX}/jobs", methods=["POST"])
 def create_rollback_job():
     actor = _rollback_api_actor()
 
@@ -3504,7 +3468,7 @@ def create_rollback_job():
     )
 
 
-@app.route("/api/v1/rollback/jobs/<int:job_id>/approve", methods=["POST"])
+@app.route(f"{API_PREFIX}/jobs/<int:job_id>/approve", methods=["POST"])
 def approve_rollback_job(job_id: int):
     actor = _rollback_api_actor()
 
@@ -3709,7 +3673,7 @@ def approve_rollback_job(job_id: int):
     )
 
 
-@app.route("/api/v1/rollback/jobs/<int:job_id>/reject", methods=["POST"])
+@app.route(f"{API_PREFIX}/jobs/<int:job_id>/reject", methods=["POST"])
 def reject_rollback_request(job_id: int):
     actor = _rollback_api_actor()
 
@@ -3808,7 +3772,7 @@ def reject_rollback_request(job_id: int):
     )
 
 
-@app.route("/api/v1/rollback/jobs/<int:job_id>/force-dry-run", methods=["POST"])
+@app.route(f"{API_PREFIX}/jobs/<int:job_id>/force-dry-run", methods=["POST"])
 def force_dry_run_rollback_request(job_id: int):
     actor = _rollback_api_actor()
 
@@ -3891,7 +3855,7 @@ def force_dry_run_rollback_request(job_id: int):
     )
 
 
-@app.route("/api/v1/rollback/jobs/<int:job_id>/run-live", methods=["POST"])
+@app.route(f"{API_PREFIX}/jobs/<int:job_id>/run-live", methods=["POST"])
 def run_dry_run_job_live(job_id: int):
     actor = _rollback_api_actor()
 
@@ -4007,7 +3971,7 @@ def run_dry_run_job_live(job_id: int):
     )
 
 
-@app.route("/api/v1/rollback/jobs/<int:job_id>/retry", methods=["POST"])
+@app.route(f"{API_PREFIX}/jobs/<int:job_id>/retry", methods=["POST"])
 def retry_job(job_id):
     actor = _rollback_api_actor()
 
@@ -4102,7 +4066,7 @@ def retry_job(job_id):
     return jsonify({"job_id": job_id, "status": "queued"})
 
 
-@app.route("/api/v1/rollback/jobs/<int:job_id>", methods=["DELETE"])
+@app.route(f"{API_PREFIX}/jobs/<int:job_id>", methods=["DELETE"])
 def cancel_rollback_job(job_id):
     actor = _rollback_api_actor()
 
@@ -4197,7 +4161,7 @@ def cancel_rollback_job(job_id):
     return jsonify({"job_id": job_id, "status": "canceled"})
 
 
-@app.route("/api/v1/rollback/jobs/<int:job_id>")
+@app.route(f"{API_PREFIX}/jobs/<int:job_id>")
 def get_rollback_job(job_id):
     username = session.get("username")
 
