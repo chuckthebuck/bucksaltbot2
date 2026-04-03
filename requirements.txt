@@ -33,7 +33,7 @@ redis==7.4.0
 requests==2.33.0
 requests-oauthlib==2.0.0
 six==1.17.0
-tzdata==2025.3
+tzdata==2026.1
 urllib3==2.6.3
 vine==5.1.0
 wcwidth==0.6.0
