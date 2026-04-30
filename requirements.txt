@@ -30,7 +30,7 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 pywikibot==11.2.0
 redis==7.4.0
-requests==2.33.0
+requests==2.33.1
 requests-oauthlib==2.0.0
 six==1.17.0
 tzdata==2026.1
