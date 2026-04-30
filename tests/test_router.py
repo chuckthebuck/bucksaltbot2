@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-import router
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -778,7 +777,7 @@ def test_fetch_contribs_after_timestamp_requests_timestamp_and_filters_strictly(
         }
     }
 
-    with patch("router._mw_client.get", return_value=mock_resp) as mock_get:
+    with patch("router.requests.get", return_value=mock_resp) as mock_get:
         results = router.fetch_contribs_after_timestamp(
             "TargetUser", start_ts, limit=10
         )
@@ -810,7 +809,7 @@ def test_fetch_contribs_after_timestamp_respects_limit():
         }
     }
 
-    with patch("router._mw_client.get", return_value=mock_resp):
+    with patch("router.requests.get", return_value=mock_resp):
         results = router.fetch_contribs_after_timestamp("TargetUser", start_ts, limit=1)
 
     assert results == [{"title": "File:One.jpg", "user": "TargetUser"}]
@@ -834,7 +833,7 @@ def test_fetch_rollbackable_window_end_timestamp_uses_top_and_ucend():
     mock_resp.text = "{}"
     mock_resp.status_code = 200
 
-    with patch("router._mw_client.get", return_value=mock_resp) as mock_get:
+    with patch("router.requests.get", return_value=mock_resp) as mock_get:
         end_ts = router.fetch_rollbackable_window_end_timestamp("TargetUser", start_ts)
 
     assert end_ts == "2024-01-15T00:00:00Z"
@@ -853,7 +852,7 @@ def test_fetch_rollbackable_window_end_timestamp_returns_none_when_empty():
     mock_resp.text = "{}"
     mock_resp.status_code = 200
 
-    with patch("router._mw_client.get", return_value=mock_resp):
+    with patch("router.requests.get", return_value=mock_resp):
         end_ts = router.fetch_rollbackable_window_end_timestamp(
             "TargetUser", "2024-01-01T00:00:00Z"
         )
@@ -877,7 +876,7 @@ def test_fetch_recent_rollbackable_contribs_uses_top_and_limit_cap():
     mock_resp.text = "{}"
     mock_resp.status_code = 200
 
-    with patch("router._mw_client.get", return_value=mock_resp) as mock_get:
+    with patch("router.requests.get", return_value=mock_resp) as mock_get:
         items = router.fetch_recent_rollbackable_contribs("BadUser", limit=999)
 
     assert items == [
@@ -894,7 +893,7 @@ def test_fetch_diff_author_and_timestamp_handles_network_error():
     import router
     import requests
 
-    with patch("router._mw_client.get") as mock_get:
+    with patch("router.requests.get") as mock_get:
         mock_get.side_effect = requests.Timeout("Connection timeout")
         with pytest.raises(ValueError, match="Failed to fetch revision metadata"):
             router.fetch_diff_author_and_timestamp(123456)
@@ -904,7 +903,7 @@ def test_fetch_contribs_after_timestamp_handles_network_error():
     import router
     import requests
 
-    with patch("router._mw_client.get") as mock_get:
+    with patch("router.requests.get") as mock_get:
         mock_get.side_effect = requests.ConnectionError("Connection failed")
         with pytest.raises(ValueError, match="Failed to fetch user contributions"):
             router.fetch_contribs_after_timestamp("TestUser", "2024-01-01T00:00:00Z")
@@ -1816,6 +1815,7 @@ def test_check_rate_limit_fails_open_on_redis_error():
 
 def test_create_job_returns_403_for_read_only_user(client):
     """A user in USERS_READ_ONLY cannot submit new rollback jobs."""
+    import router
 
     _set_session(client, "viewer")
     with patch.object(router, "USERS_READ_ONLY", {"viewer"}):
@@ -1850,6 +1850,8 @@ def test_create_job_returns_429_when_rate_limited(client):
 
 def test_create_job_succeeds_when_rate_limit_disabled(client):
     """With rate limiting off the route behaves as before."""
+    import router
+
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 42
@@ -1876,6 +1878,7 @@ def test_create_job_succeeds_when_rate_limit_disabled(client):
 
 def test_cancel_job_allowed_for_cancel_any_user_on_others_job(client):
     """A user with cancel_any permission can cancel another user's job."""
+    import router
 
     _set_session(client, "admin")
     mock_conn, mock_cursor = _make_mock_conn()
@@ -1894,6 +1897,8 @@ def test_cancel_job_allowed_for_cancel_any_user_on_others_job(client):
 
 def test_cancel_job_still_forbidden_without_cancel_any(client):
     """A non-privileged user cannot cancel someone else's job."""
+    import router
+
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "bob", "queued")
@@ -1913,6 +1918,7 @@ def test_cancel_job_still_forbidden_without_cancel_any(client):
 
 def test_retry_job_allowed_for_retry_any_user_on_others_job(client):
     """A user with retry_any permission can retry another user's job."""
+    import router
 
     _set_session(client, "admin")
     mock_conn, mock_cursor = _make_mock_conn()
@@ -1933,6 +1939,8 @@ def test_retry_job_allowed_for_retry_any_user_on_others_job(client):
 
 def test_retry_job_still_forbidden_without_retry_any(client):
     """A non-privileged user cannot retry someone else's job."""
+    import router
+
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = ("bob",)
@@ -1952,6 +1960,7 @@ def test_retry_job_still_forbidden_without_retry_any(client):
 
 def test_get_job_allowed_for_view_all_user_on_others_job(client):
     """A user with read_all permission can view another user's job."""
+    import router
 
     _set_session(client, "watcher")
     mock_conn, mock_cursor = _make_mock_conn()
@@ -1971,6 +1980,8 @@ def test_get_job_allowed_for_view_all_user_on_others_job(client):
 
 def test_get_job_still_forbidden_without_read_all(client):
     """A user without read_all cannot view another user's job."""
+    import router
+
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "bob", "completed", 0, "2024-01-01")
@@ -1991,6 +2002,8 @@ def test_get_job_still_forbidden_without_read_all(client):
 
 def test_from_diff_api_allowed_for_granted_user(client):
     """A non-maintainer in USERS_GRANTED_FROM_DIFF can use the from-diff API."""
+    import router
+
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.lastrowid = 11
@@ -2024,6 +2037,8 @@ def test_from_diff_api_still_denied_without_grant(client):
 
 def test_all_jobs_ui_allowed_for_view_all_granted_user(client):
     """A non-maintainer in USERS_GRANTED_VIEW_ALL can access the all-jobs page."""
+    import router
+
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchall.return_value = []
@@ -2040,6 +2055,8 @@ def test_all_jobs_ui_allowed_for_view_all_granted_user(client):
 
 def test_goto_from_diff_tab_allowed_for_granted_user(client):
     """A non-maintainer user with from_diff grant is redirected correctly by /goto."""
+    import router
+
     _set_session(client, "alice")
     with (
         patch("router.is_maintainer", return_value=False),
@@ -2053,6 +2070,8 @@ def test_goto_from_diff_tab_allowed_for_granted_user(client):
 
 def test_goto_account_tab_allowed_for_granted_user(client):
     """A non-maintainer user with from_diff grant can access the account rollback tab."""
+    import router
+
     _set_session(client, "alice")
     with (
         patch("router.is_maintainer", return_value=False),
@@ -2143,6 +2162,8 @@ def test_cancel_job_returns_403_when_owner_is_maintainer_and_actor_has_only_canc
     client,
 ):
     """An env-granted cancel_any user cannot cancel a maintainer's job."""
+    import router
+
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "maintaineruser", "queued")
@@ -2163,6 +2184,7 @@ def test_cancel_job_allowed_when_owner_is_regular_maintainer_and_actor_is_also_m
     client,
 ):
     """A maintainer can cancel another regular maintainer's job."""
+
     _set_session(client, "maint_alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "maint_bob", "queued")
@@ -2181,6 +2203,7 @@ def test_cancel_job_allowed_when_owner_is_regular_maintainer_and_actor_is_also_m
 
 def test_cancel_job_allowed_when_owner_is_maintainer_and_actor_is_bot_admin(client):
     """A bot admin can cancel a maintainer's job."""
+
     _set_session(client, "chuckbot")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "maint_bob", "queued")
@@ -2201,6 +2224,7 @@ def test_cancel_job_returns_403_when_owner_is_bot_admin_and_actor_is_regular_mai
     client,
 ):
     """A regular maintainer cannot cancel chuckbot's job."""
+
     _set_session(client, "maint_alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "chuckbot", "queued")
@@ -2219,6 +2243,7 @@ def test_cancel_job_returns_403_when_owner_is_bot_admin_and_actor_is_regular_mai
 
 def test_cancel_job_allowed_when_owner_is_bot_admin_and_actor_is_also_bot_admin(client):
     """A bot admin can cancel another bot admin's own job."""
+
     _set_session(client, "chuckbot2")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "chuckbot", "queued")
@@ -2239,6 +2264,8 @@ def test_cancel_job_returns_403_when_owner_is_admin_and_actor_has_only_cancel_an
     client,
 ):
     """An env-granted cancel_any user cannot cancel a sysop admin's job."""
+    import router
+
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "sysop_bob", "queued")
@@ -2257,6 +2284,7 @@ def test_cancel_job_returns_403_when_owner_is_admin_and_actor_has_only_cancel_an
 
 def test_cancel_job_allowed_when_owner_is_admin_and_actor_is_maintainer(client):
     """A maintainer can cancel a sysop admin's job."""
+
     _set_session(client, "maint_alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "sysop_bob", "queued")
@@ -2275,6 +2303,7 @@ def test_cancel_job_allowed_when_owner_is_admin_and_actor_is_maintainer(client):
 
 def test_cancel_job_returns_403_when_regular_user_tries_to_cancel_admin_job(client):
     """A regular (non-maintainer) user cannot cancel an admin's job."""
+
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "sysop_bob", "queued")
@@ -2291,6 +2320,8 @@ def test_cancel_job_returns_403_when_regular_user_tries_to_cancel_admin_job(clie
 
 def test_cancel_job_allowed_for_cancel_any_user_on_regular_users_job(client):
     """An env-granted cancel_any user CAN cancel a regular (non-admin, non-maintainer) user's job."""
+    import router
+
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
     mock_cursor.fetchone.return_value = (1, "bob", "queued")
@@ -2344,6 +2375,7 @@ def test_get_runtime_authz_api_returns_403_for_non_bot_admin(client):
 
 
 def test_get_runtime_authz_api_returns_config_for_bot_admin(client):
+    import router
 
     _set_session(client, "otherbot")
     with (
@@ -2384,10 +2416,12 @@ def test_update_runtime_authz_api_rejects_unknown_key(client):
         )
 
     assert resp.status_code == 400
-    assert "invalid" in resp.get_json().get("detail", "").lower()
+    assert "Unknown config key" in resp.get_json().get("detail", "")
 
 
 def test_update_runtime_authz_api_persists_for_chuckbot(client):
+    import router
+
     _set_session(client, "chuckbot")
     default_cfg = router._runtime_authz_defaults()
 
@@ -2414,6 +2448,8 @@ def test_update_runtime_authz_api_persists_for_chuckbot(client):
 
 
 def test_update_runtime_authz_api_normalizes_quoted_and_prefixed_usernames(client):
+    import router
+
     _set_session(client, "chuckbot")
     default_cfg = router._runtime_authz_defaults()
 
@@ -2440,6 +2476,8 @@ def test_update_runtime_authz_api_normalizes_quoted_and_prefixed_usernames(clien
 
 
 def test_update_runtime_authz_api_accepts_user_grants_json(client):
+    import router
+
     _set_session(client, "chuckbot")
     default_cfg = router._runtime_authz_defaults()
 
@@ -2548,6 +2586,8 @@ def test_from_diff_api_allows_dry_run_for_dry_run_only_right(client):
 
 
 def test_get_runtime_authz_user_grants_returns_payload_for_bot_admin(client):
+    import router
+
     _set_session(client, "chuckbot")
     cfg = router._runtime_authz_defaults()
     cfg["USER_GRANTS_JSON"] = {
@@ -2569,6 +2609,8 @@ def test_get_runtime_authz_user_grants_returns_payload_for_bot_admin(client):
 
 
 def test_update_runtime_authz_user_grants_updates_single_user(client):
+    import router
+
     _set_session(client, "chuckbot")
     cfg = router._runtime_authz_defaults()
     cfg["USER_GRANTS_JSON"] = {
