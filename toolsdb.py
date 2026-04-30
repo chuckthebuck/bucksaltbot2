@@ -67,9 +67,7 @@ def init_db():
 
             # Ensure approval columns exist for legacy deployments where
             # the table was created before request/approval workflows.
-            _ensure_column(
-                cursor, TABLE_JOBS, "job_type", "job_type VARCHAR(32) NULL"
-            )
+            _ensure_column(cursor, TABLE_JOBS, "job_type", "job_type VARCHAR(32) NULL")
             _ensure_column(
                 cursor, TABLE_JOBS, "request_type", "request_type VARCHAR(32) NULL"
             )

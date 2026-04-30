@@ -35,7 +35,9 @@ def migrate() -> None:
             if _table_exists(cursor, "bot_jobs") and not _column_exists(
                 cursor, "bot_jobs", "job_type"
             ):
-                cursor.execute("ALTER TABLE bot_jobs ADD COLUMN job_type VARCHAR(32) NULL")
+                cursor.execute(
+                    "ALTER TABLE bot_jobs ADD COLUMN job_type VARCHAR(32) NULL"
+                )
 
         conn.commit()
 

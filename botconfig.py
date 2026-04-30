@@ -29,7 +29,7 @@ BOT_HELP_PAGE: str = os.getenv("BOT_HELP_PAGE", "Alachuckthebuck")
 # Example: BOT_DOCUMENTATION_URL=https://commons.wikimedia.org/wiki/Help:MyTool
 BOT_DOCUMENTATION_URL: str = os.getenv(
     "BOT_DOCUMENTATION_URL",
-    f"https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot",
+    "https://commons.wikimedia.org/wiki/User:Alachuckthebuck/unbuckbot",
 )
 
 # Primary account allowed to edit runtime config via the admin API.  Typically
@@ -61,18 +61,12 @@ TOOL_NAME: str = os.getenv("TOOL_NAME", BOT_NAME)
 
 # Base URL of the MediaWiki Action API for the target wiki.
 # Example: WIKI_API_URL=https://en.wikipedia.org/w/api.php
-WIKI_API_URL: str = os.getenv(
-    "WIKI_API_URL", "https://commons.wikimedia.org/w/api.php"
-)
+WIKI_API_URL: str = os.getenv("WIKI_API_URL", "https://commons.wikimedia.org/w/api.php")
 
 # Comma-separated list of origins allowed for CORS on the /api/* endpoints.
 # Example: CORS_ALLOWED_ORIGINS=https://commons.wikimedia.org,https://en.wikipedia.org
-_cors_raw: str = os.getenv(
-    "CORS_ALLOWED_ORIGINS", "https://commons.wikimedia.org"
-)
-CORS_ALLOWED_ORIGINS: list[str] = [
-    o.strip() for o in _cors_raw.split(",") if o.strip()
-]
+_cors_raw: str = os.getenv("CORS_ALLOWED_ORIGINS", "https://commons.wikimedia.org")
+CORS_ALLOWED_ORIGINS: list[str] = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
@@ -87,9 +81,7 @@ DB_NAME_SUFFIX: str = os.getenv("DB_NAME_SUFFIX", "match_and_split")
 # Prefix for the on-wiki status subpages edited by the bot.
 # Defaults to User:<BOT_USERNAME>/status.
 # Example: STATUS_PAGE_PREFIX=User:MyToolBot/status
-STATUS_PAGE_PREFIX: str = os.getenv(
-    "STATUS_PAGE_PREFIX", f"User:{BOT_USERNAME}/status"
-)
+STATUS_PAGE_PREFIX: str = os.getenv("STATUS_PAGE_PREFIX", f"User:{BOT_USERNAME}/status")
 
 # ── Edit summary ─────────────────────────────────────────────────────────────
 

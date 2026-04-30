@@ -30,7 +30,7 @@ from rollback_queue import (
     process_rollback_job,
     resolve_diff_rollback_job_task as resolve_diff_rollback_job,
 )
-from toolsdb import TABLE_JOB_ITEMS, TABLE_JOBS, get_conn, get_runtime_config, upsert_runtime_config
+from toolsdb import get_conn, get_runtime_config, upsert_runtime_config
 
 ALLOWED_GROUPS = {"sysop", "rollbacker"}
 GROUP_CACHE_TTL = 300
@@ -291,7 +291,11 @@ def _implicit_role_flags(
     if not normalized_username:
         return {role: False for role in _USER_IMPLICIT_FLAGS}
 
-    groups = set(commons_groups if commons_groups is not None else get_user_groups(normalized_username))
+    groups = set(
+        commons_groups
+        if commons_groups is not None
+        else get_user_groups(normalized_username)
+    )
 
     return {
         "authenticated": True,
@@ -301,7 +305,9 @@ def _implicit_role_flags(
         "commons_rollbacker": bool("rollbacker" in groups),
         "tester": bool(normalized_username in config["USERS_TESTER"]),
         "read_only": bool(normalized_username in config["USERS_READ_ONLY"]),
-        "extra_authorized": bool(normalized_username in config["EXTRA_AUTHORIZED_USERS"]),
+        "extra_authorized": bool(
+            normalized_username in config["EXTRA_AUTHORIZED_USERS"]
+        ),
     }
 
 
@@ -353,7 +359,9 @@ def _normalize_auto_grants_map_input(value, key: str) -> dict:
             if normalized_atom.startswith("group:"):
                 group_name = normalized_atom.split(":", 1)[1]
                 if group_name not in _USER_GRANT_GROUPS:
-                    raise ValueError(f"Unknown grant group '{group_name}' for role {role_name}")
+                    raise ValueError(
+                        f"Unknown grant group '{group_name}' for role {role_name}"
+                    )
                 role_atoms.add(normalized_atom)
                 continue
 
@@ -362,7 +370,9 @@ def _normalize_auto_grants_map_input(value, key: str) -> dict:
                 continue
 
             if normalized_atom not in _USER_GRANT_RIGHTS:
-                raise ValueError(f"Unknown right '{normalized_atom}' for role {role_name}")
+                raise ValueError(
+                    f"Unknown right '{normalized_atom}' for role {role_name}"
+                )
 
             role_atoms.add(normalized_atom)
 
@@ -433,7 +443,11 @@ def _get_user_grants_payload(
     rights = sorted(
         [
             next(
-                (legacy for legacy, canonical in _LEGACY_RIGHT_ALIASES.items() if canonical == atom),
+                (
+                    legacy
+                    for legacy, canonical in _LEGACY_RIGHT_ALIASES.items()
+                    if canonical == atom
+                ),
                 atom,
             )
             for atom in atoms
@@ -443,9 +457,13 @@ def _get_user_grants_payload(
     expanded_rights = sorted(_expand_user_grants(config, normalized_username))
 
     resolved_groups = set(
-        commons_groups if commons_groups is not None else get_user_groups(normalized_username)
+        commons_groups
+        if commons_groups is not None
+        else get_user_groups(normalized_username)
     )
-    implicit = _implicit_role_flags(config, normalized_username, commons_groups=resolved_groups)
+    implicit = _implicit_role_flags(
+        config, normalized_username, commons_groups=resolved_groups
+    )
 
     return {
         "username": target_username,
@@ -1277,9 +1295,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                 batch_id = row[0] or int(time.time() * 1000)
 
                 # Clear any stale items from previous failed attempts.
-                cursor.execute(
-                    "DELETE FROM bot_job_items WHERE job_id=%s", (job_id,)
-                )
+                cursor.execute("DELETE FROM bot_job_items WHERE job_id=%s", (job_id,))
 
                 def _persist_chunk(chunk_items, target_job_id):
                     for item in chunk_items:
@@ -2081,7 +2097,9 @@ def _should_autoapprove_request(actor: str, required_level: str | None) -> bool:
     if not app.config.get("TESTING"):
         return False
 
-    if not _parse_bool(os.environ.get("LIVE_TEST_AUTO_APPROVE_REQUESTS"), default=False):
+    if not _parse_bool(
+        os.environ.get("LIVE_TEST_AUTO_APPROVE_REQUESTS"), default=False
+    ):
         return False
 
     if "autoapprove_jobs" not in _user_permissions(actor):
@@ -2236,12 +2254,20 @@ def goto():
         return redirect("/rollback-queue/all-jobs")
 
     if tab == "rollback-from-diff":
-        if "rollback_diff" not in perms and "from_diff" not in perms and "write" not in perms:
+        if (
+            "rollback_diff" not in perms
+            and "from_diff" not in perms
+            and "write" not in perms
+        ):
             abort(403)
         return redirect("/rollback-from-diff")
 
     if tab == "rollback-account":
-        if "rollback_account" not in perms and "from_diff" not in perms and "write" not in perms:
+        if (
+            "rollback_account" not in perms
+            and "from_diff" not in perms
+            and "write" not in perms
+        ):
             abort(403)
         return redirect("/rollback-account")
 
@@ -2401,8 +2427,7 @@ def rollback_from_diff_api():
     dry_run = _parse_bool(dry_run_raw, default=False)
 
     if (
-        "rollback_diff_dry_run_only" in perms
-        or "from_diff_dry_run_only" in perms
+        "rollback_diff_dry_run_only" in perms or "from_diff_dry_run_only" in perms
     ) and not dry_run:
         return jsonify(
             {"detail": "Forbidden: from-diff access is limited to dry-run mode"}
@@ -2483,7 +2508,7 @@ def rollback_from_diff_api():
                 current_job=f"Auto-approved diff job {job_id} resolving",
             )
             resolve_diff_rollback_job.delay(job_id)
-    except Exception as e:
+    except Exception:
         logging.exception("Error in rollback_from_diff_api")
         return jsonify({"detail": "Failed to create rollback jobs"}), 500
 
@@ -2573,8 +2598,7 @@ def rollback_from_account_api():
     dry_run = _parse_bool(dry_run_raw, default=False)
 
     if (
-        "rollback_diff_dry_run_only" in perms
-        or "from_diff_dry_run_only" in perms
+        "rollback_diff_dry_run_only" in perms or "from_diff_dry_run_only" in perms
     ) and not dry_run:
         return jsonify(
             {"detail": "Forbidden: from-diff access is limited to dry-run mode"}
@@ -2673,7 +2697,7 @@ def rollback_from_account_api():
 
     except ValueError:
         return jsonify({"detail": "Invalid request parameters"}), 400
-    except Exception as e:
+    except Exception:
         logging.exception("Error in rollback_from_account_api")
         return jsonify({"detail": "Failed to create rollback jobs"}), 500
 
@@ -2706,7 +2730,11 @@ def rollback_from_diff_page():
 
     perms = _user_permissions(username)
 
-    if "rollback_diff" not in perms and "from_diff" not in perms and "write" not in perms:
+    if (
+        "rollback_diff" not in perms
+        and "from_diff" not in perms
+        and "write" not in perms
+    ):
         abort(403)
 
     return render_template(
@@ -2959,11 +2987,8 @@ def rollback_request_preview_api(job_id: int):
     if not payload:
         return jsonify({"detail": "Missing request payload"}), 404
 
-    endpoint = (
-        requested_endpoint
-        or _normalize_request_endpoint(
-            stored_endpoint or payload.get("requested_endpoint") or _ENDPOINT_FROM_DIFF
-        )
+    endpoint = requested_endpoint or _normalize_request_endpoint(
+        stored_endpoint or payload.get("requested_endpoint") or _ENDPOINT_FROM_DIFF
     )
     if endpoint not in _ALLOWED_DIFF_REQUEST_ENDPOINTS:
         return jsonify({"detail": "Invalid endpoint"}), 400
@@ -2986,7 +3011,7 @@ def rollback_request_preview_api(job_id: int):
         )
     except ValueError:
         return jsonify({"detail": "Invalid preview request"}), 400
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         app.logger.exception("Failed to compute request preview for job %s", job_id)
         return jsonify({"detail": "Failed to compute request preview"}), 500
 
@@ -3249,12 +3274,12 @@ def get_runtime_authz_user_grants(target_username: str):
     if not normalized_target:
         return jsonify({"detail": "Username is required"}), 400
 
-    refresh_commons = _parse_bool(
-        request.args.get("refresh_commons"), default=False
-    )
+    refresh_commons = _parse_bool(request.args.get("refresh_commons"), default=False)
 
     config = _effective_runtime_authz_config()
-    commons_groups = set(get_user_groups(normalized_target, force_refresh=refresh_commons))
+    commons_groups = set(
+        get_user_groups(normalized_target, force_refresh=refresh_commons)
+    )
     payload = _get_user_grants_payload(
         normalized_target, config, commons_groups=commons_groups
     )

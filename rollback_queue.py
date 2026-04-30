@@ -10,7 +10,7 @@ import status_updater
 
 ensure_pywikibot_env(strict=True)
 
-import pywikibot
+import pywikibot  # noqa: E402
 
 
 # MediaWiki API error codes that mean the rollback is already in the desired
@@ -256,9 +256,7 @@ def _bot_site() -> pywikibot.Site:
         site.login()
         logged_user = site.user()
         if not logged_user:
-            raise RuntimeError(
-                "Login did not establish an authenticated user session"
-            )
+            raise RuntimeError("Login did not establish an authenticated user session")
         print("Logged in as:", logged_user)
     except Exception as e:
         print(f"OAuth login failed: {_format_exception(e)}")
