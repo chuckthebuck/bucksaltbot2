@@ -39,6 +39,62 @@ def init_db():
 
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS module_registry (
+                    name VARCHAR(255) PRIMARY KEY,
+                    repo_url VARCHAR(512) NOT NULL,
+                    entry_point VARCHAR(255) NOT NULL,
+                    ui_enabled TINYINT(1) NOT NULL DEFAULT 0,
+                    enabled TINYINT(1) NOT NULL DEFAULT 0,
+                    redis_namespace VARCHAR(255) NOT NULL,
+                    oauth_consumer_mode VARCHAR(32) NOT NULL DEFAULT 'default',
+                    oauth_consumer_key_env VARCHAR(255) NULL,
+                    oauth_consumer_secret_env VARCHAR(255) NULL,
+                    manifest_json LONGTEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        ON UPDATE CURRENT_TIMESTAMP
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS module_cron_jobs (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    module_name VARCHAR(255) NOT NULL,
+                    job_name VARCHAR(255) NOT NULL,
+                    schedule VARCHAR(255) NOT NULL,
+                    endpoint VARCHAR(255) NOT NULL,
+                    timeout_seconds INT NOT NULL DEFAULT 300,
+                    enabled TINYINT(1) NOT NULL DEFAULT 1,
+                    last_run_at TIMESTAMP NULL,
+                    next_run_at TIMESTAMP NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_module_name (module_name),
+                    INDEX idx_enabled_next_run (enabled, next_run_at)
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS module_access (
+                    module_name VARCHAR(255) NOT NULL,
+                    username VARCHAR(255) NOT NULL,
+                    enabled TINYINT(1) NOT NULL DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (module_name, username),
+                    INDEX idx_username (username)
+                )
+                """
+            )
+
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS rollback_jobs (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     requested_by VARCHAR(255) NOT NULL,

@@ -27,6 +27,8 @@
   {% set current_section = 'jobs' %}
 {% elif type in ['runtime-config', 'documentation'] %}
   {% set current_section = 'config' %}
+{% elif type == 'modules' %}
+  {% set current_section = 'modules' %}
 {% endif %}
 
 <header class="header">
@@ -56,6 +58,15 @@
     >
       Config
     </a>
+    {% if is_maintainer or is_bot_admin %}
+    <a
+      class="header-tab{% if current_section == 'modules' %} is-active{% endif %}"
+      aria-current="{% if current_section == 'modules' %}page{% else %}false{% endif %}"
+      href="/goto?tab=modules"
+    >
+      Modules
+    </a>
+    {% endif %}
   </nav>
 
   {% if username %}
@@ -86,6 +97,10 @@
       <a class="subnav-item{% if type == 'runtime-config' %} is-active{% endif %}" href="/goto?tab=rollback-config">Runtime Config</a>
       {% endif %}
       <a class="subnav-item" href="/goto?tab=documentation">Documentation</a>
+      {% elif current_section == 'modules' %}
+      {% if is_maintainer or is_bot_admin %}
+      <a class="subnav-item{% if type == 'modules' %} is-active{% endif %}" href="/goto?tab=modules">Module Management</a>
+      {% endif %}
       {% endif %}
     </div>
 <div id="app"></div>

@@ -91,6 +91,8 @@ CELERY_BROKER_URL = os.getenv(
 
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 
+from celery.schedules import schedule
+
 flask_app.config["CELERY"] = {
     "broker_url": CELERY_BROKER_URL,
     "result_backend": CELERY_RESULT_BACKEND,
@@ -100,6 +102,12 @@ flask_app.config["CELERY"] = {
     "worker_prefetch_multiplier": 1,
     "task_acks_late": True,
     "task_reject_on_worker_lost": True,
+    "beat_schedule": {
+        "module-cron-executor": {
+            "task": "module_cron_executor.run_overdue_jobs",
+            "schedule": schedule(run_every=60),  # Check every 60 seconds
+        },
+    },
 }
 
 celery = celery_init_app(flask_app)
@@ -119,6 +127,14 @@ def inject_user_permissions():
 
 
 import router  # noqa: E402,F401
+from pathlib import Path
+
+from router.module_registry import bootstrap_module_definitions  # noqa: E402
+from router.module_runtime import register_enabled_modules  # noqa: E402
+
+if os.getenv("ENABLE_MODULE_LOADING", "0") == "1":
+    bootstrap_module_definitions(Path(__file__).resolve().parent / "modules")
+    register_enabled_modules(flask_app)
 
 CORS(
     flask_app,

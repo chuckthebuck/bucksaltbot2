@@ -1,0 +1,13 @@
+name = "template_module"
+repo = "https://github.com/chuckthebuck/bucksaltbot2"
+entry_point = "modules.template_module.blueprint"
+ui = true
+redis_namespace = "template_module"
+title = "Template Module"
+
+# For cron-only modules, add:
+# [[cron_jobs]]
+# name = "some-job"
+# schedule = "0 1 * * *"
+# endpoint = "/api/v1/template_module/cron/some-job"
+# timeout_seconds = 300

@@ -1118,6 +1118,31 @@ def test_cancel_job_returns_403_when_owned_by_different_user(client):
     assert resp.status_code == 403
 
 
+def test_module_registry_api_lists_loaded_modules(client):
+    import router.module_registry as registry
+
+    _set_session(client, "maintainer")
+    record = registry.ModuleRecord(
+        definition=registry.parse_module_definition(
+            {
+                "name": "four_award",
+                "repo": "https://example.invalid/four-award",
+                "entry_point": "four_award.handler",
+                "ui": True,
+            }
+        ),
+        enabled=True,
+    )
+
+    with patch("router.routes.list_module_definitions", return_value=[record]):
+        resp = client.get("/api/v1/modules")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["modules"][0]["name"] == "four_award"
+    assert data["modules"][0]["has_access"] is True
+
+
 def test_cancel_job_marks_job_and_items_canceled(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()

@@ -9,6 +9,7 @@ import FromDiffApp from "./FromDiffApp.vue";
 import AccountRollbackApp from "./AccountRollbackApp.vue";
 import ConfigApp from "./ConfigApp.vue";
 import RequestReviewApp from "./RequestReviewApp.vue";
+import ModulesApp from "./ModulesApp.vue";
 
 if (document.getElementById("batch-props")) {
   createApp(BatchApp).mount("#app");
@@ -22,6 +23,8 @@ if (document.getElementById("batch-props")) {
   createApp(ConfigApp).mount("#app");
 } else if (document.getElementById("request-review-props")) {
   createApp(RequestReviewApp).mount("#app");
+} else if (document.getElementById("modules-props")) {
+  createApp(ModulesApp).mount("#modules-container");
 } else if (document.getElementById("rollback-queue-props")) {
   createApp(App).mount("#app");
 }

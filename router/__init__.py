@@ -71,6 +71,8 @@ from router.diff_state import (  # noqa: F401
     _store_diff_payload,
     _update_diff_payload,
 )
+from router import module_registry as module_registry  # noqa: F401
+from router import module_runtime as module_runtime  # noqa: F401
 from router.framework_config import (  # noqa: F401
     ALLOWED_GROUPS as FRAMEWORK_ALLOWED_GROUPS,
     BOT_NAME,

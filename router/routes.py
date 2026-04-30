@@ -59,6 +59,13 @@ from router.permissions import (
     _can_manage_user_grants,
 )
 from router.diff_state import _ACCOUNT_ROLLBACK_MAX_LIMIT, _ROLLBACKABLE_WINDOW_LIMIT
+from router.module_registry import (
+    get_module_definition,
+    list_module_definitions,
+    set_module_enabled,
+    upsert_module_access,
+    user_has_module_access,
+)
 from router.framework_config import (
     DOCS_URL,
     MWOAUTH_BASE_URL,
@@ -602,6 +609,11 @@ def goto():
         if not _can_view_runtime_config(username):
             abort(403)
         return redirect("/rollback-config")
+
+    if tab == "modules":
+        if not (is_maintainer(username) or is_admin_user(username)):
+            abort(403)
+        return redirect("/modules")
 
     if tab == "documentation":
         return redirect(DOCS_URL)
@@ -1504,6 +1516,25 @@ def rollback_config_ui():
         username=username,
         can_edit_config=_can_edit_runtime_config(username),
         type="runtime-config",
+    )
+
+
+@app.route("/modules")
+def modules_ui():
+    username = session.get("username")
+
+    if not username:
+        abort(401)
+
+    if not (is_maintainer(username) or is_admin_user(username)):
+        abort(403)
+
+    return render_template(
+        "modules.html",
+        username=username,
+        is_maintainer=is_maintainer(username),
+        is_bot_admin=is_admin_user(username),
+        type="modules",
     )
 
 
@@ -2779,3 +2810,95 @@ def oauth_callback():
 def logout():
     session.clear()
     return redirect(url_for("index"))
+
+
+@app.route("/api/v1/modules", methods=["GET"])
+def module_registry_api():
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    is_admin = bool(is_maintainer(username) or is_admin_user(username))
+    modules = []
+    for record in list_module_definitions():
+        definition = record.definition
+        modules.append(
+            {
+                "name": definition.name,
+                "title": definition.title or definition.name,
+                "enabled": bool(record.enabled),
+                "ui_enabled": bool(definition.ui_enabled),
+                "cron_jobs": [job.as_dict() for job in definition.cron_jobs],
+                "has_access": bool(record.enabled or is_admin),
+                "redis_namespace": definition.redis_namespace,
+                "oauth_consumer_mode": definition.oauth_consumer_mode,
+            }
+        )
+
+    return jsonify({"modules": modules})
+
+
+@app.route("/api/v1/modules/<path:module_name>", methods=["GET"])
+def module_registry_item_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    is_admin = bool(is_maintainer(username) or is_admin_user(username))
+    if not user_has_module_access(module_name, username, is_maintainer=is_admin):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    payload = record.as_dict()
+    payload["has_access"] = True
+    return jsonify(payload)
+
+
+@app.route("/api/v1/modules/<path:module_name>/enabled", methods=["PUT"])
+def module_registry_toggle_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (is_maintainer(username) or is_admin_user(username)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    enabled = _parse_bool(payload.get("enabled"), default=True)
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    set_module_enabled(module_name, enabled)
+    return jsonify({"module": module_name, "enabled": bool(enabled)})
+
+
+@app.route("/api/v1/modules/<path:module_name>/access", methods=["PUT"])
+def module_registry_access_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (is_maintainer(username) or is_admin_user(username)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    target_username = str(payload.get("username") or "").strip()
+    enabled = _parse_bool(payload.get("enabled"), default=True)
+
+    if not target_username:
+        return jsonify({"detail": "Missing required parameter: username"}), 400
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    upsert_module_access(module_name, target_username, enabled=enabled)
+    return jsonify(
+        {
+            "module": module_name,
+            "username": target_username,
+            "enabled": bool(enabled),
+        }
+    )

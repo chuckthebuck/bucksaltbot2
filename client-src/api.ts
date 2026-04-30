@@ -593,3 +593,76 @@ export async function updateRuntimeUserGrants(
 
   return data;
 }
+
+// ------------------------
+// MODULES
+// ------------------------
+
+export interface ModuleItem {
+  name: string;
+  title: string;
+  enabled: boolean;
+  ui_enabled: boolean;
+  has_access: boolean;
+  redis_namespace: string;
+  oauth_consumer_mode: string;
+  cron_jobs: Array<{
+    name: string;
+    schedule: string;
+    endpoint: string;
+    timeout_seconds: number;
+    enabled: boolean;
+  }>;
+}
+
+export async function fetchModules(): Promise<ModuleItem[]> {
+  const r = await fetch("/api/v1/modules");
+  const data = await r.json();
+
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to fetch modules: ${r.status}`);
+  }
+
+  return data.modules || [];
+}
+
+export async function toggleModuleEnabled(
+  moduleName: string,
+  enabled: boolean
+): Promise<{ module: string; enabled: boolean }> {
+  const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/enabled`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ enabled }),
+  });
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to toggle module: ${r.status}`);
+  }
+
+  return data;
+}
+
+export async function updateModuleAccess(
+  moduleName: string,
+  username: string,
+  enabled: boolean
+): Promise<{ module: string; username: string; enabled: boolean }> {
+  const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/access`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ username, enabled }),
+  });
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to update module access: ${r.status}`);
+  }
+
+  return data;
+}
