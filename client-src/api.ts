@@ -384,7 +384,7 @@ export async function approveJob(id: number, endpoint?: string): Promise<any> {
     body: JSON.stringify(body),
   });
 
-  let data: any = null;
+  let data: any;
   try {
     data = await r.json();
   } catch {
@@ -407,7 +407,7 @@ export async function rejectRollbackRequest(id: number): Promise<any> {
     body: "{}",
   });
 
-  let data: any = null;
+  let data: any;
   try {
     data = await r.json();
   } catch {
@@ -430,7 +430,7 @@ export async function forceDryRunRequest(id: number): Promise<any> {
     body: "{}",
   });
 
-  let data: any = null;
+  let data: any;
   try {
     data = await r.json();
   } catch {
@@ -453,7 +453,7 @@ export async function runJobLive(id: number): Promise<any> {
     body: "{}",
   });
 
-  let data: any = null;
+  let data: any;
   try {
     data = await r.json();
   } catch {

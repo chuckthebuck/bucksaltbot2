@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+import router
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -1522,7 +1523,7 @@ def test_is_authorized_returns_true_for_extra_authorized_user():
     """A user listed in EXTRA_AUTHORIZED_USERS is authorized."""
     import router
 
-    with patch.object(__import__("router"), "EXTRA_AUTHORIZED_USERS", {"testuser"}):
+    with patch.object(router, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
         with patch("router.is_maintainer", return_value=False):
             assert router.is_authorized("TestUser") is True
 
@@ -1531,7 +1532,7 @@ def test_is_authorized_extra_authorized_user_is_case_insensitive():
     """EXTRA_AUTHORIZED_USERS matching is case-insensitive."""
     import router
 
-    with patch.object(__import__("router"), "EXTRA_AUTHORIZED_USERS", {"testuser"}):
+    with patch.object(router, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
         with patch("router.is_maintainer", return_value=False):
             assert router.is_authorized("TESTUSER") is True
             assert router.is_authorized("testuser") is True
@@ -1542,7 +1543,7 @@ def test_is_authorized_returns_false_for_unknown_user():
     """A user not in any authorized list or group is denied."""
     import router
 
-    with patch.object(__import__("router"), "EXTRA_AUTHORIZED_USERS", set()):
+    with patch.object(router, "EXTRA_AUTHORIZED_USERS", set()):
         with patch("router.is_maintainer", return_value=False):
             with patch("router.get_user_groups", return_value=[]):
                 assert router.is_authorized("nobody") is False
@@ -1553,7 +1554,7 @@ def test_extra_authorized_user_is_not_granted_maintainer_status():
     import router
     from app import is_maintainer
 
-    with patch.object(__import__("router"), "EXTRA_AUTHORIZED_USERS", {"testuser"}):
+    with patch.object(router, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
         # The user is authorized …
         with patch("router.is_maintainer", return_value=False):
             assert router.is_authorized("testuser") is True
@@ -1570,7 +1571,7 @@ def test_user_permissions_base_perms_for_regular_user():
 
     with (
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_READ_ONLY", set()),
+        patch.object(router, "USERS_READ_ONLY", set()),
     ):
         perms = router._user_permissions("alice")
 
@@ -1588,7 +1589,7 @@ def test_user_permissions_read_only_user_gets_only_read_own():
     """Users in USERS_READ_ONLY can only view their own jobs."""
     import router
 
-    with patch.object(__import__("router"), "USERS_READ_ONLY", {"readonly"}):
+    with patch.object(router, "USERS_READ_ONLY", {"readonly"}):
         perms = router._user_permissions("readonly")
 
     assert perms == frozenset({"read_own"})
@@ -1601,7 +1602,7 @@ def test_user_permissions_read_only_matching_is_case_insensitive():
     """USERS_READ_ONLY matching is case-insensitive."""
     import router
 
-    with patch.object(__import__("router"), "USERS_READ_ONLY", {"readonly"}):
+    with patch.object(router, "USERS_READ_ONLY", {"readonly"}):
         assert "write" not in router._user_permissions("READONLY")
         assert "write" not in router._user_permissions("ReadOnly")
         assert "write" not in router._user_permissions("readonly")
@@ -1640,7 +1641,7 @@ def test_user_permissions_granted_from_diff():
 
     with (
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_FROM_DIFF", {"alice"}),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
     ):
         perms = router._user_permissions("alice")
 
@@ -1655,7 +1656,7 @@ def test_user_permissions_granted_view_all():
 
     with (
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_VIEW_ALL", {"alice"}),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", {"alice"}),
     ):
         perms = router._user_permissions("alice")
 
@@ -1669,7 +1670,7 @@ def test_user_permissions_granted_cancel_any():
 
     with (
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_CANCEL_ANY", {"alice"}),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
     ):
         perms = router._user_permissions("alice")
 
@@ -1683,7 +1684,7 @@ def test_user_permissions_granted_retry_any():
 
     with (
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_RETRY_ANY", {"alice"}),
+        patch.object(router, "USERS_GRANTED_RETRY_ANY", {"alice"}),
     ):
         perms = router._user_permissions("alice")
 
@@ -1697,9 +1698,9 @@ def test_user_permissions_multiple_grants_accumulate():
 
     with (
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_FROM_DIFF", {"alice"}),
-        patch.object(__import__("router"), "USERS_GRANTED_VIEW_ALL", {"alice"}),
-        patch.object(__import__("router"), "USERS_GRANTED_BATCH", {"alice"}),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", {"alice"}),
+        patch.object(router, "USERS_GRANTED_BATCH", {"alice"}),
     ):
         perms = router._user_permissions("alice")
 
@@ -1717,7 +1718,7 @@ def test_check_rate_limit_disabled_when_zero():
     """Rate limiting is off by default (RATE_LIMIT_JOBS_PER_HOUR=0)."""
     import router
 
-    with patch.object(__import__("router"), "RATE_LIMIT_JOBS_PER_HOUR", 0):
+    with patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 0):
         assert router._check_rate_limit("alice") is True
 
 
@@ -1729,8 +1730,8 @@ def test_check_rate_limit_allows_when_within_limit():
     mock_r.incr.return_value = 3
 
     with (
-        patch.object(__import__("router"), "RATE_LIMIT_JOBS_PER_HOUR", 10),
-        patch.object(__import__("router"), "r", mock_r),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 10),
+        patch.object(router, "r", mock_r),
     ):
         assert router._check_rate_limit("alice") is True
 
@@ -1743,8 +1744,8 @@ def test_check_rate_limit_blocks_when_exceeded():
     mock_r.incr.return_value = 11
 
     with (
-        patch.object(__import__("router"), "RATE_LIMIT_JOBS_PER_HOUR", 10),
-        patch.object(__import__("router"), "r", mock_r),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 10),
+        patch.object(router, "r", mock_r),
     ):
         assert router._check_rate_limit("alice") is False
 
@@ -1757,8 +1758,8 @@ def test_check_rate_limit_allows_at_exact_limit():
     mock_r.incr.return_value = 10
 
     with (
-        patch.object(__import__("router"), "RATE_LIMIT_JOBS_PER_HOUR", 10),
-        patch.object(__import__("router"), "r", mock_r),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 10),
+        patch.object(router, "r", mock_r),
     ):
         assert router._check_rate_limit("alice") is True
 
@@ -1771,8 +1772,8 @@ def test_check_rate_limit_sets_expiry_on_new_bucket():
     mock_r.incr.return_value = 1
 
     with (
-        patch.object(__import__("router"), "RATE_LIMIT_JOBS_PER_HOUR", 5),
-        patch.object(__import__("router"), "r", mock_r),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 5),
+        patch.object(router, "r", mock_r),
     ):
         router._check_rate_limit("alice")
 
@@ -1788,8 +1789,8 @@ def test_check_rate_limit_does_not_set_expiry_on_subsequent_increments():
     mock_r.incr.return_value = 4
 
     with (
-        patch.object(__import__("router"), "RATE_LIMIT_JOBS_PER_HOUR", 5),
-        patch.object(__import__("router"), "r", mock_r),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 5),
+        patch.object(router, "r", mock_r),
     ):
         router._check_rate_limit("alice")
 
@@ -1804,8 +1805,8 @@ def test_check_rate_limit_fails_open_on_redis_error():
     mock_r.incr.side_effect = Exception("Redis unavailable")
 
     with (
-        patch.object(__import__("router"), "RATE_LIMIT_JOBS_PER_HOUR", 10),
-        patch.object(__import__("router"), "r", mock_r),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 10),
+        patch.object(router, "r", mock_r),
     ):
         assert router._check_rate_limit("alice") is True
 
@@ -1817,7 +1818,7 @@ def test_create_job_returns_403_for_read_only_user(client):
     """A user in USERS_READ_ONLY cannot submit new rollback jobs."""
 
     _set_session(client, "viewer")
-    with patch.object(__import__("router"), "USERS_READ_ONLY", {"viewer"}):
+    with patch.object(router, "USERS_READ_ONLY", {"viewer"}):
         resp = client.post(
             "/api/v1/rollback/jobs",
             json={
@@ -1855,7 +1856,7 @@ def test_create_job_succeeds_when_rate_limit_disabled(client):
 
     with (
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "RATE_LIMIT_JOBS_PER_HOUR", 0),
+        patch.object(router, "RATE_LIMIT_JOBS_PER_HOUR", 0),
         patch("router.get_conn", return_value=mock_conn),
         patch("router.process_rollback_job") as mock_task,
     ):
@@ -1883,7 +1884,7 @@ def test_cancel_job_allowed_for_cancel_any_user_on_others_job(client):
     with (
         patch("router.get_conn", return_value=mock_conn),
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_CANCEL_ANY", {"admin"}),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"admin"}),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -1900,7 +1901,7 @@ def test_cancel_job_still_forbidden_without_cancel_any(client):
     with (
         patch("router.get_conn", return_value=mock_conn),
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_CANCEL_ANY", set()),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", set()),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -1920,7 +1921,7 @@ def test_retry_job_allowed_for_retry_any_user_on_others_job(client):
     with (
         patch("router.get_conn", return_value=mock_conn),
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_RETRY_ANY", {"admin"}),
+        patch.object(router, "USERS_GRANTED_RETRY_ANY", {"admin"}),
         patch("router.process_rollback_job") as mock_task,
     ):
         mock_task.delay = MagicMock()
@@ -1939,7 +1940,7 @@ def test_retry_job_still_forbidden_without_retry_any(client):
     with (
         patch("router.get_conn", return_value=mock_conn),
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_RETRY_ANY", set()),
+        patch.object(router, "USERS_GRANTED_RETRY_ANY", set()),
     ):
         resp = client.post("/api/v1/rollback/jobs/1/retry")
 
@@ -1960,7 +1961,7 @@ def test_get_job_allowed_for_view_all_user_on_others_job(client):
     with (
         patch("router.get_conn", return_value=mock_conn),
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_VIEW_ALL", {"watcher"}),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", {"watcher"}),
     ):
         resp = client.get("/api/v1/rollback/jobs/1")
 
@@ -1978,7 +1979,7 @@ def test_get_job_still_forbidden_without_read_all(client):
     with (
         patch("router.get_conn", return_value=mock_conn),
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_VIEW_ALL", set()),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", set()),
     ):
         resp = client.get("/api/v1/rollback/jobs/1")
 
@@ -1996,7 +1997,7 @@ def test_from_diff_api_allowed_for_granted_user(client):
 
     with (
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_FROM_DIFF", {"alice"}),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
         patch("router.get_conn", return_value=mock_conn),
         patch("router.resolve_diff_rollback_job") as mock_resolve,
     ):
@@ -2029,7 +2030,7 @@ def test_all_jobs_ui_allowed_for_view_all_granted_user(client):
 
     with (
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_VIEW_ALL", {"alice"}),
+        patch.object(router, "USERS_GRANTED_VIEW_ALL", {"alice"}),
         patch("router.get_conn", return_value=mock_conn),
     ):
         resp = client.get("/rollback-queue/all-jobs")
@@ -2042,7 +2043,7 @@ def test_goto_from_diff_tab_allowed_for_granted_user(client):
     _set_session(client, "alice")
     with (
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_FROM_DIFF", {"alice"}),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
     ):
         resp = client.get("/goto?tab=rollback-from-diff")
 
@@ -2055,7 +2056,7 @@ def test_goto_account_tab_allowed_for_granted_user(client):
     _set_session(client, "alice")
     with (
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_FROM_DIFF", {"alice"}),
+        patch.object(router, "USERS_GRANTED_FROM_DIFF", {"alice"}),
     ):
         resp = client.get("/goto?tab=rollback-account")
 
@@ -2070,7 +2071,7 @@ def test_is_bot_admin_returns_true_for_bot_admin_account():
     """A username listed in BOT_ADMIN_ACCOUNTS is a bot admin."""
     import router
 
-    with patch.object(__import__("router"), "BOT_ADMIN_ACCOUNTS", {"chuckbot"}):
+    with patch.object(router, "BOT_ADMIN_ACCOUNTS", {"chuckbot"}):
         assert router.is_bot_admin("chuckbot") is True
         assert router.is_bot_admin("ChuckBot") is True  # case-insensitive
 
@@ -2079,7 +2080,7 @@ def test_is_bot_admin_returns_false_for_regular_user():
     """A username not in BOT_ADMIN_ACCOUNTS is not a bot admin."""
     import router
 
-    with patch.object(__import__("router"), "BOT_ADMIN_ACCOUNTS", {"chuckbot"}):
+    with patch.object(router, "BOT_ADMIN_ACCOUNTS", {"chuckbot"}):
         assert router.is_bot_admin("alice") is False
 
 
@@ -2127,7 +2128,7 @@ def test_user_permissions_admin_sysop_does_not_get_cancel_admin_jobs():
 
     with (
         patch("router.is_maintainer", return_value=False),
-        patch.object(__import__("router"), "USERS_READ_ONLY", set()),
+        patch.object(router, "USERS_READ_ONLY", set()),
     ):
         perms = router._user_permissions("sysop_alice")
 
@@ -2150,7 +2151,7 @@ def test_cancel_job_returns_403_when_owner_is_maintainer_and_actor_has_only_canc
         patch("router.get_conn", return_value=mock_conn),
         patch("router.is_maintainer", side_effect=lambda u: u == "maintaineruser"),
         patch("router.is_admin_user", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_CANCEL_ANY", {"alice"}),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -2246,7 +2247,7 @@ def test_cancel_job_returns_403_when_owner_is_admin_and_actor_has_only_cancel_an
         patch("router.get_conn", return_value=mock_conn),
         patch("router.is_maintainer", return_value=False),
         patch("router.is_admin_user", side_effect=lambda u: u == "sysop_bob"),
-        patch.object(__import__("router"), "USERS_GRANTED_CANCEL_ANY", {"alice"}),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -2298,7 +2299,7 @@ def test_cancel_job_allowed_for_cancel_any_user_on_regular_users_job(client):
         patch("router.get_conn", return_value=mock_conn),
         patch("router.is_maintainer", return_value=False),
         patch("router.is_admin_user", return_value=False),
-        patch.object(__import__("router"), "USERS_GRANTED_CANCEL_ANY", {"alice"}),
+        patch.object(router, "USERS_GRANTED_CANCEL_ANY", {"alice"}),
     ):
         resp = client.delete("/api/v1/rollback/jobs/1")
 
@@ -2319,7 +2320,7 @@ def test_user_permissions_config_view_for_bot_admin_and_config_edit_for_chuckbot
         patch("router.is_maintainer", return_value=True),
         patch("router.is_tester", return_value=False),
         patch("router.is_bot_admin", return_value=True),
-        patch.object(__import__("router"), "_CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot"),
+        patch.object(router, "_CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot"),
     ):
         other_bot_perms = router._user_permissions("otherbot")
         chuckbot_perms = router._user_permissions("chuckbot")
@@ -2347,7 +2348,7 @@ def test_get_runtime_authz_api_returns_config_for_bot_admin(client):
     _set_session(client, "otherbot")
     with (
         patch("router.is_bot_admin", return_value=True),
-        patch.object(__import__("router"), "_CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot"),
+        patch.object(router, "_CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot"),
         patch("router.get_runtime_config", return_value={}),
     ):
         resp = client.get("/api/v1/config/authz")
@@ -2388,7 +2389,7 @@ def test_update_runtime_authz_api_rejects_unknown_key(client):
 
 def test_update_runtime_authz_api_persists_for_chuckbot(client):
     _set_session(client, "chuckbot")
-    default_cfg = __import__("router")._runtime_authz_defaults()
+    default_cfg = router._runtime_authz_defaults()
 
     with (
         patch("router.is_bot_admin", return_value=True),
@@ -2414,7 +2415,7 @@ def test_update_runtime_authz_api_persists_for_chuckbot(client):
 
 def test_update_runtime_authz_api_normalizes_quoted_and_prefixed_usernames(client):
     _set_session(client, "chuckbot")
-    default_cfg = __import__("router")._runtime_authz_defaults()
+    default_cfg = router._runtime_authz_defaults()
 
     with (
         patch("router.is_bot_admin", return_value=True),
@@ -2440,7 +2441,7 @@ def test_update_runtime_authz_api_normalizes_quoted_and_prefixed_usernames(clien
 
 def test_update_runtime_authz_api_accepts_user_grants_json(client):
     _set_session(client, "chuckbot")
-    default_cfg = __import__("router")._runtime_authz_defaults()
+    default_cfg = router._runtime_authz_defaults()
 
     with (
         patch("router.is_bot_admin", return_value=True),
@@ -2468,7 +2469,7 @@ def test_update_runtime_authz_api_accepts_user_grants_json(client):
 def test_user_permissions_supports_user_centric_view_all_right():
     import router
 
-    cfg = __import__("router")._runtime_authz_defaults()
+    cfg = router._runtime_authz_defaults()
     cfg["USER_GRANTS_JSON"] = {
         "alice": ["view_all"],
     }
@@ -2487,7 +2488,7 @@ def test_user_permissions_supports_user_centric_view_all_right():
 def test_user_permissions_supports_group_based_user_centric_grants():
     import router
 
-    cfg = __import__("router")._runtime_authz_defaults()
+    cfg = router._runtime_authz_defaults()
     cfg["USER_GRANTS_JSON"] = {
         "alice": ["group:operator"],
     }
@@ -2548,7 +2549,7 @@ def test_from_diff_api_allows_dry_run_for_dry_run_only_right(client):
 
 def test_get_runtime_authz_user_grants_returns_payload_for_bot_admin(client):
     _set_session(client, "chuckbot")
-    cfg = __import__("router")._runtime_authz_defaults()
+    cfg = router._runtime_authz_defaults()
     cfg["USER_GRANTS_JSON"] = {
         "alice": ["group:operator", "from_diff_dry_run_only"],
     }
@@ -2569,7 +2570,7 @@ def test_get_runtime_authz_user_grants_returns_payload_for_bot_admin(client):
 
 def test_update_runtime_authz_user_grants_updates_single_user(client):
     _set_session(client, "chuckbot")
-    cfg = __import__("router")._runtime_authz_defaults()
+    cfg = router._runtime_authz_defaults()
     cfg["USER_GRANTS_JSON"] = {
         "alice": ["group:viewer"],
     }
