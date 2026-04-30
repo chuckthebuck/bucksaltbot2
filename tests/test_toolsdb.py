@@ -12,32 +12,41 @@ def _make_mock_conn():
     return mock_conn, mock_cursor
 
 
-def test_init_db_creates_rollback_jobs_table():
-    """init_db executes a CREATE TABLE statement for rollback_jobs."""
+def test_init_db_creates_bot_jobs_table():
+    """init_db executes a CREATE TABLE statement for bot_jobs."""
     mock_conn, mock_cursor = _make_mock_conn()
-    with patch("pymysql.connections.Connection", return_value=mock_conn):
+    with (
+        patch("pymysql.connections.Connection", return_value=mock_conn),
+        patch("toolsdb._db_user", return_value="testuser"),
+    ):
         import toolsdb
 
         toolsdb.init_db()
     executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
-    assert "rollback_jobs" in executed
+    assert "bot_jobs" in executed
 
 
-def test_init_db_creates_rollback_job_items_table():
-    """init_db executes a CREATE TABLE statement for rollback_job_items."""
+def test_init_db_creates_bot_job_items_table():
+    """init_db executes a CREATE TABLE statement for bot_job_items."""
     mock_conn, mock_cursor = _make_mock_conn()
-    with patch("pymysql.connections.Connection", return_value=mock_conn):
+    with (
+        patch("pymysql.connections.Connection", return_value=mock_conn),
+        patch("toolsdb._db_user", return_value="testuser"),
+    ):
         import toolsdb
 
         toolsdb.init_db()
     executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
-    assert "rollback_job_items" in executed
+    assert "bot_job_items" in executed
 
 
 def test_init_db_sets_item_status_default_and_attempts_column():
     """init_db ensures queued default status and attempts tracking exist."""
     mock_conn, mock_cursor = _make_mock_conn()
-    with patch("pymysql.connections.Connection", return_value=mock_conn):
+    with (
+        patch("pymysql.connections.Connection", return_value=mock_conn),
+        patch("toolsdb._db_user", return_value="testuser"),
+    ):
         import toolsdb
 
         toolsdb.init_db()
@@ -49,7 +58,10 @@ def test_init_db_sets_item_status_default_and_attempts_column():
 def test_init_db_selects_correct_database():
     """init_db USE-s the database scoped to the configured username."""
     mock_conn, mock_cursor = _make_mock_conn()
-    with patch("pymysql.connections.Connection", return_value=mock_conn):
+    with (
+        patch("pymysql.connections.Connection", return_value=mock_conn),
+        patch("toolsdb._db_user", return_value="testuser"),
+    ):
         import toolsdb
 
         toolsdb.init_db()
@@ -70,7 +82,10 @@ def test_get_conn_returns_a_connection():
 def test_get_conn_passes_database_name():
     """get_conn passes the correct database kwarg to Connection."""
     mock_conn, mock_cursor = _make_mock_conn()
-    with patch("pymysql.connections.Connection", return_value=mock_conn) as MockConn:
+    with (
+        patch("pymysql.connections.Connection", return_value=mock_conn) as MockConn,
+        patch("toolsdb._db_user", return_value="testuser"),
+    ):
         import toolsdb
 
         toolsdb.get_conn()

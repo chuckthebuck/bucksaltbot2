@@ -1,4 +1,6 @@
+from botconfig import EDIT_SUMMARY_EN, EDIT_SUMMARY_DEFAULT
+
 editsummaries = {
-    "en": "automated match and split edit, revert if incorrect  ([[Wikisource:Scriptorium#SodiumBot|bot request]])",
-    "default": "automated match and split edit, revert if incorrect",
+    "en": EDIT_SUMMARY_EN,
+    "default": EDIT_SUMMARY_DEFAULT,
 }

@@ -274,3 +274,11 @@ See:
 DEPLOYMENT_DOCS_INDEX.md
 DEPLOYMENT_SUMMARY.md
 FEATURES_GRANULAR_PERMISSIONS.md
+
+
+## Reusable bot configuration
+
+- Copy `botconfig.env.example` and set environment values for your bot identity.
+- API route namespace is configurable with `BOT_ROUTE_PREFIX` (defaults to `rollback`).
+- See `Deployment-docs/FRAMEWORK.md` for plugin boundary details.
+- For existing deployments, run `python scripts/migrate_db.py` once to rename legacy queue tables.

@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 from pywikibot_env import ensure_pywikibot_env
 from redis_state import r as _redis
+from botconfig import BOT_USERNAME, BOT_HELP_PAGE, STATUS_PAGE_PREFIX
 
 
 def _pywikibot_unavailable(*args, **kwargs):
@@ -46,9 +47,9 @@ def _log_status_debug(message: str) -> None:
 
 # ── Page titles ───────────────────────────────────────────────────────────────
 
-# Status pages are maintained under User:Chuckbot/status/* on Commons.
-STATUS_PAGE = "User:Chuckbot/status"
-NOTIFY_PAGE = "User:Chuckbot/status/notify"
+# Status pages are maintained under User:<BOT_USERNAME>/status/* on the wiki.
+STATUS_PAGE = STATUS_PAGE_PREFIX
+NOTIFY_PAGE = f"{STATUS_PAGE_PREFIX}/notify"
 STATUS_SUBPAGES = {
     "editing": f"{STATUS_PAGE}/editing",
     "web": f"{STATUS_PAGE}/web",
@@ -104,7 +105,7 @@ def _save_status_subpage(site: Any, key: str, text: str) -> None:
     """Write a status field to its dedicated subpage."""
     page = pywikibot.Page(site, STATUS_SUBPAGES[key])
     page.text = text
-    page.save(summary="Updating Chuckbot status", minor=True, bot=True)
+    page.save(summary=f"Updating {BOT_USERNAME} status", minor=True, bot=True)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -172,7 +173,7 @@ def get_last_bot_edit(
         if site is None:
             site = _get_authenticated_site()
         if username is None:
-            username = site.username() or "Chuckbot"
+            username = site.username() or BOT_USERNAME
         user = pywikibot.User(site, username)
         contrib = next(user.contributions(total=1), None)
         if not contrib:
@@ -195,7 +196,7 @@ def update_wiki_status(
     warning: str | None = None,
     include_job_fields: bool = True,
 ) -> None:
-    """Update Chuckbot status subpages consumed by the on-wiki template."""
+    """Update {BOT_USERNAME} status subpages consumed by the on-wiki template."""
     if not _is_live():
         return
 
@@ -253,16 +254,16 @@ def notify_maintainers(
         try:
             talk = pywikibot.User(site, username).getUserTalkPage()
             notice = (
-                f"\n\n== Chuckbot large job running ==\n"
-                f"Chuckbot is currently running a large batch job "
+                f"\n\n== {BOT_USERNAME} large job running ==\n"
+                f"{BOT_USERNAME} is currently running a large batch job "
                 f"(Batch ID: {batch_id}).\n\n"
                 f"If you notice any issues, please investigate or contact "
-                f"[[User:Alachuckthebuck]].\n\n"
+                f"[[User:{BOT_HELP_PAGE}]].\n\n"
                 f"Thanks! ~~~~"
             )
             talk.text = talk.text + notice
             talk.save(
-                summary=f"Chuckbot large job notification (batch {batch_id})",
+                summary=f"{BOT_USERNAME} large job notification (batch {batch_id})",
                 minor=False,
                 bot=True,
             )
@@ -289,13 +290,13 @@ def notify_bot_user(
         talk = pywikibot.User(site, username).getUserTalkPage()
         count_text = f" ({edit_count} edit(s))" if edit_count else ""
         notice = (
-            f"\n\n== Chuckbot rollback notice ==\n"
+            f"\n\n== {BOT_USERNAME} rollback notice ==\n"
             f"Hello,\n\n"
             f"One or more of your recent edits{count_text} were rolled back "
-            f"by [[User:Chuckbot]] as part of a cleanup batch "
+            f"by [[User:{BOT_USERNAME}]] as part of a cleanup batch "
             f"(Batch ID: {batch_id}).\n\n"
             f"If this was unexpected, feel free to review or reach out to "
-            f"[[User:Alachuckthebuck]].\n\n"
+            f"[[User:{BOT_HELP_PAGE}]].\n\n"
             f"Thanks! ~~~~"
         )
         talk.text = talk.text + notice

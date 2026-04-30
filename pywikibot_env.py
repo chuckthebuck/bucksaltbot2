@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-_DEFAULT_BOT_USERNAME = "Chuckbot"
+from botconfig import BOT_USERNAME as _BOT_USERNAME
+
+_DEFAULT_BOT_USERNAME = _BOT_USERNAME
 
 
 def _desired_user_config(bot_username: str) -> str:

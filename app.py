@@ -7,7 +7,11 @@ from flask_cors import CORS
 from flask import Flask, session
 
 from blueprint import assets_blueprint
+from botconfig import TOOLHUB_API_URL, CORS_ALLOWED_ORIGINS
 from celery_init import celery_init_app
+from actions.rollback_action import RollbackAction
+from framework.action import register_action
+from framework.permissions import BotPermissions, register_permissions
 
 
 BOT_ADMIN_ACCOUNTS = {
@@ -16,7 +20,7 @@ BOT_ADMIN_ACCOUNTS = {
     if u.strip()
 }
 
-TOOLHUB_API = "https://toolhub.wikimedia.org/api/tools/buckbot/"
+TOOLHUB_API = TOOLHUB_API_URL
 
 MAX_JOB_ITEMS = int(os.getenv("MAX_JOB_ITEMS", "500"))
 
@@ -104,6 +108,55 @@ flask_app.config["CELERY"] = {
 
 celery = celery_init_app(flask_app)
 
+register_action(RollbackAction())
+register_permissions(
+    BotPermissions(
+        domain_rights={
+            "rollback_diff",
+            "rollback_account",
+            "rollback_batch",
+            "rollback_diff_dry_run_only",
+            "approve_jobs",
+            "autoapprove_jobs",
+            "force_dry_run",
+            "view_all",
+            "edit_config",
+            "manage_user_grants",
+            "cancel_any",
+            "retry_any",
+        },
+        domain_groups={
+            "viewer": {"view_all"},
+            "rollbacker": {"rollback_diff", "rollback_account"},
+            "rollbacker_dry_run": {
+                "rollback_diff",
+                "rollback_account",
+                "rollback_diff_dry_run_only",
+            },
+            "batch_runner": {"rollback_batch"},
+            "jobs_moderator": {
+                "approve_jobs",
+                "force_dry_run",
+                "cancel_any",
+                "retry_any",
+            },
+            "admin": {
+                "view_all",
+                "rollback_diff",
+                "rollback_account",
+                "rollback_batch",
+                "approve_jobs",
+                "autoapprove_jobs",
+                "force_dry_run",
+                "cancel_any",
+                "retry_any",
+                "edit_config",
+                "manage_user_grants",
+            },
+        },
+    )
+)
+
 
 @flask_app.context_processor
 def inject_user_permissions():
@@ -124,7 +177,7 @@ CORS(
     flask_app,
     resources={
         r"/api/*": {
-            "origins": ["https://commons.wikimedia.org"],
+            "origins": CORS_ALLOWED_ORIGINS,
             "supports_credentials": True,
         }
     },
