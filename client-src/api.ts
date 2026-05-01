@@ -30,6 +30,7 @@ export interface CreateJobItem {
 export interface QueueProps {
   username: string | null;
   is_maintainer: boolean;
+  can_manage_modules?: boolean;
   jobs: JobRow[];
 }
 
@@ -142,7 +143,10 @@ export interface RollbackRequestPreview {
 // ------------------------
 
 export function getInitialProps(): QueueProps {
-  const el = document.getElementById("rollback-queue-props");
+  const el =
+    document.getElementById("rollback-queue-props") ||
+    document.getElementById("modules-props") ||
+    document.getElementById("jobs-yaml-props");
 
   if (!el?.textContent) {
     return { username: null, is_maintainer: false, jobs: [] };
@@ -154,6 +158,7 @@ export function getInitialProps(): QueueProps {
     return {
       username: parsed.username ?? null,
       is_maintainer: !!parsed.is_maintainer,
+      can_manage_modules: !!(parsed.can_manage_modules ?? parsed.is_maintainer),
       jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
     };
   } catch (e) {

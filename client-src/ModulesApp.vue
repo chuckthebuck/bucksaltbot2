@@ -21,7 +21,9 @@ interface Module {
 }
 
 const props = getInitialProps();
-const isMaintainer = computed(() => props.is_maintainer);
+const canManageModules = computed(
+  () => props.can_manage_modules ?? props.is_maintainer
+);
 
 const modules = ref<Module[]>([]);
 const loading = ref(true);
@@ -103,7 +105,7 @@ onMounted(() => {
   <div class="modules-app">
     <h1>Module Management</h1>
 
-    <div v-if="!isMaintainer" class="cdx-message cdx-message--warning">
+    <div v-if="!canManageModules" class="cdx-message cdx-message--warning">
       <div class="cdx-message__content">
         You are not a maintainer and cannot manage modules.
       </div>
