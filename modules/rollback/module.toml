@@ -4,4 +4,4 @@ entry_point = "modules.rollback.blueprint"
 ui = true
 buildpacks = ["heroku/python"]
 redis_namespace = "rollback"
-title = "Rollback"
+title = "Chuck the Rollback"

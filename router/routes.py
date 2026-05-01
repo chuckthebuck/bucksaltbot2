@@ -61,9 +61,16 @@ from router.permissions import (
 )
 from router.diff_state import _ACCOUNT_ROLLBACK_MAX_LIMIT, _ROLLBACKABLE_WINDOW_LIMIT
 from router.module_registry import (
+    create_module_job_run,
+    get_module_config,
     get_module_definition,
+    get_module_job_run,
+    list_module_cron_jobs,
     list_module_definitions,
+    list_module_job_runs,
+    request_module_job_run_cancel,
     set_module_enabled,
+    upsert_module_config,
     upsert_module_access,
     user_has_module_access,
     install_remote_module,
@@ -2856,6 +2863,7 @@ def module_registry_api():
                 "enabled": bool(record.enabled),
                 "ui_enabled": bool(definition.ui_enabled),
                 "cron_jobs": [job.as_dict() for job in definition.cron_jobs],
+                "jobs": [job.as_dict() for job in definition.cron_jobs],
                 "has_access": bool(record.enabled or is_admin),
                 "redis_namespace": definition.redis_namespace,
                 "oauth_consumer_mode": definition.oauth_consumer_mode,
@@ -2931,6 +2939,44 @@ def module_registry_access_api(module_name: str):
     )
 
 
+@app.route("/api/v1/modules/<path:module_name>/config", methods=["GET"])
+def module_config_get_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    is_admin = bool(is_maintainer(username) or is_admin_user(username))
+    if not user_has_module_access(module_name, username, is_maintainer=is_admin):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    return jsonify({"module": module_name, "config": get_module_config(module_name)})
+
+
+@app.route("/api/v1/modules/<path:module_name>/config", methods=["PUT"])
+def module_config_put_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (is_maintainer(username) or is_admin_user(username)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    updates = payload.get("config", payload)
+    if not isinstance(updates, dict):
+        return jsonify({"detail": "config must be an object"}), 400
+
+    upsert_module_config(module_name, updates, updated_by=username)
+    return jsonify({"module": module_name, "config": get_module_config(module_name)})
+
+
 @app.route("/api/v1/modules/install", methods=["POST"])
 def module_registry_install_api():
     username = session.get("username")
@@ -2956,6 +3002,116 @@ def module_registry_install_api():
         return jsonify({"detail": "Internal server error"}), 500
 
     return jsonify({"module": definition.name, "installed": True, "definition": definition.as_dict()})
+
+
+@app.route("/api/v1/modules/<path:module_name>/jobs", methods=["GET"])
+def module_jobs_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    is_admin = bool(is_maintainer(username) or is_admin_user(username))
+    if not user_has_module_access(module_name, username, is_maintainer=is_admin):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    return jsonify(
+        {
+            "module": module_name,
+            "jobs": list_module_cron_jobs(module_name),
+            "runs": list_module_job_runs(module_name),
+        }
+    )
+
+
+@app.route(
+    "/api/v1/modules/<path:module_name>/jobs/<path:job_name>/runs",
+    methods=["POST"],
+)
+def module_job_run_now_api(module_name: str, job_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (is_maintainer(username) or is_admin_user(username)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+    if not record.enabled:
+        return jsonify({"detail": "Module is disabled"}), 403
+
+    job = next((j for j in record.definition.cron_jobs if j.name == job_name), None)
+    if job is None:
+        return jsonify({"detail": "Job not found"}), 404
+    if not job.enabled:
+        return jsonify({"detail": "Job is disabled"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    run_id = create_module_job_run(
+        module_name,
+        job_name,
+        trigger_type="manual",
+        triggered_by=username,
+        payload=payload,
+    )
+
+    return jsonify(
+        {
+            "module": module_name,
+            "job": job_name,
+            "run_id": run_id,
+            "status": "queued",
+            "detail": (
+                "Run has been queued in Chuck the Buckbot Framework. "
+                "The external job launcher is responsible for starting it."
+            ),
+        }
+    ), 202
+
+
+@app.route("/api/v1/modules/runs/<int:run_id>/cancel", methods=["POST"])
+def module_job_run_cancel_api(run_id: int):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (is_maintainer(username) or is_admin_user(username)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    request_module_job_run_cancel(run_id)
+    return jsonify({"run_id": run_id, "status": "cancel_requested"})
+
+
+@app.route("/api/v1/modules/runs/<int:run_id>/restart", methods=["POST"])
+def module_job_run_restart_api(run_id: int):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (is_maintainer(username) or is_admin_user(username)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    run = get_module_job_run(run_id)
+    if run is None:
+        return jsonify({"detail": "Run not found"}), 404
+
+    request_module_job_run_cancel(run_id)
+    new_run_id = create_module_job_run(
+        run["module_name"],
+        run["job_name"],
+        trigger_type="restart",
+        triggered_by=username,
+        payload=run.get("payload") or {},
+    )
+    return jsonify(
+        {
+            "previous_run_id": run_id,
+            "run_id": new_run_id,
+            "status": "queued",
+        }
+    ), 202
 
 
 @app.route("/admin/jobs-yaml-preview", methods=["GET"])

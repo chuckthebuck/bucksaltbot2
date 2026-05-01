@@ -28,29 +28,46 @@ def _generate_cron_job_entries() -> list[dict[str, Any]]:
         job_name = job.get("job_name", "").strip()
         schedule = job.get("schedule", "").strip()
         endpoint = job.get("endpoint", "").strip()
+        handler = str(job.get("handler") or "").strip()
         timeout_seconds = int(job.get("timeout_seconds", 300))
 
-        if not module_name or not job_name or not schedule or not endpoint:
+        if not module_name or not job_name or not schedule:
             continue
 
         # Build job name: module-jobname (replace slashes/spaces with dashes)
-        toolforge_job_name = f"{module_name}-{job_name}".replace("/", "-").replace(" ", "-")
-
-        # Build command: curl to the module cron endpoint with a timeout
-        # The endpoint is expected to be relative to the module, so we construct the full URL
-        curl_cmd = (
-            f"curl -f -X POST "
-            f"--max-time {timeout_seconds} "
-            f"http://localhost:5000/api/v1/modules/{_escape_bash_string(module_name)}/cron/{_escape_bash_string(job_name)}"
+        toolforge_job_name = (
+            f"{module_name}-{job_name}"
+            .replace("/", "-")
+            .replace(" ", "-")
+            .replace("_", "-")
         )
+
+        if handler:
+            run_cmd = (
+                "export NOTDEV=1; "
+                f"timeout {timeout_seconds} "
+                f"python3 -m module_runner "
+                f"--module {_escape_bash_string(module_name)} "
+                f"--job {_escape_bash_string(job_name)} "
+                "--trigger schedule"
+            )
+        else:
+            # Legacy endpoint-backed cron jobs keep working while modules move
+            # to isolated handler jobs.
+            run_cmd = (
+                f"curl -f -X POST "
+                f"--max-time {timeout_seconds} "
+                f"http://localhost:5000/api/v1/modules/{_escape_bash_string(module_name)}/cron/{_escape_bash_string(job_name)}"
+            )
 
         entry = {
             "name": toolforge_job_name,
-            "command": f"bash -c '{_escape_bash_string(curl_cmd)}'",
+            "command": f"bash -c '{_escape_bash_string(run_cmd)}'",
             "schedule": schedule,
             "image": "tool-buckbot/tool-buckbot:latest",
             "cpu": 0.1,
             "mem": "256Mi",
+            "mount": "all",
         }
         entries.append(entry)
 
@@ -73,6 +90,7 @@ def generate_jobs_yaml_section() -> str:
         lines.append(f"  image: {entry['image']}")
         lines.append(f"  cpu: {entry['cpu']}")
         lines.append(f"  mem: {entry['mem']}")
+        lines.append(f"  mount: {entry['mount']}")
         lines.append("")
 
     return "\n".join(lines)

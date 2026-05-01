@@ -1,4 +1,4 @@
-"""Human-readable module schedule parsing for Chuck the Framework."""
+"""Human-readable schedule parsing for Chuck the Buckbot Framework."""
 
 from __future__ import annotations
 
@@ -90,4 +90,3 @@ def human_schedule_to_cron(schedule_text: str) -> str:
         "unsupported run schedule; use forms like 'every 15 minutes', "
         "'daily at 03:00', or raw cron in schedule"
     )
-

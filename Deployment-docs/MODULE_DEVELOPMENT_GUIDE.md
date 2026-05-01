@@ -1,6 +1,6 @@
-# Module Development Guide
+# Chuck the Buckbot Framework Module Development Guide
 
-The Buckbot framework is built as a **module-first system**, allowing new modules to be developed, tested, and deployed independently while leveraging shared framework services.
+Chuck the Buckbot Framework is a **module-first system**, allowing new modules to be developed, tested, and deployed independently while leveraging shared framework services. User-facing module names should follow the “Chuck the …” pattern, such as “Chuck the Rollback” or “Chuck the Four Award.”
 
 ## Quick Start
 
@@ -9,24 +9,22 @@ The Buckbot framework is built as a **module-first system**, allowing new module
 Create `module.toml` in your module directory:
 
 ```toml
-name = "my_module"
+name = "example"
 repo = "https://github.com/chuckthebuck/bucksaltbot2"
-entry_point = "modules.my_module.blueprint"
-ui = true
-redis_namespace = "my_module"
-title = "My Module"
+entry_point = "chuck_the_example.service:run"
+ui = false
+redis_namespace = "example"
+title = "Chuck the Example"
 
-# Option A: UI-only module (no cron)
-# (already configured above)
+[[jobs]]
+name = "daily-sync"
+run = "daily at 01:00"
+handler = "chuck_the_example.service:run"
+execution_mode = "k8s_job"
+concurrency_policy = "forbid"
+timeout_seconds = 300
 
-# Option B: Cron-only module (example)
-# [[cron_jobs]]
-# name = "daily-sync"
-# schedule = "0 1 * * *"
-# endpoint = "/api/v1/my_module/cron/sync"
-# timeout_seconds = 300
-
-# Option C: Module with custom OAuth consumer
+# Option: Module with custom OAuth consumer
 # oauth_consumer_mode = "module"
 # oauth_consumer_key_env = "MY_MODULE_CONSUMER_KEY"
 # oauth_consumer_secret_env = "MY_MODULE_CONSUMER_SECRET"
@@ -37,7 +35,7 @@ title = "My Module"
 - `repo` (required): Git repository URL
 - `entry_point` (required): Python import path to Flask blueprint
 - `ui` (required if no cron): Boolean, enables Flask UI routes
-- `cron_jobs` (required if no ui): List of scheduled job definitions
+- `jobs` / `cron_jobs` (required if no ui): List of scheduled job definitions
 - `redis_namespace` (optional): Redis key prefix (defaults to module name)
 - `title` (optional): Human-readable module name for admin UI
 - `oauth_consumer_mode` (optional): `"default"` or `"module"` (default: `"default"`)
@@ -132,43 +130,107 @@ if context and context.has_access:
 
 ### 4. Add Cron Jobs (Optional)
 
-Define cron jobs in your manifest:
+Define managed jobs in your manifest. Prefer `run` for human-readable schedules; raw cron remains available through `schedule` for advanced cases.
 
 ```toml
-[[cron_jobs]]
+[[jobs]]
 name = "hourly-refresh"
-schedule = "0 * * * *"
-endpoint = "/api/v1/my_module/cron/refresh"
+run = "every hour"
+handler = "modules.my_module.service:run"
 timeout_seconds = 600
 enabled = true
 ```
 
-Implement the endpoint:
+Implement the handler:
 
 ```python
-@blueprint.route("/api/v1/my_module/cron/refresh")
-def cron_refresh():
-    # Framework checks credentials before calling
-    # Implement your scheduled task here
+def run(ctx, payload):
+    site = ctx.site("commons", "commons")
+    # Implement your scheduled task here with full pywikibot access.
     return {"refreshed": True}
 ```
 
 The framework will:
-- Calculate next run times based on cron expression
-- Invoke endpoints automatically on schedule
+- Convert supported human schedules to cron
+- Track queued/running/completed job runs
+- Provide a control-plane API for run-now and cancel requests
+- Launch scheduled runs through `python3 -m module_runner`
 - Update `last_run_at` and `next_run_at` timestamps
-- Retry on failure with exponential backoff
+
+Supported human schedules:
+- `every 15 minutes`
+- `every hour`
+- `every 6 hours`
+- `daily at 03:00`
+- `weekly on monday at 09:30`
+- `monthly on day 1 at 02:00`
 
 ### 5. Structure Your Module
 
 ```
-modules/my_module/
-├── __init__.py                 # Package marker
-├── module.toml                 # Manifest (required)
-├── blueprint.py                # Flask Blueprint entry point (required)
-├── handlers.py                 # Business logic (optional)
-└── requirements.txt            # Module-specific deps (optional)
+chuck-the-example/
+├── pyproject.toml
+├── chuck_the_example/
+│   ├── __init__.py
+│   ├── manifest.py
+│   └── service.py
+└── README.md
 ```
+
+Recommended package entry point:
+
+```toml
+[project.entry-points."chuck_buckbot.modules"]
+example = "chuck_the_example.manifest:module_manifest"
+```
+
+Example `manifest.py`:
+
+```python
+def module_manifest():
+    return {
+        "name": "example",
+        "repo": "https://github.com/chuckthebuck/chuck-the-example",
+        "entry_point": "chuck_the_example.service:run",
+        "redis_namespace": "example",
+        "title": "Chuck the Example",
+        "jobs": [
+            {
+                "name": "daily-sync",
+                "run": "daily at 01:00",
+                "handler": "chuck_the_example.service:run",
+                "execution_mode": "k8s_job",
+                "concurrency_policy": "forbid",
+                "timeout_seconds": 300,
+            }
+        ],
+    }
+```
+
+The framework automatically discovers installed packages that expose the
+`chuck_buckbot.modules` entry point group. Bundled `modules/*/module.toml`
+manifests still work for default modules like Chuck the Rollback.
+
+### Installing Module Packages on Toolforge
+
+Modules do not need to be published to PyPI or npm. Keep each module in its
+own public Git repository and install it into the Buckbot buildservice image
+with a direct Git dependency:
+
+```txt
+chuck-the-example @ git+https://github.com/chuckthebuck/chuck-the-example@main
+```
+
+For production, pin to a tag or commit instead of a moving branch:
+
+```txt
+chuck-the-example @ git+https://github.com/chuckthebuck/chuck-the-example@v2026.05.01
+```
+
+Put optional module dependencies in `requirements-modules.txt` and include
+only the modules intended for the current deployment. The framework does not
+clone module repositories at runtime; if a handler cannot be imported, the
+module package was not installed into the image.
 
 ### 6. Access Control
 

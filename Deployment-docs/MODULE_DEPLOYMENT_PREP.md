@@ -1,6 +1,6 @@
-# Module Framework Deployment Prep
+# Chuck the Buckbot Framework Deployment Prep
 
-This document guides you through preparing the Buckbot module framework for production deployment.
+This document guides you through preparing Chuck the Buckbot Framework for production deployment.
 
 ## Pre-Deployment Checklist
 
@@ -11,21 +11,24 @@ This document guides you through preparing the Buckbot module framework for prod
   export ENABLE_MODULE_LOADING=1
   ```
   
-- [ ] **Verify Celery Beat is configured** for cron jobs:
-  - Beat scheduler must be running alongside worker
-  - Check `app.py` beat_schedule configuration
-  - Cron jobs will check every 60 seconds for due jobs
+- [ ] **Verify module job launching is configured**:
+  - Rollback continues to use Celery as a continuous queue worker
+  - Module cron jobs are isolated run-to-completion jobs
+  - The webservice owns registry, config, and run history state
+  - `buckbot-module-controller` handles web-triggered manual runs/restarts
 
-- [ ] **Confirm module cron endpoints are accessible** internally:
-  - Set `MODULE_CRON_BASE_URL` if using non-standard port
-  - Default: `http://localhost:5000`
+- [ ] **Confirm the module job launcher can start module jobs**:
+  - Scheduled/manual runs should create `module_job_runs` rows
+  - The launcher should map those runs to Toolforge/K8s jobs
 
 ### 2. Database Schema
 
 - [ ] **Module tables auto-created on startup**:
   ```
   module_registry — Module definitions and enabled state
-  module_cron_jobs — Scheduled cron job metadata
+  module_cron_jobs — Scheduled module job metadata
+  module_job_runs — Run history and web control state
+  module_config — DB-backed non-secret module configuration
   module_access — User access grants (non-maintainer)
   ```
 
@@ -43,6 +46,14 @@ This document guides you through preparing the Buckbot module framework for prod
   - [x] Provides UI and redirects to legacy routes
   - [ ] Test locally: `curl http://localhost:5000/rollback/`
 
+- [ ] **Chuck the 4awardhelper module manifest** (`modules/four_award/module.toml`):
+  - [x] Manifest exists and is valid
+  - [x] Uses `run = "every 15 minutes"` instead of raw cron
+  - [x] Runs through `python3 -m module_runner`
+  - [ ] Package `module4awardhelper` as `chuck_the_4awardhelper`
+  - [ ] Add the package as a direct Git dependency in `requirements-modules.txt`
+  - [ ] Confirm `module4awardhelper` imports cleanly before deploy
+
 ### 4. Testing
 
 - [ ] **Run full test suite**:
@@ -53,7 +64,7 @@ This document guides you through preparing the Buckbot module framework for prod
   All should pass, including:
   - Module registry tests (manifest parsing, DB persistence)
   - Module runtime tests (blueprint registration)
-  - Module cron executor tests (schedule calculation, endpoint invocation)
+  - Module job tests (schedule calculation, manifest parsing, jobs.yaml generation)
   - Rollback module integration tests
   - Router API tests (module management endpoints)
 
@@ -134,11 +145,11 @@ export CELERY_RESULT_BACKEND=redis://broker:6379/9
    # Web service
    gunicorn -w 4 -b 0.0.0.0:5000 'app:flask_app'
    
-   # Celery worker
+   # Celery worker for rollback
    celery -A celery_worker worker -l info
-   
-   # Celery Beat scheduler (for cron jobs)
-   celery -A celery_worker beat -l info
+
+   # Manual run controller for module jobs
+   python3 -m module_job_controller
    ```
 
 4. **Initialize cron timestamps** (one-time):

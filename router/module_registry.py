@@ -8,6 +8,7 @@ into its own OAuth consumer instead of the framework default worker consumer.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from importlib import metadata
 import json
 import re
 from pathlib import Path
@@ -24,6 +25,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
 
 
 MODULE_MANIFEST_FILENAMES = ("module.toml", "module.json")
+MODULE_ENTRY_POINT_GROUP = "chuck_buckbot.modules"
 
 
 @dataclass(frozen=True)
@@ -154,7 +156,9 @@ def _parse_cron_jobs(raw_jobs: Any) -> tuple[ModuleCronJob, ...]:
             raise ValueError(f"cron job {index} must be an object")
 
         name = str(raw_job.get("name") or raw_job.get("job_id") or "").strip()
-        schedule_text = str(raw_job.get("run") or raw_job.get("schedule_text") or "").strip()
+        schedule_text = str(
+            raw_job.get("run") or raw_job.get("schedule_text") or ""
+        ).strip()
         schedule = str(raw_job.get("schedule") or "").strip()
         if not schedule and schedule_text:
             schedule = human_schedule_to_cron(schedule_text)
@@ -312,6 +316,53 @@ def discover_module_definitions(root: str | Path) -> list[ModuleDefinition]:
     return [load_module_definition(path) for path in discover_module_manifests(root)]
 
 
+def _definition_from_package_entry_point(entry_point) -> ModuleDefinition:
+    """Load a module definition advertised by an installed Python package.
+
+    Packages can expose an entry point in the ``chuck_buckbot.modules`` group.
+    The entry point may resolve to:
+
+    - a manifest dict
+    - a callable returning a manifest dict
+    - a path string pointing at a TOML/JSON manifest
+    - a ModuleDefinition
+    """
+    loaded = entry_point.load()
+    value = loaded() if callable(loaded) else loaded
+
+    if isinstance(value, ModuleDefinition):
+        return value
+    if isinstance(value, dict):
+        return parse_module_definition(value)
+    if isinstance(value, (str, Path)):
+        return load_module_definition(value)
+
+    raise ValueError(
+        f"Module entry point {entry_point.name} returned unsupported value "
+        f"{type(value).__name__}"
+    )
+
+
+def discover_installed_module_definitions() -> list[ModuleDefinition]:
+    """Discover module definitions exposed by installed Python packages."""
+    try:
+        entry_points = metadata.entry_points()
+        if hasattr(entry_points, "select"):
+            selected = entry_points.select(group=MODULE_ENTRY_POINT_GROUP)
+        else:  # pragma: no cover - compatibility with old importlib.metadata
+            selected = entry_points.get(MODULE_ENTRY_POINT_GROUP, [])
+    except Exception:
+        return []
+
+    definitions: list[ModuleDefinition] = []
+    for entry_point in selected:
+        try:
+            definitions.append(_definition_from_package_entry_point(entry_point))
+        except Exception:
+            continue
+    return definitions
+
+
 def _try_raw_urls_for_repo(repo_url: str) -> list[str]:
     """Yield candidate raw file URLs for common Git hosting providers."""
     repo = str(repo_url or "").strip()
@@ -418,6 +469,17 @@ def bootstrap_module_definitions(root: str | Path, *, enabled_default: bool = Tr
     External modules can still be installed through the admin APIs.
     """
     definitions = discover_module_definitions(root)
+    for definition in definitions:
+        upsert_module_definition(definition, enabled=enabled_default)
+    return definitions
+
+
+def bootstrap_installed_module_definitions(
+    *,
+    enabled_default: bool = True,
+) -> list[ModuleDefinition]:
+    """Persist module manifests advertised by installed Python packages."""
+    definitions = discover_installed_module_definitions()
     for definition in definitions:
         upsert_module_definition(definition, enabled=enabled_default)
     return definitions
@@ -601,6 +663,311 @@ def list_module_cron_jobs(module_name: str | None = None) -> list[dict[str, Any]
         }
         for row in rows
     ]
+
+
+def create_module_job_run(
+    module_name: str,
+    job_name: str,
+    *,
+    trigger_type: str = "manual",
+    triggered_by: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> int:
+    """Create a tracked run row for a managed module job."""
+    module_name = str(module_name or "").strip()
+    job_name = str(job_name or "").strip()
+    if not module_name or not job_name:
+        raise ValueError("module_name and job_name are required")
+
+    payload_json = json.dumps(payload or {}, sort_keys=True)
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO module_job_runs
+                (
+                    module_name,
+                    job_name,
+                    status,
+                    trigger_type,
+                    triggered_by,
+                    payload_json
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    module_name,
+                    job_name,
+                    "queued",
+                    str(trigger_type or "manual").strip() or "manual",
+                    triggered_by,
+                    payload_json,
+                ),
+            )
+            run_id = int(cursor.lastrowid)
+        conn.commit()
+    return run_id
+
+
+def get_module_job_run(run_id: int) -> dict[str, Any] | None:
+    """Return one tracked module job run by id."""
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, module_name, job_name, status, trigger_type, triggered_by,
+                       k8s_job_name, started_at, finished_at, exit_code, error,
+                       payload_json, created_at
+                FROM module_job_runs
+                WHERE id=%s
+                """,
+                (run_id,),
+            )
+            row = cursor.fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "id": int(row[0]),
+        "module_name": row[1],
+        "job_name": row[2],
+        "status": row[3],
+        "trigger_type": row[4],
+        "triggered_by": row[5],
+        "k8s_job_name": row[6],
+        "started_at": str(row[7]) if row[7] is not None else None,
+        "finished_at": str(row[8]) if row[8] is not None else None,
+        "exit_code": row[9],
+        "error": row[10],
+        "payload": json.loads(row[11] or "{}"),
+        "created_at": str(row[12]) if row[12] is not None else None,
+    }
+
+
+def claim_next_queued_module_job_run() -> dict[str, Any] | None:
+    """Claim one queued manual/module run for the local controller."""
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id
+                FROM module_job_runs
+                WHERE status='queued'
+                ORDER BY id ASC
+                LIMIT 1
+                """
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            run_id = int(row[0])
+            cursor.execute(
+                """
+                UPDATE module_job_runs
+                SET status='launching'
+                WHERE id=%s AND status='queued'
+                """,
+                (run_id,),
+            )
+            if cursor.rowcount != 1:
+                conn.commit()
+                return None
+        conn.commit()
+
+    return get_module_job_run(run_id)
+
+
+def update_module_job_run(
+    run_id: int,
+    *,
+    status: str,
+    error: str | None = None,
+    exit_code: int | None = None,
+    k8s_job_name: str | None = None,
+) -> None:
+    """Update lifecycle state for a tracked module job run."""
+    status = str(status or "").strip()
+    if not status:
+        raise ValueError("status is required")
+
+    set_started = status in {"launching", "running"}
+    set_finished = status in {"completed", "failed", "canceled"}
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE module_job_runs
+                SET status=%s,
+                    error=%s,
+                    exit_code=COALESCE(%s, exit_code),
+                    k8s_job_name=COALESCE(%s, k8s_job_name),
+                    started_at=CASE
+                        WHEN %s=1 AND started_at IS NULL THEN CURRENT_TIMESTAMP
+                        ELSE started_at
+                    END,
+                    finished_at=CASE
+                        WHEN %s=1 THEN CURRENT_TIMESTAMP
+                        ELSE finished_at
+                    END
+                WHERE id=%s
+                """,
+                (
+                    status,
+                    error,
+                    exit_code,
+                    k8s_job_name,
+                    1 if set_started else 0,
+                    1 if set_finished else 0,
+                    run_id,
+                ),
+            )
+        conn.commit()
+
+
+def list_module_job_runs(
+    module_name: str | None = None,
+    *,
+    job_name: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Return recent tracked runs for managed module jobs."""
+    conditions = []
+    params: list[Any] = []
+    if module_name:
+        conditions.append("module_name=%s")
+        params.append(str(module_name).strip())
+    if job_name:
+        conditions.append("job_name=%s")
+        params.append(str(job_name).strip())
+
+    query = """
+        SELECT id, module_name, job_name, status, trigger_type, triggered_by,
+               k8s_job_name, started_at, finished_at, exit_code, error,
+               payload_json, created_at
+        FROM module_job_runs
+    """
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY id DESC LIMIT %s"
+    params.append(max(1, min(int(limit), 200)))
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(query, tuple(params))
+            rows = cursor.fetchall()
+
+    return [
+        {
+            "id": int(row[0]),
+            "module_name": row[1],
+            "job_name": row[2],
+            "status": row[3],
+            "trigger_type": row[4],
+            "triggered_by": row[5],
+            "k8s_job_name": row[6],
+            "started_at": str(row[7]) if row[7] is not None else None,
+            "finished_at": str(row[8]) if row[8] is not None else None,
+            "exit_code": row[9],
+            "error": row[10],
+            "payload": json.loads(row[11] or "{}"),
+            "created_at": str(row[12]) if row[12] is not None else None,
+        }
+        for row in rows
+    ]
+
+
+def request_module_job_run_cancel(run_id: int) -> None:
+    """Mark a queued/running module run as cancel requested."""
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE module_job_runs
+                SET status=%s, error=%s
+                WHERE id=%s AND status IN ('queued', 'running')
+                """,
+                ("cancel_requested", "Cancellation requested from web UI", run_id),
+            )
+        conn.commit()
+
+
+def get_module_config(module_name: str) -> dict[str, Any]:
+    """Return DB-backed non-secret config for a module."""
+    module_name = str(module_name or "").strip()
+    if not module_name:
+        return {}
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT config_key, config_value, value_type
+                FROM module_config
+                WHERE module_name=%s
+                """,
+                (module_name,),
+            )
+            rows = cursor.fetchall()
+
+    config: dict[str, Any] = {}
+    for key, raw_value, value_type in rows:
+        if value_type == "json":
+            try:
+                config[str(key)] = json.loads(raw_value)
+            except (TypeError, json.JSONDecodeError):
+                config[str(key)] = raw_value
+        else:
+            config[str(key)] = raw_value
+    return config
+
+
+def upsert_module_config(
+    module_name: str,
+    updates: dict[str, Any],
+    *,
+    updated_by: str | None = None,
+) -> None:
+    """Persist DB-backed non-secret config for a module."""
+    module_name = str(module_name or "").strip()
+    if not module_name:
+        raise ValueError("module_name is required")
+    if not isinstance(updates, dict):
+        raise ValueError("updates must be a dictionary")
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            for key, value in updates.items():
+                config_key = str(key or "").strip()
+                if not config_key:
+                    continue
+                cursor.execute(
+                    """
+                    INSERT INTO module_config
+                    (
+                        module_name,
+                        config_key,
+                        config_value,
+                        value_type,
+                        updated_by
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        config_value=VALUES(config_value),
+                        value_type=VALUES(value_type),
+                        updated_by=VALUES(updated_by)
+                    """,
+                    (
+                        module_name,
+                        config_key,
+                        json.dumps(value, sort_keys=True),
+                        "json",
+                        updated_by,
+                    ),
+                )
+        conn.commit()
 
 
 def set_module_enabled(name: str, enabled: bool) -> None:

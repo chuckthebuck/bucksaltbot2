@@ -50,6 +50,33 @@ def test_parse_module_definition_accepts_cron_only_module():
     assert definition.cron_jobs[0].endpoint == "/api/v1/cleanup/cron/daily"
 
 
+def test_parse_module_definition_accepts_human_readable_handler_job():
+    import router.module_registry as registry
+
+    definition = registry.parse_module_definition(
+        {
+            "name": "four_award",
+            "repo": "https://example.invalid/four-award",
+            "entry_point": "modules.four_award.service:run",
+            "jobs": [
+                {
+                    "name": "sync",
+                    "run": "every 15 minutes",
+                    "handler": "modules.four_award.service:run",
+                    "timeout_seconds": 600,
+                }
+            ],
+        }
+    )
+
+    job = definition.cron_jobs[0]
+    assert job.schedule_text == "every 15 minutes"
+    assert job.schedule == "*/15 * * * *"
+    assert job.handler == "modules.four_award.service:run"
+    assert job.execution_mode == "handler"
+    assert job.concurrency_policy == "forbid"
+
+
 def test_parse_module_definition_rejects_api_only_module():
     import router.module_registry as registry
 
@@ -155,3 +182,35 @@ def test_install_remote_module_fetches_manifest_and_persists_definition():
 
     assert result == expected
     mock_upsert.assert_called_once_with(expected, enabled=False)
+
+
+def test_discover_installed_module_definitions_from_entry_points():
+    import router.module_registry as registry
+
+    def module_manifest():
+        return {
+            "name": "four_award",
+            "repo": "https://example.invalid/four-award",
+            "entry_point": "chuck_the_4awardhelper.service:run_four_award_sync",
+            "jobs": [
+                {
+                    "name": "sync",
+                    "run": "every hour",
+                    "handler": "chuck_the_4awardhelper.service:run_four_award_sync",
+                }
+            ],
+        }
+
+    entry_point = MagicMock()
+    entry_point.name = "four_award"
+    entry_point.load.return_value = module_manifest
+
+    with (
+        patch("router.module_registry.metadata.entry_points") as mock_entry_points,
+    ):
+        mock_entry_points.return_value.select.return_value = [entry_point]
+        definitions = registry.discover_installed_module_definitions()
+
+    assert len(definitions) == 1
+    assert definitions[0].name == "four_award"
+    assert definitions[0].cron_jobs[0].schedule == "0 * * * *"

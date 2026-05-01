@@ -72,6 +72,16 @@ from router.diff_state import (  # noqa: F401
     _update_diff_payload,
 )
 from router import module_registry as module_registry  # noqa: F401
+from router.module_registry import (  # noqa: F401
+    claim_next_queued_module_job_run,
+    create_module_job_run,
+    get_module_config,
+    get_module_job_run,
+    list_module_job_runs,
+    request_module_job_run_cancel,
+    update_module_job_run,
+    upsert_module_config,
+)
 from router import module_runtime as module_runtime  # noqa: F401
 from router.framework_config import (  # noqa: F401
     ALLOWED_GROUPS as FRAMEWORK_ALLOWED_GROUPS,
