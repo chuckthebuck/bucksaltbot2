@@ -1143,6 +1143,38 @@ def test_module_registry_api_lists_loaded_modules(client):
     assert data["modules"][0]["has_access"] is True
 
 
+def test_module_registry_install_api_installs_module_for_maintainer(client):
+    import router.module_registry as registry
+
+    _set_session(client, "maintainer")
+    definition = registry.parse_module_definition(
+        {
+            "name": "four_award",
+            "repo": "https://github.com/example/four-award",
+            "entry_point": "handler.py",
+            "ui": True,
+        }
+    )
+
+    with (
+        patch("router.routes.is_maintainer", return_value=True),
+        patch("router.routes.install_remote_module", return_value=definition) as mock_install,
+    ):
+        resp = client.post(
+            "/api/v1/modules/install",
+            json={"repo": "https://github.com/example/four-award", "enabled": False},
+        )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["module"] == "four_award"
+    assert data["installed"] is True
+    assert data["definition"]["name"] == "four_award"
+    mock_install.assert_called_once_with(
+        "https://github.com/example/four-award", enabled_default=False
+    )
+
+
 def test_cancel_job_marks_job_and_items_canceled(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()

@@ -249,6 +249,7 @@ has_access = user_has_module_access(
 - GET `/api/v1/modules/<module>` — Module details
 - PUT `/api/v1/modules/<module>/enabled` — Toggle enable/disable
 - PUT `/api/v1/modules/<module>/access` — Grant/revoke user access
+- POST `/api/v1/modules/install` — Install a module from a GitHub or GitLab repository URL
 
 ## Best Practices
 

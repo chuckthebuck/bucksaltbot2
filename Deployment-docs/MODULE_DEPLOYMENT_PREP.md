@@ -157,6 +157,9 @@ export CELERY_RESULT_BACKEND=redis://broker:6379/9
    - Worker: Should show cron executor running every 60s
    - Beat: Should log task scheduling
 
+7. **Install external modules**:
+   - Use `POST /api/v1/modules/install` with a GitHub or GitLab repo URL to add a module without bundling it in the framework repo.
+
 ### 9. Rollback Plan
 
 If issues occur:

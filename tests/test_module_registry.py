@@ -131,3 +131,27 @@ def test_upsert_module_definition_persists_cron_jobs_and_registry_rows():
     executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
     assert "module_registry" in executed
     assert "module_cron_jobs" in executed
+
+
+def test_install_remote_module_fetches_manifest_and_persists_definition():
+    import router.module_registry as registry
+
+    manifest = {
+        "name": "four_award",
+        "entry_point": "handler.py",
+        "ui": True,
+    }
+
+    expected = registry.parse_module_definition({**manifest, "repo": "https://github.com/example/four-award"})
+
+    with (
+        patch("router.module_registry.fetch_remote_manifest", return_value=manifest),
+        patch("router.module_registry.upsert_module_definition") as mock_upsert,
+    ):
+        result = registry.install_remote_module(
+            "https://github.com/example/four-award",
+            enabled_default=False,
+        )
+
+    assert result == expected
+    mock_upsert.assert_called_once_with(expected, enabled=False)
