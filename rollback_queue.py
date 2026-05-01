@@ -380,7 +380,7 @@ def process_rollback_job(job_id: int):
                     token=token,
                     summary=_summary_with_requester(summary, claimed_requested_by),
                     markbot=True,
-                    bot=True,
+                    
                 ).submit()
 
                 _update_item(item_id, "completed", None)
