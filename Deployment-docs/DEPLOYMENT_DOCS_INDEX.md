@@ -1,7 +1,7 @@
 # 📋 Deployment Documentation Index
 
-**Branch:** `copilot/add-mediawiki-authorised-users`  
-**Status:** ✅ **READY FOR DEPLOYMENT**  
+**Branch:** `copilot/add-mediawiki-authorised-users`
+**Status:** ✅ **READY FOR DEPLOYMENT**
 **Created:** March 25, 2026
 
 ---
@@ -11,7 +11,7 @@
 Choose based on your needs:
 
 ### 1. 🚀 **DEPLOYMENT_QUICK_REFERENCE.md** (5 min read)
-**For:** You just want to deploy quickly  
+**For:** You just want to deploy quickly
 **Contains:** 
 - One-minute summary
 - Quick deployment commands (5 steps)
@@ -24,7 +24,7 @@ Choose based on your needs:
 ---
 
 ### 2. ✅ **DEPLOYMENT_CHECKLIST.md** (15 min read)
-**For:** You want comprehensive deployment guidance  
+**For:** You want comprehensive deployment guidance
 **Contains:**
 - Full pre-deployment checklist
 - Step-by-step Toolforge deployment
@@ -38,7 +38,7 @@ Choose based on your needs:
 ---
 
 ### 3. 🎯 **DEPLOYMENT_SUMMARY.md** (10 min read)
-**For:** Executive overview and decision-making  
+**For:** Executive overview and decision-making
 **Contains:**
 - Executive summary
 - Test results (all passing ✅)
@@ -53,7 +53,7 @@ Choose based on your needs:
 ---
 
 ### 4. 📖 **FEATURES_GRANULAR_PERMISSIONS.md** (20 min read)
-**For:** Understanding what the new features do  
+**For:** Understanding what the new features do
 **Contains:**
 - Feature overview
 - User hierarchy diagram
@@ -64,6 +64,16 @@ Choose based on your needs:
 - Troubleshooting user access issues
 
 **Start here if:** You want to know what features you're enabling
+
+### 5. 🔐 **ACCESS_CONTROL.md** (10 min read)
+**For:** Understanding the replacement access model
+**Contains:**
+- MediaWiki-style users → groups → rights model
+- Role auto grants
+- Rollback-control groups
+- Legacy migration mapping
+
+**Start here if:** You are changing who can use rollback, jobs, config, or modules
 
 ---
 
@@ -135,11 +145,11 @@ curl https://buckbot.toolforge.org/api/v1/rollback/worker
 
 These features are **included in the deployment** but require environment variables to activate (all optional):
 
-✨ **Test Accounts** — Grant individuals access without maintainer rights  
-✨ **Read-Only Mode** — Let people watch but not touch  
-✨ **Tester Tier** — Power users with higher rate limits  
-✨ **Granular Grants** — Choose exact permissions per user  
-✨ **Rate Limiting** — Prevent spam with per-user job quotas  
+✨ **Test Accounts** — Grant individuals access without maintainer rights
+✨ **Read-Only Mode** — Let people watch but not touch
+✨ **Tester Tier** — Power users with higher rate limits
+✨ **Granular Grants** — Choose exact permissions per user
+✨ **Rate Limiting** — Prevent spam with per-user job quotas
 
 **All completely optional** — leave everything unconfigured and nothing changes for users.
 
@@ -175,22 +185,22 @@ These features are **included in the deployment** but require environment variab
 
 ## ❓ Common Questions
 
-**Q: Do I need to reconfigure anything?**  
+**Q: Do I need to reconfigure anything?**
 A: No! All new features are disabled by default. Deploy now, configure later if needed.
 
-**Q: Will existing users see any changes?**  
+**Q: Will existing users see any changes?**
 A: No! Existing functionality is unchanged. New features are opt-in via environment variables.
 
-**Q: How do I rollback if something breaks?**  
+**Q: How do I rollback if something breaks?**
 A: See "Quick Rollback" in DEPLOYMENT_QUICK_REFERENCE.md. Takes ~5 minutes.
 
-**Q: Do I need to update the database?**  
+**Q: Do I need to update the database?**
 A: No! There are zero database changes. It's safe to deploy and rollback anytime.
 
-**Q: What if I want to enable the new features?**  
+**Q: What if I want to enable the new features?**
 A: See DEPLOYMENT_CHECKLIST.md > "Environment Variables" section, or read FEATURES_GRANULAR_PERMISSIONS.md > "Configuration Examples"
 
-**Q: Are the tests really all passing?**  
+**Q: Are the tests really all passing?**
 A: Yes! 110 Python tests + 4 frontend tests + full type checking. All ✅
 
 ---
@@ -210,10 +220,10 @@ A: Yes! 110 Python tests + 4 frontend tests + full type checking. All ✅
 
 ### If you have questions about:
 
-**Deployment process** → Read `DEPLOYMENT_CHECKLIST.md`  
-**New features** → Read `FEATURES_GRANULAR_PERMISSIONS.md`  
-**Risk/Safety** → Read `DEPLOYMENT_SUMMARY.md`  
-**Quick start** → Read `DEPLOYMENT_QUICK_REFERENCE.md`  
+**Deployment process** → Read `DEPLOYMENT_CHECKLIST.md`
+**New features** → Read `FEATURES_GRANULAR_PERMISSIONS.md`
+**Risk/Safety** → Read `DEPLOYMENT_SUMMARY.md`
+**Quick start** → Read `DEPLOYMENT_QUICK_REFERENCE.md`
 
 ### If you encounter issues:
 
@@ -255,12 +265,12 @@ Rollback Plan:    ✅ Simple (5 minutes)
 
 ## 🎯 TL;DR (30 seconds)
 
-**What:** Adds granular user permission management (all opt-in)  
-**Risk:** Very low - backward compatible, all tests pass  
-**Config:** Optional environment variables (none required)  
-**Deploy:** ~15 min (5 min build + 10 min verify)  
-**Rollback:** ~5 min if needed  
-**Decision:** ✅ Safe to deploy  
+**What:** Adds granular user permission management (all opt-in)
+**Risk:** Very low - backward compatible, all tests pass
+**Config:** Optional environment variables (none required)
+**Deploy:** ~15 min (5 min build + 10 min verify)
+**Rollback:** ~5 min if needed
+**Decision:** ✅ Safe to deploy
 
 **To deploy:**
 ```bash

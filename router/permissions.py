@@ -8,12 +8,12 @@ from app import flask_app as app, is_maintainer
 from redis_state import r
 from router.framework_config import RATE_LIMIT_KEY_PREFIX
 from router.authz import (
-    ALLOWED_GROUPS,
     is_bot_admin,
     _effective_runtime_authz_config,
     _expand_all_grants,
     _normalize_grant_atom,
     _USER_GRANT_RIGHTS,
+    _USER_GRANT_GROUPS,
     _CONFIG_EDIT_PRIMARY_ACCOUNT,
     get_user_groups,
 )
@@ -40,11 +40,7 @@ def is_authorized(username):
     if _is_maintainer(username):
         return True
 
-    if username.lower() in config["EXTRA_AUTHORIZED_USERS"]:
-        return True
-
-    groups = get_user_groups(username)
-    return any(group in ALLOWED_GROUPS for group in groups)
+    return bool(_expand_all_grants(config, username))
 
 
 def is_admin_user(username: str) -> bool:
@@ -104,16 +100,13 @@ def _user_has_grant_right(username: str, right: str) -> bool:
 
 
 def is_tester(username: str) -> bool:
-    """Return True if the user is in the USERS_TESTER env-var list.
-
-    Testers sit between regular users and maintainers: they have rollback
-    access plus read-all and a higher rate limit, but no
-    cross-user cancel or retry privileges.
-    """
+    """Return True if the user has the tester control group."""
     if not username:
         return False
     config = _effective_runtime_authz_config()
-    return username.strip().lower() in config["USERS_TESTER"]
+    grants_map = config.get("ROLLBACK_CONTROL_JSON") or {}
+    atoms = grants_map.get(username.strip().lower()) or []
+    return "group:tester" in {_normalize_grant_atom(atom) for atom in atoms}
 
 
 def _user_permissions(username: str) -> frozenset:
@@ -123,9 +116,8 @@ def _user_permissions(username: str) -> frozenset:
     ----------------------------------
     bot admin (BOT_ADMIN_ACCOUNTS)   — chuckbot and similar accounts
     maintainer (Toolhub maintainers) — includes bot admins
-    tester (USERS_TESTER)            — all tools, higher rate limit; no cross-user actions
-    admin (Commons sysop)            — can log in; base perms only
-    regular user (rollbacker/sysop)  — rollback queue only
+    explicit groups                  — MediaWiki-style rollback control groups
+    auto role grants                 — groups from Commons sysop/rollbacker roles
 
     Permission strings (canonical)
     ------------------------------
@@ -159,7 +151,6 @@ def _user_permissions(username: str) -> frozenset:
     _router = _r()
     _is_maintainer = _router.is_maintainer if _router else is_maintainer
     _is_bot_admin = _router.is_bot_admin if _router else is_bot_admin
-    _is_tester = _router.is_tester if _router else is_tester
     _erc = (
         _router._effective_runtime_authz_config
         if _router
@@ -169,16 +160,12 @@ def _user_permissions(username: str) -> frozenset:
     lower = username.lower()
     config = _erc()
 
-    # Read-only users may only view their own jobs.
-    if lower in config["USERS_READ_ONLY"]:
-        return frozenset({"read_own"})
-
-    # Base permissions granted to every authenticated user.
-    perms: set = {"read_own", "write", "cancel_own", "retry_own"}
+    perms: set = {"read_own"}
 
     if _is_maintainer(username):
         # Maintainers are above admins: they can cancel any admin's job.
         perms |= {
+            "write",
             "view_all",
             "rollback_diff",
             "rollback_account",
@@ -190,65 +177,22 @@ def _user_permissions(username: str) -> frozenset:
             "retry_any",
             "edit_config",
             "manage_user_grants",
+            "manage_modules",
+            "run_module_jobs",
+            "edit_module_config",
             "cancel_admin_jobs",
         }
         # Bot admins (chuckbot) sit above all maintainers and can cancel their jobs too.
         if _is_bot_admin(username):
             perms.add("cancel_maintainer_jobs")
-    elif _is_tester(username):
-        # Testers get rollback access but no cross-user actions.
-        perms |= {
-            "view_all",
-            "rollback_diff",
-            "rollback_account",
-            "rollback_batch",
-        }
     else:
-        # Legacy per-right grants for non-maintainer, non-tester accounts.
-        if lower in config["USERS_GRANTED_FROM_DIFF"]:
-            perms |= {"rollback_diff", "rollback_account"}
-        if lower in config["USERS_GRANTED_VIEW_ALL"]:
-            perms.add("view_all")
-        if lower in config["USERS_GRANTED_BATCH"]:
-            perms.add("rollback_batch")
-        if lower in config["USERS_GRANTED_CANCEL_ANY"]:
-            perms.add("cancel_any")
-        if lower in config["USERS_GRANTED_RETRY_ANY"]:
-            perms.add("retry_any")
-
-        # User-centric grants (MediaWiki-style): username -> rights/groups.
         expanded_grants = _expand_all_grants(config, lower)
-        if "rollback_diff_dry_run_only" in expanded_grants:
-            # Dry-run-only implies diff/account rollback access.
-            perms |= {
-                "rollback_diff",
-                "rollback_account",
-                "rollback_diff_dry_run_only",
-            }
-        if "rollback_diff" in expanded_grants:
-            perms.add("rollback_diff")
-        if "rollback_account" in expanded_grants:
-            perms.add("rollback_account")
-        if "view_all" in expanded_grants:
-            perms.add("view_all")
-        if "rollback_batch" in expanded_grants:
-            perms.add("rollback_batch")
-        if "approve_jobs" in expanded_grants:
-            perms.add("approve_jobs")
-        if "autoapprove_jobs" in expanded_grants:
-            perms.add("autoapprove_jobs")
-        if "force_dry_run" in expanded_grants:
-            perms.add("force_dry_run")
-        if "edit_config" in expanded_grants:
-            perms.add("edit_config")
-        if "manage_user_grants" in expanded_grants:
-            perms.add("manage_user_grants")
-        if "cancel_any" in expanded_grants:
-            perms.add("cancel_any")
-        if "retry_any" in expanded_grants:
-            perms.add("retry_any")
+        if "read_only" in _user_group_atoms(config, lower):
+            return frozenset({"read_own"})
+        perms |= expanded_grants
 
-    perms |= _expand_all_grants(config, lower)
+    if "write" in perms:
+        perms |= {"cancel_own", "retry_own"}
 
     if "rollback_diff_dry_run_only" in perms:
         perms |= {"rollback_diff", "rollback_account"}
@@ -273,6 +217,18 @@ def _user_permissions(username: str) -> frozenset:
         perms.add("manage_user_grants")
 
     return frozenset(perms)
+
+
+def _user_group_atoms(config: dict, username: str) -> set[str]:
+    atoms = set()
+    grants_map = config.get("ROLLBACK_CONTROL_JSON") or {}
+    for atom in grants_map.get(username.strip().lower(), []):
+        normalized = _normalize_grant_atom(atom)
+        if normalized.startswith("group:"):
+            group_name = normalized.split(":", 1)[1]
+            if group_name in _USER_GRANT_GROUPS:
+                atoms.add(group_name)
+    return atoms
 
 
 def _check_rate_limit(username: str) -> bool:

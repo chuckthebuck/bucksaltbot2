@@ -325,73 +325,75 @@ onMounted(() => {
             Toolforge still needs the repo's jobs.yaml updated and reloaded before
             a new interval starts running.
           </p>
-          <table class="cron-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Schedule</th>
-                <th>Runner</th>
-                <th>Timeout</th>
-                <th>Status</th>
-                <th v-if="canManageModules">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="job in selectedModuleData.cron_jobs" :key="job.name">
-                <td>{{ job.name }}</td>
-                <td>
-                  <input
-                    v-if="canManageModules"
-                    v-model="jobDrafts[`${selectedModuleData.name}/${job.name}`].scheduleText"
-                    class="schedule-input"
-                    type="text"
-                    placeholder="daily at 03:00"
-                  />
-                  <code v-else>{{ job.schedule_text || job.schedule }}</code>
-                  <div class="cron-expression">
-                    Cron: <code>{{ job.schedule }}</code>
-                  </div>
-                </td>
-                <td>
-                  <code>{{ job.handler || job.endpoint || job.execution_mode }}</code>
-                </td>
-                <td>
-                  <input
-                    v-if="canManageModules"
-                    v-model.number="jobDrafts[`${selectedModuleData.name}/${job.name}`].timeoutSeconds"
-                    class="timeout-input"
-                    type="number"
-                    min="1"
-                  />
-                  <span v-else>{{ job.timeout_seconds }}s</span>
-                </td>
-                <td>
-                  <label v-if="canManageModules" class="enabled-toggle">
+          <div class="cron-table-scroll">
+            <table class="cron-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Schedule</th>
+                  <th>Runner</th>
+                  <th>Timeout</th>
+                  <th>Status</th>
+                  <th v-if="canManageModules">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="job in selectedModuleData.cron_jobs" :key="job.name">
+                  <td>{{ job.name }}</td>
+                  <td>
                     <input
-                      v-model="jobDrafts[`${selectedModuleData.name}/${job.name}`].enabled"
-                      type="checkbox"
+                      v-if="canManageModules"
+                      v-model="jobDrafts[`${selectedModuleData.name}/${job.name}`].scheduleText"
+                      class="schedule-input"
+                      type="text"
+                      placeholder="daily at 03:00"
                     />
-                    Enabled
-                  </label>
-                  <span v-else :class="{ enabled: job.enabled }">
-                    {{ job.enabled ? "Enabled" : "Disabled" }}
-                  </span>
-                </td>
-                <td v-if="canManageModules">
-                  <CdxButton
-                    :disabled="savingJob === `${selectedModuleData.name}/${job.name}`"
-                    @click="saveJob(selectedModuleData.name, job.name)"
-                  >
-                    {{
-                      savingJob === `${selectedModuleData.name}/${job.name}`
-                        ? "Saving..."
-                        : "Save"
-                    }}
-                  </CdxButton>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                    <code v-else>{{ job.schedule_text || job.schedule }}</code>
+                    <div class="cron-expression">
+                      Cron: <code>{{ job.schedule }}</code>
+                    </div>
+                  </td>
+                  <td class="runner-cell">
+                    <code>{{ job.handler || job.endpoint || job.execution_mode }}</code>
+                  </td>
+                  <td>
+                    <input
+                      v-if="canManageModules"
+                      v-model.number="jobDrafts[`${selectedModuleData.name}/${job.name}`].timeoutSeconds"
+                      class="timeout-input"
+                      type="number"
+                      min="1"
+                    />
+                    <span v-else>{{ job.timeout_seconds }}s</span>
+                  </td>
+                  <td>
+                    <label v-if="canManageModules" class="enabled-toggle">
+                      <input
+                        v-model="jobDrafts[`${selectedModuleData.name}/${job.name}`].enabled"
+                        type="checkbox"
+                      />
+                      Enabled
+                    </label>
+                    <span v-else :class="{ enabled: job.enabled }">
+                      {{ job.enabled ? "Enabled" : "Disabled" }}
+                    </span>
+                  </td>
+                  <td v-if="canManageModules">
+                    <CdxButton
+                      :disabled="savingJob === `${selectedModuleData.name}/${job.name}`"
+                      @click="saveJob(selectedModuleData.name, job.name)"
+                    >
+                      {{
+                        savingJob === `${selectedModuleData.name}/${job.name}`
+                          ? "Saving..."
+                          : "Save"
+                      }}
+                    </CdxButton>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <section v-if="canManageModules" class="module-config">
@@ -420,36 +422,36 @@ onMounted(() => {
             </CdxButton>
           </div>
         </section>
-      </section>
 
-      <section v-if="selectedModuleData && canManageModules" class="module-access">
-        <h3>Access Control</h3>
-        <p class="help-text">
-          Maintainers have access to all modules by default. Grant additional users
-          access below.
-        </p>
-        <div class="access-form">
-          <input
-            v-model="newAccessUsername"
-            type="text"
-            placeholder="Username"
-            class="username-input"
-            @keyup.enter="grantAccess(selectedModuleData!.name, newAccessUsername)"
-          />
-          <CdxButton
-            :disabled="
-              !newAccessUsername.trim() ||
-              grantingAccess?.module === selectedModuleData.name
-            "
-            @click="grantAccess(selectedModuleData!.name, newAccessUsername)"
-          >
-            {{
-              grantingAccess?.module === selectedModuleData.name
-                ? "Granting..."
-                : "Grant Access"
-            }}
-          </CdxButton>
-        </div>
+        <section v-if="canManageModules" class="module-access">
+          <h3>Access Control</h3>
+          <p class="help-text">
+            Maintainers have access to all modules by default. Grant additional users
+            access below.
+          </p>
+          <div class="access-form">
+            <input
+              v-model="newAccessUsername"
+              type="text"
+              placeholder="Username"
+              class="username-input"
+              @keyup.enter="grantAccess(selectedModuleData!.name, newAccessUsername)"
+            />
+            <CdxButton
+              :disabled="
+                !newAccessUsername.trim() ||
+                grantingAccess?.module === selectedModuleData.name
+              "
+              @click="grantAccess(selectedModuleData!.name, newAccessUsername)"
+            >
+              {{
+                grantingAccess?.module === selectedModuleData.name
+                  ? "Granting..."
+                  : "Grant Access"
+              }}
+            </CdxButton>
+          </div>
+        </section>
       </section>
     </div>
   </div>
@@ -483,6 +485,8 @@ h3 {
   grid-template-columns: 250px 1fr;
   gap: 20px;
   margin-top: 20px;
+  align-items: start;
+  min-width: 0;
 
   @media (max-width: 768px) {
     grid-template-columns: 1fr;
@@ -494,6 +498,7 @@ h3 {
   border-radius: 4px;
   padding: 15px;
   background-color: #f6f9ff;
+  align-self: start;
 }
 
 .no-modules {
@@ -560,6 +565,7 @@ h3 {
   border-radius: 4px;
   padding: 20px;
   background: white;
+  min-width: 0;
 }
 
 .detail-header {
@@ -612,10 +618,40 @@ h3 {
   }
 }
 
-.cron-table {
+.cron-table-scroll {
   width: 100%;
+  overflow-x: auto;
+}
+
+.cron-table {
+  width: max(100%, 900px);
   border-collapse: collapse;
   margin-top: 10px;
+  table-layout: fixed;
+
+  th:nth-child(1) {
+    width: 120px;
+  }
+
+  th:nth-child(2) {
+    width: 220px;
+  }
+
+  th:nth-child(3) {
+    width: auto;
+  }
+
+  th:nth-child(4) {
+    width: 110px;
+  }
+
+  th:nth-child(5) {
+    width: 120px;
+  }
+
+  th:nth-child(6) {
+    width: 95px;
+  }
 
   th {
     background: #f6f9ff;
@@ -630,11 +666,15 @@ h3 {
     border-bottom: 1px solid #eee;
 
     code {
+      display: inline-block;
+      max-width: 100%;
       background: #f6f9ff;
       padding: 2px 4px;
       border-radius: 3px;
       font-family: monospace;
       font-size: 0.9em;
+      overflow-wrap: anywhere;
+      white-space: normal;
     }
 
     &.enabled {
@@ -642,6 +682,10 @@ h3 {
       font-weight: 600;
     }
   }
+}
+
+.runner-cell code {
+  line-height: 1.35;
 }
 
 .schedule-input,

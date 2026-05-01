@@ -84,17 +84,14 @@
 
   {% if username %}
     <div class="user-area">
-      <img src="/static/assets/chuck-framework-logo.png" alt="Chuck the Buckbot Framework" class="brand-wordmark">
       <span>{{ username }}</span>
       <a href="/logout" class="logout">Logout</a>
     </div>
   {% else %}
-    <div class="user-area">
-      <img src="/static/assets/chuck-framework-logo.png" alt="Chuck the Buckbot Framework" class="brand-wordmark">
-    </div>
+    <div class="user-area"></div>
   {% endif %}
 </header>
-  <div class="container">
+  <div class="page-shell">
     <div class="subnav" aria-label="Section navigation">
       {% if current_section == 'rollback' %}
       <a class="subnav-item{% if type == 'rollback-queue' %} is-active{% endif %}" href="/goto?tab=rollback-queue">Rollback Queue</a>

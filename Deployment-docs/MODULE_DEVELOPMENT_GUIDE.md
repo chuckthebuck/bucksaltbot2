@@ -157,13 +157,48 @@ The framework will:
 - Launch scheduled runs through `python3 -m module_runner`
 - Update `last_run_at` and `next_run_at` timestamps
 
-Supported human schedules:
-- `every 15 minutes`
-- `every hour`
-- `every 6 hours`
-- `daily at 03:00`
-- `weekly on monday at 09:30`
-- `monthly on day 1 at 02:00`
+#### Human-readable schedule syntax
+
+Use the `run` field for schedules that should be readable without cron training.
+The parser is intentionally small and deterministic; anything outside this list
+should use raw cron in the `schedule` field instead.
+
+Supported forms:
+
+| Schedule text | Generated cron | Notes |
+|---|---:|---|
+| `every 15 minutes` | `*/15 * * * *` | Minute interval must be 1-59. |
+| `every hour` | `0 * * * *` | Shortcut for hourly runs. |
+| `every 6 hours` | `0 */6 * * *` | Hour interval must be 1-23. |
+| `daily at 03:00` | `0 3 * * *` | Time is 24-hour `HH:MM`. |
+| `weekly on monday at 09:30` | `30 9 * * 1` | Weekdays may be full names or 3-letter names. |
+| `monthly on day 1 at 02:00` | `0 2 1 * *` | Day must be 1-31. |
+
+Examples:
+
+```toml
+[[jobs]]
+name = "quick-check"
+run = "every 15 minutes"
+handler = "chuck_the_example.service:run"
+timeout_seconds = 300
+
+[[jobs]]
+name = "nightly-sync"
+run = "daily at 03:00"
+handler = "chuck_the_example.service:sync"
+timeout_seconds = 900
+```
+
+Advanced users can bypass the human syntax with raw cron:
+
+```toml
+[[jobs]]
+name = "weekday-report"
+schedule = "15 8 * * 1-5"
+handler = "chuck_the_example.service:report"
+timeout_seconds = 300
+```
 
 ### 5. Structure Your Module
 

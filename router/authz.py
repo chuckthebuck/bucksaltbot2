@@ -50,6 +50,7 @@ _CONFIG_EDIT_PRIMARY_ACCOUNT = (
 )
 
 _USER_GRANT_RIGHTS = {
+    "write",
     "rollback_diff",
     "rollback_account",
     "rollback_batch",
@@ -62,24 +63,41 @@ _USER_GRANT_RIGHTS = {
     "manage_user_grants",
     "cancel_any",
     "retry_any",
+    "manage_modules",
+    "run_module_jobs",
+    "edit_module_config",
 }
 
 _USER_GRANT_GROUPS = {
+    "basic": {"write"},
+    "read_only": set(),
+    "tester": {
+        "write",
+        "view_all",
+        "rollback_diff",
+        "rollback_account",
+        "rollback_batch",
+    },
     "viewer": {"view_all"},
-    "rollbacker": {"rollback_diff", "rollback_account"},
+    "rollbacker": {"write", "rollback_diff", "rollback_account"},
     "rollbacker_dry_run": {
+        "write",
         "rollback_diff",
         "rollback_account",
         "rollback_diff_dry_run_only",
     },
-    "batch_runner": {"rollback_batch"},
+    "batch_runner": {"write", "rollback_batch"},
     "jobs_moderator": {
         "approve_jobs",
         "force_dry_run",
         "cancel_any",
         "retry_any",
     },
+    "config_editor": {"edit_config"},
+    "rights_manager": {"manage_user_grants"},
+    "module_operator": {"manage_modules", "run_module_jobs", "edit_module_config"},
     "admin": {
+        "write",
         "view_all",
         "rollback_diff",
         "rollback_account",
@@ -91,6 +109,9 @@ _USER_GRANT_GROUPS = {
         "retry_any",
         "edit_config",
         "manage_user_grants",
+        "manage_modules",
+        "run_module_jobs",
+        "edit_module_config",
     },
 }
 
@@ -111,13 +132,8 @@ _LEGACY_GROUP_ALIASES = {
 
 _USER_IMPLICIT_FLAGS = (
     "authenticated",
-    "bot_admin",
-    "maintainer",
     "commons_admin",
     "commons_rollbacker",
-    "tester",
-    "read_only",
-    "extra_authorized",
 )
 
 _AUTO_GRANT_ROLE_KEYS = set(_USER_IMPLICIT_FLAGS)
@@ -139,13 +155,16 @@ _INT_CONFIG_KEYS = {
 }
 
 _JSON_CONFIG_KEYS = {
+    "ROLLBACK_CONTROL_JSON",
+    "ROLE_GRANTS_JSON",
+}
+
+_LEGACY_JSON_CONFIG_KEYS = {
     "USER_GRANTS_JSON",
     "AUTO_GRANTS_JSON",
 }
 
-_RUNTIME_AUTHZ_ALLOWED_KEYS = sorted(
-    _USER_SET_CONFIG_KEYS | _INT_CONFIG_KEYS | _JSON_CONFIG_KEYS
-)
+_RUNTIME_AUTHZ_ALLOWED_KEYS = sorted(_INT_CONFIG_KEYS | _JSON_CONFIG_KEYS)
 _RUNTIME_AUTHZ_CACHE_TTL = 60
 _runtime_authz_cache = None
 _runtime_authz_cache_expiry = 0.0
@@ -270,7 +289,11 @@ def _expand_user_grants(config: dict, username: str) -> set[str]:
     if not user:
         return set()
 
-    grants_map = config.get("USER_GRANTS_JSON") or {}
+    grants_map = (
+        config.get("ROLLBACK_CONTROL_JSON")
+        or config.get("USER_GRANTS_JSON")
+        or {}
+    )
     atoms = grants_map.get(user) or []
     expanded = set()
 
@@ -313,15 +336,8 @@ def _implicit_role_flags(
     _is_maintainer = _router.is_maintainer if _router else is_maintainer
     return {
         "authenticated": True,
-        "bot_admin": bool(_is_bot_admin(normalized_username)),
-        "maintainer": bool(_is_maintainer(normalized_username)),
         "commons_admin": bool("sysop" in groups),
         "commons_rollbacker": bool("rollbacker" in groups),
-        "tester": bool(normalized_username in config["USERS_TESTER"]),
-        "read_only": bool(normalized_username in config["USERS_READ_ONLY"]),
-        "extra_authorized": bool(
-            normalized_username in config["EXTRA_AUTHORIZED_USERS"]
-        ),
     }
 
 
@@ -398,7 +414,7 @@ def _normalize_auto_grants_map_input(value, key: str) -> dict:
 
 
 def _expand_auto_grants(config: dict, username: str) -> set[str]:
-    role_map = config.get("AUTO_GRANTS_JSON") or {}
+    role_map = config.get("ROLE_GRANTS_JSON") or {}
     if not isinstance(role_map, dict):
         return set()
 
@@ -441,7 +457,11 @@ def _get_user_grants_payload(
     commons_groups: set[str] | None = None,
 ) -> dict:
     normalized_username = _normalize_username(target_username)
-    grants_map = config.get("USER_GRANTS_JSON") or {}
+    grants_map = (
+        config.get("ROLLBACK_CONTROL_JSON")
+        or config.get("USER_GRANTS_JSON")
+        or {}
+    )
     atoms = list(grants_map.get(normalized_username, []))
 
     groups = sorted(
@@ -473,6 +493,17 @@ def _get_user_grants_payload(
 
 def _parse_user_grants_env(raw_value: str) -> dict:
     if not raw_value:
+        return {}
+
+
+def _parse_role_grants_env(raw_value: str) -> dict:
+    if not raw_value:
+        return {}
+
+    try:
+        return _normalize_auto_grants_map_input(raw_value, "ROLE_GRANTS_JSON")
+    except ValueError as exc:
+        app.logger.warning("Invalid ROLE_GRANTS_JSON env var; ignoring: %s", exc)
         return {}
 
     try:
@@ -520,21 +551,45 @@ def _runtime_authz_defaults() -> dict:
         if _router
         else RATE_LIMIT_TESTER_JOBS_PER_HOUR
     )
+    rollback_control = _parse_user_grants_env(os.getenv("ROLLBACK_CONTROL_JSON", ""))
+    if not rollback_control:
+        rollback_control = _parse_user_grants_env(os.getenv("USER_GRANTS_JSON", ""))
+
+    def _add_user_atoms(users: set[str], atoms: list[str]) -> None:
+        for user in users:
+            normalized = _normalize_username(user)
+            if not normalized:
+                continue
+            existing = set(rollback_control.get(normalized, []))
+            existing.update(atoms)
+            rollback_control[normalized] = sorted(existing)
+
+    # Legacy env/list knobs are migration input only. The new model assigns
+    # MediaWiki-style groups to users through ROLLBACK_CONTROL_JSON.
+    _add_user_atoms(set(_extra), ["group:basic"])
+    _add_user_atoms(set(_read_only), ["group:read_only"])
+    _add_user_atoms(set(_tester), ["group:tester"])
+    _add_user_atoms(set(_from_diff), ["group:rollbacker"])
+    _add_user_atoms(set(_view_all), ["group:viewer"])
+    _add_user_atoms(set(_batch), ["group:batch_runner"])
+    _add_user_atoms(set(_cancel_any), ["cancel_any"])
+    _add_user_atoms(set(_retry_any), ["retry_any"])
+
+    role_grants = {
+        "commons_admin": ["group:basic"],
+        "commons_rollbacker": ["group:basic"],
+    }
+    legacy_auto_grants = _normalize_auto_grants_map_input(
+        os.getenv("AUTO_GRANTS_JSON", "{}"), "AUTO_GRANTS_JSON"
+    )
+    role_grants.update(legacy_auto_grants)
+    role_grants.update(_parse_role_grants_env(os.getenv("ROLE_GRANTS_JSON", "")))
+
     return {
-        "EXTRA_AUTHORIZED_USERS": set(_extra),
-        "USERS_READ_ONLY": set(_read_only),
-        "USERS_TESTER": set(_tester),
-        "USERS_GRANTED_FROM_DIFF": set(_from_diff),
-        "USERS_GRANTED_VIEW_ALL": set(_view_all),
-        "USERS_GRANTED_BATCH": set(_batch),
-        "USERS_GRANTED_CANCEL_ANY": set(_cancel_any),
-        "USERS_GRANTED_RETRY_ANY": set(_retry_any),
         "RATE_LIMIT_JOBS_PER_HOUR": int(_rate_limit),
         "RATE_LIMIT_TESTER_JOBS_PER_HOUR": int(_rate_tester),
-        "USER_GRANTS_JSON": _parse_user_grants_env(os.getenv("USER_GRANTS_JSON", "")),
-        "AUTO_GRANTS_JSON": _normalize_auto_grants_map_input(
-            os.getenv("AUTO_GRANTS_JSON", "{}"), "AUTO_GRANTS_JSON"
-        ),
+        "ROLLBACK_CONTROL_JSON": rollback_control,
+        "ROLE_GRANTS_JSON": role_grants,
     }
 
 
@@ -555,14 +610,18 @@ def _load_runtime_authz_overrides() -> dict:
     defaults = _runtime_authz_defaults()
 
     try:
-        rows = get_runtime_config(_RUNTIME_AUTHZ_ALLOWED_KEYS)
+        rows = get_runtime_config(
+            _RUNTIME_AUTHZ_ALLOWED_KEYS
+            + sorted(_USER_SET_CONFIG_KEYS)
+            + sorted(_LEGACY_JSON_CONFIG_KEYS)
+        )
     except Exception:
         app.logger.warning("Failed to load runtime authz config; using env defaults.")
         rows = {}
 
     for key, raw_value in rows.items():
         if key in _USER_SET_CONFIG_KEYS:
-            overrides[key] = _parse_user_csv(raw_value)
+            # Legacy list rows are migrated into ROLLBACK_CONTROL_JSON below.
             continue
 
         if key in _INT_CONFIG_KEYS:
@@ -571,12 +630,60 @@ def _load_runtime_authz_overrides() -> dict:
 
         if key in _JSON_CONFIG_KEYS:
             try:
-                if key == "AUTO_GRANTS_JSON":
+                if key == "ROLE_GRANTS_JSON":
                     overrides[key] = _normalize_auto_grants_map_input(raw_value, key)
                 else:
                     overrides[key] = _normalize_user_grants_map_input(raw_value, key)
             except ValueError:
                 overrides[key] = defaults.get(key, {})
+
+    legacy_user_updates = {}
+    for key, raw_value in rows.items():
+        if key in _USER_SET_CONFIG_KEYS:
+            legacy_user_updates[key] = _parse_user_csv(raw_value)
+
+    legacy_control = {}
+    if rows.get("USER_GRANTS_JSON"):
+        try:
+            legacy_control.update(
+                _normalize_user_grants_map_input(
+                    rows["USER_GRANTS_JSON"], "USER_GRANTS_JSON"
+                )
+            )
+        except ValueError:
+            pass
+
+    if legacy_user_updates or legacy_control:
+        control = dict(defaults.get("ROLLBACK_CONTROL_JSON") or {})
+        control.update(legacy_control)
+
+        def _add(users: set[str], atoms: list[str]) -> None:
+            for user in users:
+                existing = set(control.get(user, []))
+                existing.update(atoms)
+                control[user] = sorted(existing)
+
+        _add(legacy_user_updates.get("EXTRA_AUTHORIZED_USERS", set()), ["group:basic"])
+        _add(legacy_user_updates.get("USERS_READ_ONLY", set()), ["group:read_only"])
+        _add(legacy_user_updates.get("USERS_TESTER", set()), ["group:tester"])
+        _add(legacy_user_updates.get("USERS_GRANTED_FROM_DIFF", set()), ["group:rollbacker"])
+        _add(legacy_user_updates.get("USERS_GRANTED_VIEW_ALL", set()), ["group:viewer"])
+        _add(legacy_user_updates.get("USERS_GRANTED_BATCH", set()), ["group:batch_runner"])
+        _add(legacy_user_updates.get("USERS_GRANTED_CANCEL_ANY", set()), ["cancel_any"])
+        _add(legacy_user_updates.get("USERS_GRANTED_RETRY_ANY", set()), ["retry_any"])
+        overrides.setdefault("ROLLBACK_CONTROL_JSON", control)
+
+    if rows.get("AUTO_GRANTS_JSON") and "ROLE_GRANTS_JSON" not in overrides:
+        try:
+            role_grants = dict(defaults.get("ROLE_GRANTS_JSON") or {})
+            role_grants.update(
+                _normalize_auto_grants_map_input(
+                    rows["AUTO_GRANTS_JSON"], "AUTO_GRANTS_JSON"
+                )
+            )
+            overrides["ROLE_GRANTS_JSON"] = role_grants
+        except ValueError:
+            pass
 
     _runtime_authz_cache = overrides
     _runtime_authz_cache_expiry = now + _RUNTIME_AUTHZ_CACHE_TTL
@@ -643,13 +750,6 @@ def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
             errors.append(f"Unknown config key: {key}")
             continue
 
-        if key in _USER_SET_CONFIG_KEYS:
-            try:
-                normalized[key] = _normalize_user_list_input(value, key)
-            except ValueError as exc:
-                errors.append(str(exc))
-            continue
-
         if key in _INT_CONFIG_KEYS:
             try:
                 parsed = int(value)
@@ -670,7 +770,7 @@ def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
 
         if key in _JSON_CONFIG_KEYS:
             try:
-                if key == "AUTO_GRANTS_JSON":
+                if key == "ROLE_GRANTS_JSON":
                     normalized[key] = _normalize_auto_grants_map_input(value, key)
                 else:
                     normalized[key] = _normalize_user_grants_map_input(value, key)
@@ -683,9 +783,7 @@ def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
 def _persist_runtime_authz_updates(updates: dict, updated_by: str) -> None:
     rows = {}
     for key, value in updates.items():
-        if key in _USER_SET_CONFIG_KEYS:
-            rows[key] = ",".join(value)
-        elif key in _JSON_CONFIG_KEYS:
+        if key in _JSON_CONFIG_KEYS:
             rows[key] = json.dumps(value, sort_keys=True)
         else:
             rows[key] = str(value)

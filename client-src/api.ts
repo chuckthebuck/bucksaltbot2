@@ -53,16 +53,8 @@ export interface AllJobsRow {
 }
 
 export interface RuntimeAuthzConfig {
-  EXTRA_AUTHORIZED_USERS: string[];
-  USERS_READ_ONLY: string[];
-  USERS_TESTER: string[];
-  USERS_GRANTED_FROM_DIFF: string[];
-  USERS_GRANTED_VIEW_ALL: string[];
-  USERS_GRANTED_BATCH: string[];
-  USERS_GRANTED_CANCEL_ANY: string[];
-  USERS_GRANTED_RETRY_ANY: string[];
-  USER_GRANTS_JSON: Record<string, string[]>;
-  AUTO_GRANTS_JSON: Record<string, string[]>;
+  ROLLBACK_CONTROL_JSON: Record<string, string[]>;
+  ROLE_GRANTS_JSON: Record<string, string[]>;
   RATE_LIMIT_JOBS_PER_HOUR: number;
   RATE_LIMIT_TESTER_JOBS_PER_HOUR: number;
 }

@@ -19,4 +19,6 @@ This is a starter template for developing a new Buckbot module.
 
 ## Next Steps
 
-See the [Module Development Guide](../MODULE_DEVELOPMENT_GUIDE.md) for detailed documentation.
+See the [Module Development Guide](../../Deployment-docs/MODULE_DEVELOPMENT_GUIDE.md)
+for detailed documentation, including the supported human-readable cron interval
+syntax.

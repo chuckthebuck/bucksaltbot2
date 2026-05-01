@@ -21,16 +21,6 @@ import {
   type RuntimeAuthzConfig,
 } from "./api";
 
-type ListConfigKey =
-  | "EXTRA_AUTHORIZED_USERS"
-  | "USERS_READ_ONLY"
-  | "USERS_TESTER"
-  | "USERS_GRANTED_FROM_DIFF"
-  | "USERS_GRANTED_VIEW_ALL"
-  | "USERS_GRANTED_BATCH"
-  | "USERS_GRANTED_CANCEL_ANY"
-  | "USERS_GRANTED_RETRY_ANY";
-
 type NumberConfigKey =
   | "RATE_LIMIT_JOBS_PER_HOUR"
   | "RATE_LIMIT_TESTER_JOBS_PER_HOUR";
@@ -41,15 +31,22 @@ interface ConfigInitialProps {
 }
 
 type GrantGroupKey =
+  | "basic"
+  | "read_only"
+  | "tester"
   | "viewer"
   | "rollbacker"
   | "rollbacker_dry_run"
   | "batch_runner"
   | "jobs_moderator"
+  | "config_editor"
+  | "rights_manager"
+  | "module_operator"
   | "admin";
 
 type GrantRightKey =
   | "view_all"
+  | "write"
   | "rollback_diff"
   | "rollback_account"
   | "rollback_batch"
@@ -60,29 +57,25 @@ type GrantRightKey =
   | "edit_config"
   | "manage_user_grants"
   | "cancel_any"
-  | "retry_any";
+  | "retry_any"
+  | "manage_modules"
+  | "run_module_jobs"
+  | "edit_module_config";
 
 type ImplicitFlagKey =
   | "authenticated"
-  | "bot_admin"
-  | "maintainer"
   | "commons_admin"
-  | "commons_rollbacker"
-  | "tester"
-  | "read_only"
-  | "extra_authorized";
+  | "commons_rollbacker";
 
 type AutoGrantRoleKey =
   | "authenticated"
-  | "bot_admin"
-  | "maintainer"
   | "commons_admin"
-  | "commons_rollbacker"
-  | "tester"
-  | "read_only"
-  | "extra_authorized";
+  | "commons_rollbacker";
 
 const userGrantGroupFields: Array<{ key: GrantGroupKey; label: string; help: string }> = [
+  { key: "basic", label: "basic", help: "Can submit and manage their own rollback queue jobs." },
+  { key: "read_only", label: "read_only", help: "Can only view their own jobs." },
+  { key: "tester", label: "tester", help: "Can use rollback tools with tester rate limits and no cross-user moderation." },
   { key: "viewer", label: "viewer", help: "Can view all jobs." },
   {
     key: "rollbacker",
@@ -100,6 +93,9 @@ const userGrantGroupFields: Array<{ key: GrantGroupKey; label: string; help: str
     label: "jobs_moderator",
     help: "Can approve/review jobs and perform moderation actions.",
   },
+  { key: "config_editor", label: "config_editor", help: "Can edit runtime access configuration." },
+  { key: "rights_manager", label: "rights_manager", help: "Can manage rollback-control groups for users." },
+  { key: "module_operator", label: "module_operator", help: "Can manage modules and module jobs." },
   { key: "admin", label: "admin", help: "Broad rollback, jobs, and config rights." },
 ];
 
@@ -142,12 +138,16 @@ const userGrantRightSections: Array<{
     title: "Administration rights",
     fields: [
       { key: "view_all", label: "view_all", help: "Read every user's jobs." },
+      { key: "write", label: "write", help: "Submit standard rollback queue jobs." },
       { key: "edit_config", label: "edit_config", help: "Edit runtime authz config values." },
       {
         key: "manage_user_grants",
         label: "manage_user_grants",
         help: "Manage user-centric grant atoms and groups.",
       },
+      { key: "manage_modules", label: "manage_modules", help: "Enable, disable, and emergency-stop modules." },
+      { key: "run_module_jobs", label: "run_module_jobs", help: "Run or restart module jobs." },
+      { key: "edit_module_config", label: "edit_module_config", help: "Edit non-secret module configuration." },
     ],
   },
 ];
@@ -156,74 +156,17 @@ const userGrantRightFields = userGrantRightSections.flatMap((section) => section
 
 const implicitFlagFields: Array<{ key: ImplicitFlagKey; label: string }> = [
   { key: "authenticated", label: "authenticated" },
-  { key: "bot_admin", label: "bot admin" },
-  { key: "maintainer", label: "maintainer" },
   { key: "commons_admin", label: "commons admin (sysop)" },
   { key: "commons_rollbacker", label: "commons rollbacker" },
-  { key: "tester", label: "tester" },
-  { key: "read_only", label: "read only" },
-  { key: "extra_authorized", label: "extra authorized" },
 ];
 
 const autoGrantRoleFields: Array<{ key: AutoGrantRoleKey; label: string; help: string }> = [
   { key: "authenticated", label: "authenticated", help: "Any logged-in user." },
-  { key: "bot_admin", label: "bot admin", help: "Hardcoded bot admin accounts." },
-  { key: "maintainer", label: "maintainer", help: "Tool maintainers." },
   { key: "commons_admin", label: "commons admin", help: "Users in Commons sysop group." },
   {
     key: "commons_rollbacker",
     label: "commons rollbacker",
     help: "Users in Commons rollbacker group.",
-  },
-  { key: "tester", label: "tester", help: "Users in tester list." },
-  { key: "read_only", label: "read only", help: "Users in read-only list." },
-  {
-    key: "extra_authorized",
-    label: "extra authorized",
-    help: "Users in extra authorized list.",
-  },
-];
-
-const listFields: Array<{ key: ListConfigKey; label: string; help: string }> = [
-  {
-    key: "EXTRA_AUTHORIZED_USERS",
-    label: "Extra authorized users",
-    help: "Additional users with basic authorization.",
-  },
-  {
-    key: "USERS_READ_ONLY",
-    label: "Read-only users",
-    help: "Users who can only view their own jobs.",
-  },
-  {
-    key: "USERS_TESTER",
-    label: "Tester tier",
-    help: "Users with tester-level access.",
-  },
-  {
-    key: "USERS_GRANTED_FROM_DIFF",
-    label: "Granted: from-diff",
-    help: "Users granted rollback-from-diff access.",
-  },
-  {
-    key: "USERS_GRANTED_VIEW_ALL",
-    label: "Granted: view all jobs",
-    help: "Users granted all-jobs visibility.",
-  },
-  {
-    key: "USERS_GRANTED_BATCH",
-    label: "Granted: batch",
-    help: "Users granted batch rollback access.",
-  },
-  {
-    key: "USERS_GRANTED_CANCEL_ANY",
-    label: "Granted: cancel any",
-    help: "Users granted cross-user cancel permission.",
-  },
-  {
-    key: "USERS_GRANTED_RETRY_ANY",
-    label: "Granted: retry any",
-    help: "Users granted cross-user retry permission.",
   },
 ];
 
@@ -273,26 +216,16 @@ const canEditConfig = ref(initialProps.can_edit_config);
 const canManageUserGrants = ref(initialProps.can_edit_config);
 
 const config = ref<RuntimeAuthzConfig>({
-  EXTRA_AUTHORIZED_USERS: [],
-  USERS_READ_ONLY: [],
-  USERS_TESTER: [],
-  USERS_GRANTED_FROM_DIFF: [],
-  USERS_GRANTED_VIEW_ALL: [],
-  USERS_GRANTED_BATCH: [],
-  USERS_GRANTED_CANCEL_ANY: [],
-  USERS_GRANTED_RETRY_ANY: [],
-  USER_GRANTS_JSON: {},
-  AUTO_GRANTS_JSON: {},
+  ROLLBACK_CONTROL_JSON: {},
+  ROLE_GRANTS_JSON: {
+    commons_admin: ["group:basic"],
+    commons_rollbacker: ["group:basic"],
+  },
   RATE_LIMIT_JOBS_PER_HOUR: 0,
   RATE_LIMIT_TESTER_JOBS_PER_HOUR: 0,
 });
 
-const listText = ref<Record<string, string>>({});
 const grantsJsonText = ref("{}");
-const lookupMenuItems = ref<Record<string, Array<{ label: string; value: string }>>>({});
-const lookupSelected = ref<Record<string, string | number | null>>({});
-const lookupInputValue = ref<Record<string, string>>({});
-const lookupRequestIds: Record<string, number> = {};
 
 const userSearchLookupItems = ref<Array<{ label: string; value: string }>>([]);
 const userSearchSelected = ref<string | number | null>(null);
@@ -463,20 +396,20 @@ function persistSelectedAutoGrantRoleChecks(): void {
     }
   }
 
-  const next = { ...(config.value.AUTO_GRANTS_JSON || {}) };
+  const next = { ...(config.value.ROLE_GRANTS_JSON || {}) };
   if (atoms.length > 0) {
     next[role] = [...new Set(atoms)].sort();
   } else {
     delete next[role];
   }
 
-  config.value.AUTO_GRANTS_JSON = next;
+  config.value.ROLE_GRANTS_JSON = next;
 }
 
 function loadSelectedAutoGrantRoleChecks(): void {
   clearAutoGrantChecks();
   const role = selectedAutoGrantRole.value;
-  const atoms = config.value.AUTO_GRANTS_JSON?.[role] || [];
+  const atoms = config.value.ROLE_GRANTS_JSON?.[role] || [];
 
   for (const atom of atoms) {
     const normalized = String(atom || "").trim().toLowerCase();
@@ -504,117 +437,12 @@ function onSelectedAutoGrantRoleChange(event: Event): void {
   loadSelectedAutoGrantRoleChecks();
 }
 
-function normalizeUserList(raw: string): string[] {
-  const users = raw
-    .replace(/\n/g, ",")
-    .split(",")
-    .map((part) => part.trim())
-    .map((part) => {
-      let cleaned = part;
-
-      if (cleaned.toLowerCase().startsWith("user:")) {
-        cleaned = cleaned.slice(5).trim();
-      }
-
-      if (
-        cleaned.length >= 2 &&
-        ((cleaned.startsWith('"') && cleaned.endsWith('"')) ||
-          (cleaned.startsWith("'") && cleaned.endsWith("'")))
-      ) {
-        cleaned = cleaned.slice(1, -1).trim();
-      }
-
-      cleaned = cleaned.replace(/_/g, " ").replace(/\s+/g, " ").trim();
-
-      return cleaned.toLowerCase();
-    })
-    .filter((part) => part.length > 0);
-
-  return [...new Set(users)].sort();
-}
-
-function syncTextFromConfig(): void {
-  for (const field of listFields) {
-    listText.value[field.key] = (config.value[field.key] || []).join(", ");
-  }
-}
-
-function onListInput(key: ListConfigKey, event: Event): void {
-  const target = event.target as HTMLTextAreaElement | null;
-  if (!target) return;
-
-  listText.value[key] = target.value;
-  config.value[key] = normalizeUserList(target.value);
-}
-
 function onNumberInput(key: NumberConfigKey, event: Event): void {
   const target = event.target as HTMLInputElement | null;
   if (!target) return;
 
   const parsed = Number.parseInt(target.value || "0", 10);
   config.value[key] = Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
-}
-
-async function onLookupInput(key: ListConfigKey, value: string | number): Promise<void> {
-  const query = String(value || "").trim();
-  lookupInputValue.value[key] = query;
-  const requestId = (lookupRequestIds[key] || 0) + 1;
-  lookupRequestIds[key] = requestId;
-
-  if (!query) {
-    lookupMenuItems.value[key] = [];
-    return;
-  }
-
-  try {
-    const users = await searchUsernames(query);
-    if (lookupRequestIds[key] !== requestId) return;
-    lookupMenuItems.value[key] = users;
-  } catch {
-    if (lookupRequestIds[key] !== requestId) return;
-    lookupMenuItems.value[key] = [];
-  }
-}
-
-async function addLookupSelection(key: ListConfigKey): Promise<void> {
-  const selected = lookupSelected.value[key];
-  const typed = (lookupInputValue.value[key] || "").trim();
-
-  // Codex lookup sets "selected" only when a menu item is chosen.
-  // If the user types a complete username and clicks Add directly,
-  // use the typed value so the button still performs the expected action.
-  const rawCandidate =
-    selected !== null && selected !== undefined && String(selected).trim()
-      ? String(selected).trim()
-      : typed;
-
-  const candidate = rawCandidate.toLowerCase();
-  if (!candidate) return;
-
-  const next = new Set(config.value[key] || []);
-  next.add(candidate);
-  config.value[key] = [...next].sort();
-  listText.value[key] = config.value[key].join(", ");
-
-  lookupSelected.value[key] = null;
-  lookupInputValue.value[key] = "";
-  lookupMenuItems.value[key] = [];
-
-  // Persist immediately for button-driven adds so the backend table updates
-  // without requiring a separate click on the global Save button.
-  if (!canEditConfig.value) return;
-
-  try {
-    const response = await updateRuntimeAuthzConfig({
-      [key]: config.value[key],
-    });
-    applyServerConfig(response.config);
-    successMessage.value = `Updated ${key}.`;
-    errorMessage.value = "";
-  } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : "Failed to save config";
-    successMessage.value = "";
-  }
 }
 
 async function onUserSearchLookupInput(value: string | number): Promise<void> {
@@ -681,9 +509,9 @@ function applyUserGrantPayload(payload: {
   commonsGroups.value = [...(payload.commons_groups || [])];
   commonsGroupsFresh.value = !!payload.commons_groups_refreshed;
 
-  const nextMap = { ...(config.value.USER_GRANTS_JSON || {}) };
+  const nextMap = { ...(config.value.ROLLBACK_CONTROL_JSON || {}) };
   nextMap[payload.normalized_username] = payload.atoms || [];
-  config.value.USER_GRANTS_JSON = nextMap;
+  config.value.ROLLBACK_CONTROL_JSON = nextMap;
   grantsJsonText.value = JSON.stringify(nextMap, null, 2);
 }
 
@@ -765,22 +593,13 @@ async function saveSelectedUserGrants(): Promise<void> {
 function applyServerConfig(nextConfig: RuntimeAuthzConfig): void {
   config.value = {
     ...nextConfig,
-    EXTRA_AUTHORIZED_USERS: [...(nextConfig.EXTRA_AUTHORIZED_USERS || [])],
-    USERS_READ_ONLY: [...(nextConfig.USERS_READ_ONLY || [])],
-    USERS_TESTER: [...(nextConfig.USERS_TESTER || [])],
-    USERS_GRANTED_FROM_DIFF: [...(nextConfig.USERS_GRANTED_FROM_DIFF || [])],
-    USERS_GRANTED_VIEW_ALL: [...(nextConfig.USERS_GRANTED_VIEW_ALL || [])],
-    USERS_GRANTED_BATCH: [...(nextConfig.USERS_GRANTED_BATCH || [])],
-    USERS_GRANTED_CANCEL_ANY: [...(nextConfig.USERS_GRANTED_CANCEL_ANY || [])],
-    USERS_GRANTED_RETRY_ANY: [...(nextConfig.USERS_GRANTED_RETRY_ANY || [])],
-    USER_GRANTS_JSON: { ...(nextConfig.USER_GRANTS_JSON || {}) },
-    AUTO_GRANTS_JSON: { ...(nextConfig.AUTO_GRANTS_JSON || {}) },
+    ROLLBACK_CONTROL_JSON: { ...(nextConfig.ROLLBACK_CONTROL_JSON || {}) },
+    ROLE_GRANTS_JSON: { ...(nextConfig.ROLE_GRANTS_JSON || {}) },
     RATE_LIMIT_JOBS_PER_HOUR: Number(nextConfig.RATE_LIMIT_JOBS_PER_HOUR || 0),
     RATE_LIMIT_TESTER_JOBS_PER_HOUR: Number(nextConfig.RATE_LIMIT_TESTER_JOBS_PER_HOUR || 0),
   };
 
-  syncTextFromConfig();
-  grantsJsonText.value = JSON.stringify(config.value.USER_GRANTS_JSON || {}, null, 2);
+  grantsJsonText.value = JSON.stringify(config.value.ROLLBACK_CONTROL_JSON || {}, null, 2);
   loadSelectedAutoGrantRoleChecks();
 }
 
@@ -821,7 +640,7 @@ async function saveConfig(): Promise<void> {
 
   try {
     const parsedUserGrants = parseUserGrantsJsonText();
-    config.value.USER_GRANTS_JSON = parsedUserGrants;
+    config.value.ROLLBACK_CONTROL_JSON = parsedUserGrants;
     persistSelectedAutoGrantRoleChecks();
 
     const response = await updateRuntimeAuthzConfig(config.value);
@@ -923,16 +742,6 @@ onMounted(() => {
             table-class="runtime-rights-table"
           />
 
-          <div v-for="section in userGrantRightSections" :key="section.title">
-            <h4>{{ section.title }}</h4>
-            <UnifiedTable
-              :rows="rightsRowsForSection(section.title)"
-              :columns="rightColumns"
-              row-key="key"
-              table-class="runtime-rights-table"
-            />
-          </div>
-
           <label class="runtime-reason-label">Reason</label>
           <input
             v-model="userGrantReason"
@@ -956,47 +765,12 @@ onMounted(() => {
       </div>
     </section>
 
-    <div v-if="!loading" class="runtime-config-grid">
-      <section v-for="field in listFields" :key="field.key" class="runtime-config-card">
-        <h3>{{ field.label }}</h3>
-        <p class="runtime-config-help">{{ field.help }}</p>
-
-        <CdxField>
-          <CdxLookup
-            v-model:selected="lookupSelected[field.key]"
-            :menu-items="lookupMenuItems[field.key] || []"
-            :disabled="!canEditConfig"
-            placeholder="Search Commons username"
-            @input="(value) => onLookupInput(field.key, value)"
-          />
-        </CdxField>
-
-        <div class="runtime-config-actions">
-          <CdxButton
-            type="button"
-            :disabled="!canEditConfig"
-            @click="() => void addLookupSelection(field.key)"
-          >
-            Add selected user
-          </CdxButton>
-        </div>
-
-        <textarea
-          :value="listText[field.key] || ''"
-          :disabled="!canEditConfig"
-          rows="3"
-          @input="(event) => onListInput(field.key, event)"
-        />
-      </section>
-    </div>
-
     <div v-if="!loading" class="runtime-config-grid runtime-config-grid--numbers">
       <section class="runtime-config-card">
-        <h3>User-centric grants (by username)</h3>
+        <h3>Rollback control groups by user</h3>
         <p class="runtime-config-help">
-          Optional JSON map of username to grants. Supports rights and groups.
-          Rights are grouped into rollback, jobs, and administration categories.
-          Groups: viewer, rollbacker, rollbacker_dry_run, batch_runner, jobs_moderator, admin.
+          MediaWiki-style user rights storage: usernames map to groups, and groups
+          provide rights. Prefer editing this through the user rights editor above.
         </p>
         <textarea
           v-model="grantsJsonText"
@@ -1039,15 +813,6 @@ onMounted(() => {
           table-class="runtime-rights-table"
         />
 
-        <div v-for="section in userGrantRightSections" :key="`auto-${section.title}`">
-          <h4>Auto-granted {{ section.title }}</h4>
-          <UnifiedTable
-            :rows="rightsRowsForSection(section.title)"
-            :columns="autoRightColumns"
-            row-key="key"
-            table-class="runtime-rights-table"
-          />
-        </div>
       </section>
 
       <section v-for="field in numberFields" :key="field.key" class="runtime-config-card">

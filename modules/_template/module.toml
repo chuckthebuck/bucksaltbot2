@@ -8,6 +8,8 @@ title = "Template Module"
 # For cron-only modules, add:
 # [[cron_jobs]]
 # name = "some-job"
-# schedule = "0 1 * * *"
+# run = "daily at 01:00"
+# # Or use raw cron for advanced schedules:
+# # schedule = "0 1 * * *"
 # endpoint = "/api/v1/template_module/cron/some-job"
 # timeout_seconds = 300
