@@ -50,8 +50,37 @@ const jobDrafts = ref<
   Record<string, { scheduleText: string; timeoutSeconds: number; enabled: boolean }>
 >({});
 const moduleConfigText = ref("{}");
+const moduleConfigDraft = ref<Record<string, unknown>>({});
 const configLoadedFor = ref<string | null>(null);
 const savingConfig = ref(false);
+const selectedSitePreset = ref("custom");
+
+const sitePresets = [
+  {
+    value: "testwiki",
+    label: "Test Wikipedia",
+    config: {
+      wiki_code: "test",
+      wiki_family: "wikipedia",
+      wiki_api_url: "https://test.wikipedia.org/w/api.php",
+      dry_run: true,
+    },
+  },
+  {
+    value: "enwiki",
+    label: "English Wikipedia",
+    config: {
+      wiki_code: "en",
+      wiki_family: "wikipedia",
+      wiki_api_url: "https://en.wikipedia.org/w/api.php",
+    },
+  },
+  {
+    value: "custom",
+    label: "Custom site",
+    config: {},
+  },
+] as const;
 
 async function loadModules() {
   try {
@@ -161,7 +190,12 @@ async function loadSelectedModuleConfig(moduleName: string) {
   try {
     error.value = "";
     const config = await fetchModuleConfig(moduleName);
-    moduleConfigText.value = JSON.stringify(config, null, 2);
+    moduleConfigDraft.value = {
+      ...defaultModuleConfig(moduleName),
+      ...config,
+    };
+    selectedSitePreset.value = detectSitePreset(moduleConfigDraft.value);
+    syncModuleConfigText();
     configLoadedFor.value = moduleName;
   } catch (err) {
     error.value = `Failed to load module config: ${String(err)}`;
@@ -187,7 +221,12 @@ async function saveSelectedModuleConfig(moduleName: string) {
     error.value = "";
     success.value = "";
     const config = await updateModuleConfig(moduleName, parsed);
-    moduleConfigText.value = JSON.stringify(config, null, 2);
+    moduleConfigDraft.value = {
+      ...defaultModuleConfig(moduleName),
+      ...config,
+    };
+    selectedSitePreset.value = detectSitePreset(moduleConfigDraft.value);
+    syncModuleConfigText();
     success.value = "Module config saved.";
   } catch (err) {
     error.value = `Failed to save module config: ${String(err)}`;
@@ -201,11 +240,116 @@ const selectedModuleData = computed(() => {
   return modules.value.find((m) => m.name === selectedModule.value) || null;
 });
 
+const isFourAwardModule = computed(
+  () => selectedModuleData.value?.name === "four_award"
+);
+
 function selectModule(moduleName: string) {
   selectedModule.value = moduleName;
   if (canManageModules.value) {
     loadSelectedModuleConfig(moduleName);
   }
+}
+
+function defaultModuleConfig(moduleName: string): Record<string, unknown> {
+  if (moduleName !== "four_award") {
+    return {};
+  }
+
+  return {
+    wiki_code: "test",
+    wiki_family: "wikipedia",
+    wiki_api_url: "https://test.wikipedia.org/w/api.php",
+    dry_run: true,
+    enabled: true,
+    max_nominations_per_run: 25,
+    four_page: "Wikipedia:Four Award",
+    records_page: "Wikipedia:Four Award/Records",
+    leaderboard_page: "Wikipedia:Four Award/Leaderboard",
+    enable_replies: true,
+    enable_records: true,
+    enable_removal: true,
+    enable_talk_notices: true,
+    enable_article_history: true,
+    allow_automated_approval: false,
+  };
+}
+
+function syncModuleConfigText() {
+  moduleConfigText.value = JSON.stringify(moduleConfigDraft.value, null, 2);
+}
+
+function detectSitePreset(config: Record<string, unknown>): string {
+  const wikiCode = String(config.wiki_code ?? "");
+  const wikiFamily = String(config.wiki_family ?? "");
+  const apiUrl = String(config.wiki_api_url ?? "");
+  if (
+    wikiCode === "test" &&
+    wikiFamily === "wikipedia" &&
+    apiUrl === "https://test.wikipedia.org/w/api.php"
+  ) {
+    return "testwiki";
+  }
+  if (
+    wikiCode === "en" &&
+    wikiFamily === "wikipedia" &&
+    apiUrl === "https://en.wikipedia.org/w/api.php"
+  ) {
+    return "enwiki";
+  }
+  return "custom";
+}
+
+function applySitePreset(presetValue: string) {
+  selectedSitePreset.value = presetValue;
+  const preset = sitePresets.find((item) => item.value === presetValue);
+  if (!preset || preset.value === "custom") {
+    return;
+  }
+
+  moduleConfigDraft.value = {
+    ...moduleConfigDraft.value,
+    ...preset.config,
+  };
+  syncModuleConfigText();
+}
+
+function setConfigValue(key: string, value: unknown) {
+  moduleConfigDraft.value = {
+    ...moduleConfigDraft.value,
+    [key]: value,
+  };
+  selectedSitePreset.value = detectSitePreset(moduleConfigDraft.value);
+  syncModuleConfigText();
+}
+
+function getStringConfig(key: string): string {
+  return String(moduleConfigDraft.value[key] ?? "");
+}
+
+function getBooleanConfig(key: string, fallback = false): boolean {
+  const value = moduleConfigDraft.value[key];
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function getNumberConfig(key: string, fallback: number): number {
+  const value = Number(moduleConfigDraft.value[key] ?? fallback);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function readInputValue(event: Event): string {
+  const target = event.target as HTMLInputElement | HTMLSelectElement | null;
+  return target?.value ?? "";
+}
+
+function readCheckboxValue(event: Event): boolean {
+  const target = event.target as HTMLInputElement | null;
+  return Boolean(target?.checked);
+}
+
+function readNumberValue(event: Event, fallback: number): number {
+  const value = Number(readInputValue(event));
+  return Number.isFinite(value) ? value : fallback;
 }
 
 onMounted(() => {
@@ -399,20 +543,198 @@ onMounted(() => {
         <section v-if="canManageModules" class="module-config">
           <h3>Module Config</h3>
           <p class="help-text">
-            Non-secret module settings. For Chuck the 4awardhelper testwiki runs,
-            use wiki_code "test", wiki_family "wikipedia", and the testwiki page
-            titles you want it to read and edit.
+            Non-secret module settings. Use the structured fields for common
+            options, then save the generated config.
           </p>
-          <textarea
-            v-model="moduleConfigText"
-            class="config-json"
-            spellcheck="false"
-            @focus="
-              selectedModuleData && configLoadedFor !== selectedModuleData.name
-                ? loadSelectedModuleConfig(selectedModuleData.name)
-                : null
-            "
-          ></textarea>
+
+          <div v-if="isFourAwardModule" class="structured-config">
+            <div class="config-grid">
+              <label class="config-field">
+                <span>Site preset</span>
+                <select
+                  :value="selectedSitePreset"
+                  @change="applySitePreset(readInputValue($event))"
+                >
+                  <option
+                    v-for="preset in sitePresets"
+                    :key="preset.value"
+                    :value="preset.value"
+                  >
+                    {{ preset.label }}
+                  </option>
+                </select>
+              </label>
+
+              <label class="config-field">
+                <span>Wiki code</span>
+                <input
+                  :value="getStringConfig('wiki_code')"
+                  placeholder="test"
+                  type="text"
+                  @input="setConfigValue('wiki_code', readInputValue($event))"
+                />
+              </label>
+
+              <label class="config-field">
+                <span>Wiki family</span>
+                <input
+                  :value="getStringConfig('wiki_family')"
+                  placeholder="wikipedia"
+                  type="text"
+                  @input="setConfigValue('wiki_family', readInputValue($event))"
+                />
+              </label>
+
+              <label class="config-field wide">
+                <span>API URL</span>
+                <input
+                  :value="getStringConfig('wiki_api_url')"
+                  placeholder="https://test.wikipedia.org/w/api.php"
+                  type="url"
+                  @input="setConfigValue('wiki_api_url', readInputValue($event))"
+                />
+              </label>
+
+              <label class="config-field wide">
+                <span>Four Award page</span>
+                <input
+                  :value="getStringConfig('four_page')"
+                  placeholder="Wikipedia:Four Award"
+                  type="text"
+                  @input="setConfigValue('four_page', readInputValue($event))"
+                />
+              </label>
+
+              <label class="config-field wide">
+                <span>Records page</span>
+                <input
+                  :value="getStringConfig('records_page')"
+                  placeholder="Wikipedia:Four Award/Records"
+                  type="text"
+                  @input="setConfigValue('records_page', readInputValue($event))"
+                />
+              </label>
+
+              <label class="config-field wide">
+                <span>Leaderboard page</span>
+                <input
+                  :value="getStringConfig('leaderboard_page')"
+                  placeholder="Wikipedia:Four Award/Leaderboard"
+                  type="text"
+                  @input="setConfigValue('leaderboard_page', readInputValue($event))"
+                />
+              </label>
+
+              <label class="config-field">
+                <span>Max nominations per run</span>
+                <input
+                  :value="getNumberConfig('max_nominations_per_run', 25)"
+                  min="1"
+                  type="number"
+                  @input="
+                    setConfigValue(
+                      'max_nominations_per_run',
+                      readNumberValue($event, 25)
+                    )
+                  "
+                />
+              </label>
+            </div>
+
+            <div class="config-toggles">
+              <label>
+                <input
+                  :checked="getBooleanConfig('enabled', true)"
+                  type="checkbox"
+                  @change="setConfigValue('enabled', readCheckboxValue($event))"
+                />
+                Module run enabled
+              </label>
+              <label>
+                <input
+                  :checked="getBooleanConfig('dry_run', true)"
+                  type="checkbox"
+                  @change="setConfigValue('dry_run', readCheckboxValue($event))"
+                />
+                Dry run
+              </label>
+              <label>
+                <input
+                  :checked="getBooleanConfig('enable_replies', true)"
+                  type="checkbox"
+                  @change="setConfigValue('enable_replies', readCheckboxValue($event))"
+                />
+                Replies
+              </label>
+              <label>
+                <input
+                  :checked="getBooleanConfig('enable_records', true)"
+                  type="checkbox"
+                  @change="setConfigValue('enable_records', readCheckboxValue($event))"
+                />
+                Records
+              </label>
+              <label>
+                <input
+                  :checked="getBooleanConfig('enable_removal', true)"
+                  type="checkbox"
+                  @change="setConfigValue('enable_removal', readCheckboxValue($event))"
+                />
+                Removal cleanup
+              </label>
+              <label>
+                <input
+                  :checked="getBooleanConfig('enable_talk_notices', true)"
+                  type="checkbox"
+                  @change="
+                    setConfigValue('enable_talk_notices', readCheckboxValue($event))
+                  "
+                />
+                Talk notices
+              </label>
+              <label>
+                <input
+                  :checked="getBooleanConfig('enable_article_history', true)"
+                  type="checkbox"
+                  @change="
+                    setConfigValue(
+                      'enable_article_history',
+                      readCheckboxValue($event)
+                    )
+                  "
+                />
+                Article history
+              </label>
+              <label>
+                <input
+                  :checked="getBooleanConfig('allow_automated_approval', false)"
+                  type="checkbox"
+                  @change="
+                    setConfigValue(
+                      'allow_automated_approval',
+                      readCheckboxValue($event)
+                    )
+                  "
+                />
+                Automated approval
+              </label>
+            </div>
+          </div>
+
+          <details class="advanced-config" :open="!isFourAwardModule">
+            <summary>Advanced JSON</summary>
+            <textarea
+              v-model="moduleConfigText"
+              class="config-json"
+              spellcheck="false"
+              @focus="
+                selectedModuleData && configLoadedFor !== selectedModuleData.name
+                  ? loadSelectedModuleConfig(selectedModuleData.name)
+                  : null
+              "
+            ></textarea>
+          </details>
+
           <div class="detail-actions">
             <CdxButton
               :disabled="savingConfig"
@@ -726,6 +1048,89 @@ h3 {
   border-top: 2px solid #d9e9ff;
   padding-top: 20px;
   margin-top: 25px;
+}
+
+.structured-config {
+  border: 1px solid #c7d5ef;
+  border-radius: 4px;
+  background: #f6f9ff;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+
+  @media (max-width: 900px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+
+  &.wide {
+    grid-column: 1 / -1;
+  }
+
+  span {
+    color: #333;
+    font-weight: 600;
+  }
+
+  input,
+  select {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 38px;
+    padding: 8px 10px;
+    border: 1px solid #a7bde5;
+    border-radius: 4px;
+    background: white;
+    color: #202122;
+    font: inherit;
+
+    &:focus {
+      outline: none;
+      border-color: #315fa8;
+      box-shadow: 0 0 0 2px rgba(49, 95, 168, 0.14);
+    }
+  }
+}
+
+.config-toggles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin-top: 16px;
+
+  @media (max-width: 700px) {
+    grid-template-columns: 1fr;
+  }
+
+  label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #202122;
+    font-weight: 500;
+  }
+}
+
+.advanced-config {
+  margin-bottom: 10px;
+
+  summary {
+    color: #315fa8;
+    cursor: pointer;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
 }
 
 .config-json {
