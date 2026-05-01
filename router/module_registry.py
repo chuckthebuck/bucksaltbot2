@@ -12,6 +12,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+import requests
 
 from toolsdb import get_conn
 
@@ -282,6 +283,105 @@ def discover_module_manifests(root: str | Path) -> list[Path]:
 def discover_module_definitions(root: str | Path) -> list[ModuleDefinition]:
     """Load every manifest found under *root*."""
     return [load_module_definition(path) for path in discover_module_manifests(root)]
+
+
+def _try_raw_urls_for_repo(repo_url: str) -> list[str]:
+    """Yield candidate raw file URLs for common Git hosting providers."""
+    repo = str(repo_url or "").strip()
+    if repo.endswith(".git"):
+        repo = repo[: -4]
+
+    candidates: list[str] = []
+    # If the URL already points to a raw file, try it directly
+    if repo.lower().startswith(("http://", "https://")) and any(x in repo for x in ("raw.githubusercontent.com", "gitlab.com")):
+        candidates.append(repo)
+        return candidates
+
+    # Attempt GitHub style raw URLs
+    m = re.search(r"github\.com/([^/]+/[^/]+)", repo, flags=re.IGNORECASE)
+    if m:
+        owner_repo = m.group(1).rstrip("/")
+        for ref in ("main", "master"):
+            for filename in MODULE_MANIFEST_FILENAMES:
+                candidates.append(f"https://raw.githubusercontent.com/{owner_repo}/{ref}/{filename}")
+
+    # Attempt GitLab style raw URLs
+    m2 = re.search(r"gitlab\.com/([^/]+/[^/]+)", repo, flags=re.IGNORECASE)
+    if m2:
+        owner_repo = m2.group(1).rstrip("/")
+        for ref in ("main", "master"):
+            for filename in MODULE_MANIFEST_FILENAMES:
+                candidates.append(f"https://gitlab.com/{owner_repo}/-/raw/{ref}/{filename}")
+
+    # Fallback: try appending filenames to the provided URL
+    for filename in MODULE_MANIFEST_FILENAMES:
+        if repo.endswith("/"):
+            candidates.append(repo + filename)
+        else:
+            candidates.append(repo + "/" + filename)
+
+    # Deduplicate while preserving order
+    seen = set()
+    out: list[str] = []
+    for url in candidates:
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def fetch_remote_manifest(repo_url: str) -> dict[str, Any] | None:
+    """Fetch and parse a remote module manifest from a repository URL.
+
+    Returns the parsed manifest dict or ``None`` when no manifest could be fetched.
+    """
+    for url in _try_raw_urls_for_repo(repo_url):
+        try:
+            resp = requests.get(url, timeout=10)
+        except requests.RequestException:
+            continue
+        if resp.status_code != 200:
+            continue
+        text = resp.text
+        # Prefer JSON when filename indicates it
+        if url.lower().endswith(".json"):
+            try:
+                return json.loads(text)
+            except Exception:
+                continue
+
+        # Try TOML first when available
+        if tomllib is not None:
+            try:
+                return tomllib.loads(text)
+            except Exception:
+                pass
+
+        # Fallback to JSON parse
+        try:
+            return json.loads(text)
+        except Exception:
+            continue
+
+    return None
+
+
+def install_remote_module(repo_url: str, *, enabled_default: bool = True) -> ModuleDefinition:
+    """Fetch a remote manifest and persist it to the module registry.
+
+    Raises ValueError when no valid manifest can be found.
+    """
+    manifest = fetch_remote_manifest(repo_url)
+    if manifest is None:
+        raise ValueError(f"Could not fetch module manifest from {repo_url}")
+
+    # Ensure the manifest declares the repo URL (some manifests may omit it)
+    if not manifest.get("repo") and not manifest.get("repo_url"):
+        manifest["repo"] = repo_url
+
+    definition = parse_module_definition(manifest)
+    upsert_module_definition(definition, enabled=enabled_default)
+    return definition
 
 
 def bootstrap_module_definitions(root: str | Path, *, enabled_default: bool = True) -> list[ModuleDefinition]:

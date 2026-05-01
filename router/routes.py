@@ -65,6 +65,7 @@ from router.module_registry import (
     set_module_enabled,
     upsert_module_access,
     user_has_module_access,
+    install_remote_module,
 )
 from router.framework_config import (
     DOCS_URL,
@@ -2902,3 +2903,30 @@ def module_registry_access_api(module_name: str):
             "enabled": bool(enabled),
         }
     )
+
+
+@app.route("/api/v1/modules/install", methods=["POST"])
+def module_registry_install_api():
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    if not (is_maintainer(username) or is_admin_user(username)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    repo = str(payload.get("repo") or payload.get("url") or "").strip()
+    enabled = _parse_bool(payload.get("enabled"), default=True)
+
+    if not repo:
+        return jsonify({"detail": "Missing required parameter: repo"}), 400
+
+    try:
+        definition = install_remote_module(repo, enabled_default=enabled)
+    except ValueError as exc:
+        return jsonify({"detail": str(exc)}), 400
+    except Exception:
+        logging.exception("Failed to install remote module %s", repo)
+        return jsonify({"detail": "Internal server error"}), 500
+
+    return jsonify({"module": definition.name, "installed": True, "definition": definition.as_dict()})
