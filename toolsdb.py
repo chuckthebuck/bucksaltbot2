@@ -64,7 +64,11 @@ def init_db():
                     module_name VARCHAR(255) NOT NULL,
                     job_name VARCHAR(255) NOT NULL,
                     schedule VARCHAR(255) NOT NULL,
+                    schedule_text VARCHAR(255) NULL,
                     endpoint VARCHAR(255) NOT NULL,
+                    handler VARCHAR(255) NULL,
+                    execution_mode VARCHAR(32) NOT NULL DEFAULT 'http',
+                    concurrency_policy VARCHAR(32) NOT NULL DEFAULT 'forbid',
                     timeout_seconds INT NOT NULL DEFAULT 300,
                     enabled TINYINT(1) NOT NULL DEFAULT 1,
                     last_run_at TIMESTAMP NULL,
@@ -74,6 +78,69 @@ def init_db():
                         ON UPDATE CURRENT_TIMESTAMP,
                     INDEX idx_module_name (module_name),
                     INDEX idx_enabled_next_run (enabled, next_run_at)
+                )
+                """
+            )
+            _ensure_column(
+                cursor,
+                "module_cron_jobs",
+                "schedule_text",
+                "schedule_text VARCHAR(255) NULL",
+            )
+            _ensure_column(
+                cursor,
+                "module_cron_jobs",
+                "handler",
+                "handler VARCHAR(255) NULL",
+            )
+            _ensure_column(
+                cursor,
+                "module_cron_jobs",
+                "execution_mode",
+                "execution_mode VARCHAR(32) NOT NULL DEFAULT 'http'",
+            )
+            _ensure_column(
+                cursor,
+                "module_cron_jobs",
+                "concurrency_policy",
+                "concurrency_policy VARCHAR(32) NOT NULL DEFAULT 'forbid'",
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS module_job_runs (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    module_name VARCHAR(255) NOT NULL,
+                    job_name VARCHAR(255) NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'queued',
+                    trigger_type VARCHAR(32) NOT NULL DEFAULT 'schedule',
+                    triggered_by VARCHAR(255) NULL,
+                    k8s_job_name VARCHAR(255) NULL,
+                    started_at TIMESTAMP NULL,
+                    finished_at TIMESTAMP NULL,
+                    exit_code INT NULL,
+                    error TEXT NULL,
+                    payload_json LONGTEXT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_module_job (module_name, job_name),
+                    INDEX idx_status_created (status, created_at)
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS module_config (
+                    module_name VARCHAR(255) NOT NULL,
+                    config_key VARCHAR(128) NOT NULL,
+                    config_value LONGTEXT NOT NULL,
+                    value_type VARCHAR(32) NOT NULL DEFAULT 'json',
+                    updated_by VARCHAR(255) NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (module_name, config_key)
                 )
                 """
             )

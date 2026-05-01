@@ -15,6 +15,7 @@ from typing import Any
 import requests
 
 from toolsdb import get_conn
+from router.module_schedule import human_schedule_to_cron
 
 try:
     import tomllib
@@ -31,9 +32,13 @@ class ModuleCronJob:
 
     name: str
     schedule: str
-    endpoint: str
+    endpoint: str = ""
+    handler: str | None = None
+    schedule_text: str | None = None
     timeout_seconds: int = 300
     enabled: bool = True
+    execution_mode: str = "http"
+    concurrency_policy: str = "forbid"
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -149,8 +154,18 @@ def _parse_cron_jobs(raw_jobs: Any) -> tuple[ModuleCronJob, ...]:
             raise ValueError(f"cron job {index} must be an object")
 
         name = str(raw_job.get("name") or raw_job.get("job_id") or "").strip()
+        schedule_text = str(raw_job.get("run") or raw_job.get("schedule_text") or "").strip()
         schedule = str(raw_job.get("schedule") or "").strip()
+        if not schedule and schedule_text:
+            schedule = human_schedule_to_cron(schedule_text)
         endpoint = str(raw_job.get("endpoint") or "").strip()
+        handler = str(raw_job.get("handler") or "").strip() or None
+        execution_mode = str(raw_job.get("execution_mode") or "").strip().lower()
+        if not execution_mode:
+            execution_mode = "handler" if handler and not endpoint else "http"
+        concurrency_policy = (
+            str(raw_job.get("concurrency_policy") or "forbid").strip().lower()
+        )
         timeout_seconds = _coerce_positive_int(
             raw_job.get("timeout_seconds"),
             field_name=f"cron job {index} timeout_seconds",
@@ -164,17 +179,29 @@ def _parse_cron_jobs(raw_jobs: Any) -> tuple[ModuleCronJob, ...]:
         if not name:
             raise ValueError(f"cron job {index} requires a name")
         if not schedule:
-            raise ValueError(f"cron job {index} requires a schedule")
-        if not endpoint:
-            raise ValueError(f"cron job {index} requires an endpoint")
+            raise ValueError(f"cron job {index} requires a schedule or run")
+        if not endpoint and not handler:
+            raise ValueError(f"cron job {index} requires an endpoint or handler")
+        if execution_mode not in {"http", "handler", "k8s_job"}:
+            raise ValueError(
+                f"cron job {index} execution_mode must be http, handler, or k8s_job"
+            )
+        if concurrency_policy not in {"allow", "forbid", "replace"}:
+            raise ValueError(
+                f"cron job {index} concurrency_policy must be allow, forbid, or replace"
+            )
 
         jobs.append(
             ModuleCronJob(
                 name=name,
                 schedule=schedule,
                 endpoint=endpoint,
+                handler=handler,
+                schedule_text=schedule_text or None,
                 timeout_seconds=timeout_seconds,
                 enabled=enabled,
+                execution_mode=execution_mode,
+                concurrency_policy=concurrency_policy,
             )
         )
 
@@ -219,7 +246,7 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
         raw.get("ui", raw.get("ui_enabled", False)),
         field_name="ui",
     )
-    cron_jobs = _parse_cron_jobs(raw.get("cron_jobs", raw.get("cron")))
+    cron_jobs = _parse_cron_jobs(raw.get("jobs", raw.get("cron_jobs", raw.get("cron"))))
     buildpacks = _parse_buildpacks(raw.get("buildpacks"))
 
     if not ui_enabled and not cron_jobs:
@@ -462,14 +489,29 @@ def upsert_module_definition(definition: ModuleDefinition, enabled: bool = False
                 cursor.execute(
                     """
                     INSERT INTO module_cron_jobs
-                    (module_name, job_name, schedule, endpoint, timeout_seconds, enabled)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    (
+                        module_name,
+                        job_name,
+                        schedule,
+                        schedule_text,
+                        endpoint,
+                        handler,
+                        execution_mode,
+                        concurrency_policy,
+                        timeout_seconds,
+                        enabled
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         definition.name,
                         cron_job.name,
                         cron_job.schedule,
+                        cron_job.schedule_text,
                         cron_job.endpoint,
+                        cron_job.handler,
+                        cron_job.execution_mode,
+                        cron_job.concurrency_policy,
                         cron_job.timeout_seconds,
                         1 if cron_job.enabled else 0,
                     ),
@@ -530,7 +572,8 @@ def list_module_definitions(enabled_only: bool = False) -> list[ModuleRecord]:
 def list_module_cron_jobs(module_name: str | None = None) -> list[dict[str, Any]]:
     """Return persisted cron jobs for one module or all modules."""
     query = """
-        SELECT module_name, job_name, schedule, endpoint, timeout_seconds, enabled
+        SELECT module_name, job_name, schedule, endpoint, timeout_seconds, enabled,
+               schedule_text, handler, execution_mode, concurrency_policy
         FROM module_cron_jobs
     """
     params: tuple[Any, ...] = ()
@@ -551,6 +594,10 @@ def list_module_cron_jobs(module_name: str | None = None) -> list[dict[str, Any]
             "endpoint": row[3],
             "timeout_seconds": int(row[4]),
             "enabled": bool(row[5]),
+            "schedule_text": row[6],
+            "handler": row[7],
+            "execution_mode": row[8] or "http",
+            "concurrency_policy": row[9] or "forbid",
         }
         for row in rows
     ]
@@ -616,4 +663,3 @@ def user_has_module_access(module_name: str, username: str, *, is_maintainer: bo
             row = cursor.fetchone()
 
     return bool(row and row[0])
-
