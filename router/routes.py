@@ -235,15 +235,18 @@ def inject_nav_capabilities():
             "nav_can_write": False,
             "nav_can_all_jobs": False,
             "nav_is_admin": False,
+            "nav_can_modules": False,
         }
 
     perms = _user_permissions(username)
     is_admin = bool(session.get("is_admin") or is_admin_user(username))
+    can_manage_modules = bool(is_maintainer(username) or is_admin)
 
     return {
         "nav_can_write": bool("write" in perms),
         "nav_can_all_jobs": bool("read_all" in perms or is_admin),
         "nav_is_admin": is_admin,
+        "nav_can_modules": can_manage_modules,
     }
 
 
