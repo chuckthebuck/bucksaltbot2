@@ -95,8 +95,6 @@ CELERY_BROKER_URL = os.getenv(
 
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 
-from celery.schedules import schedule
-
 flask_app.config["CELERY"] = {
     "broker_url": CELERY_BROKER_URL,
     "result_backend": CELERY_RESULT_BACKEND,
@@ -106,12 +104,6 @@ flask_app.config["CELERY"] = {
     "worker_prefetch_multiplier": 1,
     "task_acks_late": True,
     "task_reject_on_worker_lost": True,
-    "beat_schedule": {
-        "module-cron-executor": {
-            "task": "module_cron_executor.run_overdue_jobs",
-            "schedule": schedule(run_every=60),  # Check every 60 seconds
-        },
-    },
 }
 
 celery = celery_init_app(flask_app)

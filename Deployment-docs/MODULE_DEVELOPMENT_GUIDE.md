@@ -317,20 +317,21 @@ has_access = user_has_module_access(
 
 On Toolforge, module cron jobs are managed via `jobs.yaml` instead of Celery Beat.
 
-**Declaring cron jobs** in your module manifest:
+**Declaring scheduled jobs** in your module manifest:
 ```toml
-[[cron_jobs]]
+[[jobs]]
 name = "daily-sync"
-schedule = "0 1 * * *"  # Unix cron format
-endpoint = "/api/v1/my_module/cron/daily-sync"
+run = "daily at 01:00"
+handler = "chuck_the_example.service:run"
+execution_mode = "k8s_job"
+concurrency_policy = "forbid"
 timeout_seconds = 300
 enabled = true
 ```
 
-**Implementing the endpoint** in your module:
+**Implementing the handler** in your module:
 ```python
-@blueprint.route("/cron/daily-sync", methods=["POST"])
-def cron_daily_sync():
+def run(ctx, payload):
     # Do work...
     return {"status": "ok"}
 ```
@@ -395,10 +396,9 @@ See `modules/rollback/` for a complete bundled module example.
 - User doesn't have explicit grant via admin UI
 - Check `module_access` table for user grants
 
-**Cron jobs not running?**
-- Verify your module declares `cron_jobs` in its manifest with `name`, `schedule`, and `endpoint`
+**Scheduled jobs not running?**
+- Verify your module declares `jobs` in its manifest with `name`, `run`, and `handler`
 - On Toolforge, cron jobs are defined in `jobs.yaml`; regenerate via the admin tool and update the repo
-- Verify the job endpoint exists in your module blueprint and is callable as `POST <endpoint>`
-- For local dev, ensure Celery Beat is running: `celery -A celery_worker beat`
+- Verify the handler package is installed and importable in the Build Service image
 - Check `module_cron_jobs` table for job definitions and `enabled=1` flag
-- Review logs for endpoint invocation errors
+- Review `toolforge jobs logs <job-name>` for runner errors

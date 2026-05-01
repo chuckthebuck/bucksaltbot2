@@ -32,9 +32,9 @@ This document guides you through preparing Chuck the Buckbot Framework for produ
   module_access — User access grants (non-maintainer)
   ```
 
-- [ ] **Initialize cron job next_run_at timestamps** (one-time on first deploy):
+- [ ] **Load Toolforge job definitions** after build:
   ```bash
-  celery -A celery_worker call module_cron_executor.initialize_module_cron_next_run_times
+  toolforge jobs load jobs.yaml
   ```
 
 ### 3. Bundled Modules
@@ -80,18 +80,13 @@ This document guides you through preparing Chuck the Buckbot Framework for produ
   - Test enable/disable toggle
   - Test user access grant form
 
-- [ ] **Test cron executor** (if using cron jobs in any module):
+- [ ] **Test module runner**:
   ```bash
-  celery -A celery_worker call module_cron_executor.run_overdue_module_cron_jobs
+  python3 -m module_runner --module four_award --job four-award-sync
   ```
-  Should return success with execution summary
+  Use a dry-run/safe module config for live wikis.
 
 ### 5. Dependencies
-
-- [ ] **New Python packages installed**:
-  - `croniter` — Cron schedule calculation
-  
-  Verify: `pip show croniter`
 
 - [ ] **Existing packages versions stable**:
   - Flask, Celery, Redis, PyMySQL unchanged
@@ -152,12 +147,7 @@ export CELERY_RESULT_BACKEND=redis://broker:6379/9
    python3 -m module_job_controller
    ```
 
-4. **Initialize cron timestamps** (one-time):
-   ```bash
-   celery -A celery_worker call module_cron_executor.initialize_module_cron_next_run_times
-   ```
-
-5. **Verify bootstrap**:
+4. **Verify bootstrap**:
    ```bash
    curl http://localhost:5000/api/v1/modules
    ```
@@ -224,8 +214,8 @@ curl http://localhost:5000/api/v1/modules | jq '.modules | length'
 # Rollback module accessible
 curl -b "session=<cookie>" http://localhost:5000/rollback/ | grep -q "Rollback"
 
-# Cron executor task defined
-celery -A celery_worker inspect active_queues | grep module_cron_executor
+# Module controller job exists
+toolforge jobs show buckbot-module-controller
 ```
 
 ### Database Checks
@@ -257,10 +247,10 @@ SELECT * FROM module_cron_jobs;
 ### Cron Job Checks (if applicable)
 
 1. Wait 60+ seconds
-2. Check Celery Beat logs for task execution
-3. Verify module endpoint was called:
+2. Check Toolforge job logs for task execution
+3. Verify the module runner started:
    ```bash
-   tail -f logs/module_cron_executor.log | grep "Invoking"
+   toolforge jobs logs four-award-four-award-sync
    ```
 
 ## Monitoring
@@ -268,11 +258,11 @@ SELECT * FROM module_cron_jobs;
 Add alerts for:
 
 1. **Module registry failures**:
-   - Monitor `module_cron_executor` task failures
+   - Monitor module runner job failures
    - Alert on repeated failures (>3 in 5 minutes)
 
 2. **Cron job lateness**:
-   - Compare `next_run_at` with current time
+   - Compare Toolforge job schedules with expected module run cadence
    - Alert if jobs fall >5 minutes behind
 
 3. **Module access errors**:
