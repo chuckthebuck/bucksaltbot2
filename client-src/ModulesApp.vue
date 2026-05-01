@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { CdxButton, CdxProgressBar } from "@wikimedia/codex";
-import { getInitialProps, fetchModules, toggleModuleEnabled, updateModuleAccess } from "./api";
+import {
+  getInitialProps,
+  fetchModuleConfig,
+  fetchModules,
+  toggleModuleEnabled,
+  updateModuleAccess,
+  updateModuleConfig,
+  updateModuleJob,
+} from "./api";
 
 interface Module {
   name: string;
@@ -14,7 +22,11 @@ interface Module {
   cron_jobs: Array<{
     name: string;
     schedule: string;
+    schedule_text?: string | null;
     endpoint: string;
+    handler?: string | null;
+    execution_mode?: string;
+    concurrency_policy?: string;
     timeout_seconds: number;
     enabled: boolean;
   }>;
@@ -32,6 +44,14 @@ const selectedModule = ref<string | null>(null);
 const togglingModule = ref<string | null>(null);
 const grantingAccess = ref<{ module: string; username: string } | null>(null);
 const newAccessUsername = ref("");
+const success = ref("");
+const savingJob = ref<string | null>(null);
+const jobDrafts = ref<
+  Record<string, { scheduleText: string; timeoutSeconds: number; enabled: boolean }>
+>({});
+const moduleConfigText = ref("{}");
+const configLoadedFor = ref<string | null>(null);
+const savingConfig = ref(false);
 
 async function loadModules() {
   try {
@@ -39,12 +59,30 @@ async function loadModules() {
     error.value = "";
     const data = await fetchModules();
     modules.value = data;
+    syncJobDrafts();
   } catch (err) {
     error.value = `Failed to load modules: ${String(err)}`;
     console.error(err);
   } finally {
     loading.value = false;
   }
+}
+
+function syncJobDrafts() {
+  const next: Record<
+    string,
+    { scheduleText: string; timeoutSeconds: number; enabled: boolean }
+  > = {};
+  for (const module of modules.value) {
+    for (const job of module.cron_jobs) {
+      next[`${module.name}/${job.name}`] = {
+        scheduleText: job.schedule_text || job.schedule,
+        timeoutSeconds: job.timeout_seconds,
+        enabled: job.enabled,
+      };
+    }
+  }
+  jobDrafts.value = next;
 }
 
 async function toggleModule(moduleName: string, enabled: boolean) {
@@ -92,9 +130,83 @@ async function revokeAccess(moduleName: string, username: string) {
   }
 }
 
+async function saveJob(moduleName: string, jobName: string) {
+  const key = `${moduleName}/${jobName}`;
+  const draft = jobDrafts.value[key];
+  if (!draft) {
+    return;
+  }
+
+  try {
+    savingJob.value = key;
+    error.value = "";
+    success.value = "";
+    await updateModuleJob(moduleName, jobName, {
+      schedule_text: draft.scheduleText,
+      timeout_seconds: draft.timeoutSeconds,
+      enabled: draft.enabled,
+    });
+    success.value =
+      "Schedule saved. Regenerate Jobs YAML and reload Toolforge jobs for the new interval.";
+    await loadModules();
+  } catch (err) {
+    error.value = `Failed to update job: ${String(err)}`;
+    console.error(err);
+  } finally {
+    savingJob.value = null;
+  }
+}
+
+async function loadSelectedModuleConfig(moduleName: string) {
+  try {
+    error.value = "";
+    const config = await fetchModuleConfig(moduleName);
+    moduleConfigText.value = JSON.stringify(config, null, 2);
+    configLoadedFor.value = moduleName;
+  } catch (err) {
+    error.value = `Failed to load module config: ${String(err)}`;
+    console.error(err);
+  }
+}
+
+async function saveSelectedModuleConfig(moduleName: string) {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(moduleConfigText.value || "{}");
+  } catch {
+    error.value = "Module config must be valid JSON.";
+    return;
+  }
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+    error.value = "Module config must be a JSON object.";
+    return;
+  }
+
+  try {
+    savingConfig.value = true;
+    error.value = "";
+    success.value = "";
+    const config = await updateModuleConfig(moduleName, parsed);
+    moduleConfigText.value = JSON.stringify(config, null, 2);
+    success.value = "Module config saved.";
+  } catch (err) {
+    error.value = `Failed to save module config: ${String(err)}`;
+    console.error(err);
+  } finally {
+    savingConfig.value = false;
+  }
+}
+
 const selectedModuleData = computed(() => {
   return modules.value.find((m) => m.name === selectedModule.value) || null;
 });
+
+function selectModule(moduleName: string) {
+  selectedModule.value = moduleName;
+  if (canManageModules.value) {
+    loadSelectedModuleConfig(moduleName);
+  }
+}
 
 onMounted(() => {
   loadModules();
@@ -111,10 +223,17 @@ onMounted(() => {
       </div>
     </div>
 
+    <div v-if="success" class="cdx-message cdx-message--success">
+      <div class="cdx-message__content">{{ success }}</div>
+      <button class="cdx-message__close-button" @click="success = ''" type="button">
+        x
+      </button>
+    </div>
+
     <div v-if="error" class="cdx-message cdx-message--error">
       <div class="cdx-message__content">{{ error }}</div>
       <button class="cdx-message__close-button" @click="error = ''" type="button">
-        ✕
+        x
       </button>
     </div>
 
@@ -132,7 +251,7 @@ onMounted(() => {
             :key="module.name"
             class="module-item"
             :class="{ active: selectedModule === module.name }"
-            @click="selectedModule = module.name"
+            @click="selectModule(module.name)"
           >
             <span class="module-name">{{ module.title || module.name }}</span>
             <span
@@ -148,7 +267,7 @@ onMounted(() => {
       <section v-if="selectedModuleData" class="module-detail">
         <div class="detail-header">
           <h2>{{ selectedModuleData.title || selectedModuleData.name }}</h2>
-          <div v-if="isMaintainer" class="detail-actions">
+          <div v-if="canManageModules" class="detail-actions">
             <CdxButton
               :disabled="togglingModule === selectedModuleData.name"
               @click="
@@ -201,32 +320,109 @@ onMounted(() => {
 
         <div v-if="selectedModuleData.cron_jobs.length > 0" class="cron-jobs">
           <h3>Cron Jobs</h3>
+          <p class="help-text">
+            Changes here update the framework registry and generated Jobs YAML.
+            Toolforge still needs the repo's jobs.yaml updated and reloaded before
+            a new interval starts running.
+          </p>
           <table class="cron-table">
             <thead>
               <tr>
                 <th>Name</th>
                 <th>Schedule</th>
-                <th>Endpoint</th>
+                <th>Runner</th>
                 <th>Timeout</th>
                 <th>Status</th>
+                <th v-if="canManageModules">Actions</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="job in selectedModuleData.cron_jobs" :key="job.name">
                 <td>{{ job.name }}</td>
-                <td><code>{{ job.schedule }}</code></td>
-                <td><code>{{ job.endpoint }}</code></td>
-                <td>{{ job.timeout_seconds }}s</td>
-                <td :class="{ enabled: job.enabled }">
-                  {{ job.enabled ? "Enabled" : "Disabled" }}
+                <td>
+                  <input
+                    v-if="canManageModules"
+                    v-model="jobDrafts[`${selectedModuleData.name}/${job.name}`].scheduleText"
+                    class="schedule-input"
+                    type="text"
+                    placeholder="daily at 03:00"
+                  />
+                  <code v-else>{{ job.schedule_text || job.schedule }}</code>
+                  <div class="cron-expression">
+                    Cron: <code>{{ job.schedule }}</code>
+                  </div>
+                </td>
+                <td>
+                  <code>{{ job.handler || job.endpoint || job.execution_mode }}</code>
+                </td>
+                <td>
+                  <input
+                    v-if="canManageModules"
+                    v-model.number="jobDrafts[`${selectedModuleData.name}/${job.name}`].timeoutSeconds"
+                    class="timeout-input"
+                    type="number"
+                    min="1"
+                  />
+                  <span v-else>{{ job.timeout_seconds }}s</span>
+                </td>
+                <td>
+                  <label v-if="canManageModules" class="enabled-toggle">
+                    <input
+                      v-model="jobDrafts[`${selectedModuleData.name}/${job.name}`].enabled"
+                      type="checkbox"
+                    />
+                    Enabled
+                  </label>
+                  <span v-else :class="{ enabled: job.enabled }">
+                    {{ job.enabled ? "Enabled" : "Disabled" }}
+                  </span>
+                </td>
+                <td v-if="canManageModules">
+                  <CdxButton
+                    :disabled="savingJob === `${selectedModuleData.name}/${job.name}`"
+                    @click="saveJob(selectedModuleData.name, job.name)"
+                  >
+                    {{
+                      savingJob === `${selectedModuleData.name}/${job.name}`
+                        ? "Saving..."
+                        : "Save"
+                    }}
+                  </CdxButton>
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
+
+        <section v-if="canManageModules" class="module-config">
+          <h3>Module Config</h3>
+          <p class="help-text">
+            Non-secret module settings. For Chuck the 4awardhelper testwiki runs,
+            use wiki_code "test", wiki_family "wikipedia", and the testwiki page
+            titles you want it to read and edit.
+          </p>
+          <textarea
+            v-model="moduleConfigText"
+            class="config-json"
+            spellcheck="false"
+            @focus="
+              selectedModuleData && configLoadedFor !== selectedModuleData.name
+                ? loadSelectedModuleConfig(selectedModuleData.name)
+                : null
+            "
+          ></textarea>
+          <div class="detail-actions">
+            <CdxButton
+              :disabled="savingConfig"
+              @click="saveSelectedModuleConfig(selectedModuleData.name)"
+            >
+              {{ savingConfig ? "Saving..." : "Save Config" }}
+            </CdxButton>
+          </div>
+        </section>
       </section>
 
-      <section v-if="selectedModuleData && isMaintainer" class="module-access">
+      <section v-if="selectedModuleData && canManageModules" class="module-access">
         <h3>Access Control</h3>
         <p class="help-text">
           Maintainers have access to all modules by default. Grant additional users
@@ -294,10 +490,10 @@ h3 {
 }
 
 .modules-list {
-  border: 1px solid #ccc;
+  border: 1px solid #a7bde5;
   border-radius: 4px;
   padding: 15px;
-  background-color: #f5f5f5;
+  background-color: #f6f9ff;
 }
 
 .no-modules {
@@ -314,7 +510,7 @@ h3 {
 
 .module-item {
   padding: 10px 12px;
-  border: 1px solid #ccc;
+  border: 1px solid #c7d5ef;
   background: white;
   border-radius: 4px;
   text-align: left;
@@ -325,14 +521,14 @@ h3 {
   align-items: center;
 
   &:hover {
-    background: #f9f9f9;
-    border-color: #999;
+    background: #eef5ff;
+    border-color: #315fa8;
   }
 
   &.active {
-    background: #036;
+    background: #001f4d;
     color: white;
-    border-color: #036;
+    border-color: #001f4d;
   }
 }
 
@@ -360,7 +556,7 @@ h3 {
 }
 
 .module-detail {
-  border: 1px solid #ccc;
+  border: 1px solid #a7bde5;
   border-radius: 4px;
   padding: 20px;
   background: white;
@@ -371,7 +567,7 @@ h3 {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
-  border-bottom: 2px solid #eee;
+  border-bottom: 2px solid #d9e9ff;
   padding-bottom: 15px;
 }
 
@@ -422,7 +618,7 @@ h3 {
   margin-top: 10px;
 
   th {
-    background: #f5f5f5;
+    background: #f6f9ff;
     padding: 10px;
     text-align: left;
     font-weight: 600;
@@ -434,7 +630,7 @@ h3 {
     border-bottom: 1px solid #eee;
 
     code {
-      background: #f5f5f5;
+      background: #f6f9ff;
       padding: 2px 4px;
       border-radius: 3px;
       font-family: monospace;
@@ -448,8 +644,54 @@ h3 {
   }
 }
 
+.schedule-input,
+.timeout-input,
+.config-json {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #a7bde5;
+  border-radius: 4px;
+  font: inherit;
+
+  &:focus {
+    outline: none;
+    border-color: #315fa8;
+    box-shadow: 0 0 0 2px rgba(49, 95, 168, 0.14);
+  }
+}
+
+.timeout-input {
+  max-width: 90px;
+}
+
+.cron-expression {
+  margin-top: 4px;
+  color: #54595d;
+  font-size: 0.88em;
+}
+
+.enabled-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.module-config {
+  border-top: 2px solid #d9e9ff;
+  padding-top: 20px;
+  margin-top: 25px;
+}
+
+.config-json {
+  min-height: 180px;
+  font-family: monospace;
+  resize: vertical;
+}
+
 .module-access {
-  border-top: 2px solid #eee;
+  border-top: 2px solid #d9e9ff;
   padding-top: 20px;
   margin-top: 25px;
 }
@@ -476,8 +718,8 @@ h3 {
 
   &:focus {
     outline: none;
-    border-color: #036;
-    box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.1);
+    border-color: #315fa8;
+    box-shadow: 0 0 0 2px rgba(49, 95, 168, 0.14);
   }
 }
 </style>

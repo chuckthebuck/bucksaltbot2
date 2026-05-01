@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rollback queue</title>
+  <link rel="icon" type="image/png" href="/static/assets/chuck-framework-icon.png">
+  <link rel="shortcut icon" type="image/png" href="/static/assets/chuck-framework-icon.png">
+  <link rel="apple-touch-icon" href="/static/assets/chuck-framework-icon.png">
 
   {%- if not is_production %}
     <!-- Vite dev -->
@@ -34,9 +37,10 @@
 {% endif %}
 
 <header class="header">
-  <span class="logo">
-    <b>Rollback</b> & <b>Queue</b>
-  </span>
+  <a class="brand-mark" href="/goto?tab=rollback-queue" aria-label="Chuck the Buckbot Framework home">
+    <img src="/static/assets/chuck-framework-icon.png" alt="" class="brand-icon">
+    <span class="brand-text">Chuck the Buckbot Framework</span>
+  </a>
 
   <nav class="header-tabs" aria-label="Primary navigation">
     <a
@@ -56,7 +60,7 @@
     <a
       class="header-tab{% if current_section == 'config' %} is-active{% endif %}"
       aria-current="{% if current_section == 'config' %}page{% else %}false{% endif %}"
-      href="{% if is_bot_admin %}/goto?tab=rollback-config{% else %}/goto?tab=documentation{% endif %}"
+      href="{% if nav_can_config %}/goto?tab=rollback-config{% else %}/goto?tab=documentation{% endif %}"
     >
       Config
     </a>
@@ -80,8 +84,13 @@
 
   {% if username %}
     <div class="user-area">
+      <img src="/static/assets/chuck-framework-logo.png" alt="Chuck the Buckbot Framework" class="brand-wordmark">
       <span>{{ username }}</span>
       <a href="/logout" class="logout">Logout</a>
+    </div>
+  {% else %}
+    <div class="user-area">
+      <img src="/static/assets/chuck-framework-logo.png" alt="Chuck the Buckbot Framework" class="brand-wordmark">
     </div>
   {% endif %}
 </header>
@@ -102,7 +111,7 @@
       {% endif %}
       {% endif %}
       {% elif current_section == 'config' %}
-      {% if is_bot_admin %}
+      {% if nav_can_config %}
       <a class="subnav-item{% if type == 'runtime-config' %} is-active{% endif %}" href="/goto?tab=rollback-config">Runtime Config</a>
       {% endif %}
       <a class="subnav-item" href="/goto?tab=documentation">Documentation</a>

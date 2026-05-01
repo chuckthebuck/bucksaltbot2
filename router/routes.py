@@ -70,6 +70,7 @@ from router.module_registry import (
     list_module_job_runs,
     request_module_job_run_cancel,
     set_module_enabled,
+    update_module_cron_job,
     upsert_module_config,
     upsert_module_access,
     user_has_module_access,
@@ -234,6 +235,7 @@ def inject_nav_capabilities():
         return {
             "nav_can_write": False,
             "nav_can_all_jobs": False,
+            "nav_can_config": False,
             "nav_is_admin": False,
             "nav_can_modules": False,
         }
@@ -245,6 +247,7 @@ def inject_nav_capabilities():
     return {
         "nav_can_write": bool("write" in perms),
         "nav_can_all_jobs": bool("read_all" in perms or is_admin),
+        "nav_can_config": bool(_can_view_runtime_config(username)),
         "nav_is_admin": is_admin,
         "nav_can_modules": can_manage_modules,
     }
@@ -3026,6 +3029,56 @@ def module_jobs_api(module_name: str):
             "module": module_name,
             "jobs": list_module_cron_jobs(module_name),
             "runs": list_module_job_runs(module_name),
+        }
+    )
+
+
+@app.route(
+    "/api/v1/modules/<path:module_name>/jobs/<path:job_name>",
+    methods=["PUT"],
+)
+def module_job_update_api(module_name: str, job_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (is_maintainer(username) or is_admin_user(username)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    kwargs = {}
+    if "schedule_text" in payload:
+        kwargs["schedule_text"] = payload.get("schedule_text")
+    if "schedule" in payload:
+        kwargs["schedule"] = payload.get("schedule")
+    if "timeout_seconds" in payload:
+        kwargs["timeout_seconds"] = payload.get("timeout_seconds")
+    if "enabled" in payload:
+        kwargs["enabled"] = _parse_bool(payload.get("enabled"), default=True)
+
+    if not kwargs:
+        return jsonify({"detail": "No job updates provided"}), 400
+
+    try:
+        updated = update_module_cron_job(module_name, job_name, **kwargs)
+    except ValueError as exc:
+        detail = str(exc)
+        status = 404 if detail in {"Module not found", "Job not found"} else 400
+        return jsonify({"detail": detail}), status
+
+    return jsonify(
+        {
+            "module": module_name,
+            "job": job_name,
+            "updated": updated,
+            "jobs": list_module_cron_jobs(module_name),
+            "detail": (
+                "Schedule saved. Regenerate Jobs YAML and reload Toolforge jobs "
+                "for Toolforge to use the new interval."
+            ),
         }
     )
 

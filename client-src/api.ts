@@ -614,7 +614,11 @@ export interface ModuleItem {
   cron_jobs: Array<{
     name: string;
     schedule: string;
+    schedule_text?: string | null;
     endpoint: string;
+    handler?: string | null;
+    execution_mode?: string;
+    concurrency_policy?: string;
     timeout_seconds: number;
     enabled: boolean;
   }>;
@@ -670,4 +674,66 @@ export async function updateModuleAccess(
   }
 
   return data;
+}
+
+export async function updateModuleJob(
+  moduleName: string,
+  jobName: string,
+  updates: {
+    schedule_text?: string;
+    schedule?: string;
+    timeout_seconds?: number;
+    enabled?: boolean;
+  }
+): Promise<{ detail?: string; jobs: ModuleItem["cron_jobs"] }> {
+  const r = await fetch(
+    `/api/v1/modules/${encodeURIComponent(moduleName)}/jobs/${encodeURIComponent(jobName)}`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(updates),
+    }
+  );
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to update module job: ${r.status}`);
+  }
+
+  return data;
+}
+
+export async function fetchModuleConfig(
+  moduleName: string
+): Promise<Record<string, unknown>> {
+  const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/config`);
+  const data = await r.json();
+
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to fetch module config: ${r.status}`);
+  }
+
+  return data.config || {};
+}
+
+export async function updateModuleConfig(
+  moduleName: string,
+  config: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/config`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ config }),
+  });
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to update module config: ${r.status}`);
+  }
+
+  return data.config || {};
 }

@@ -60,11 +60,11 @@ onMounted(() => {
         <h2>Manual Workflow</h2>
         <ol>
           <li>Copy the YAML entries below</li>
-          <li>Open <code>jobs.yaml</code> in the repo</li>
-          <li>Add the entries to the appropriate section (keeping existing framework jobs)</li>
+          <li>Open or create <code>jobs.yaml</code> in the Toolforge-deployed repo</li>
+          <li>Add the entries to that file, keeping existing framework jobs</li>
           <li>Commit and push to trigger Toolforge redeploy</li>
         </ol>
-        <p><strong>Note:</strong> Module cron jobs don't auto-update when modules are installed/removed. Regenerate and update manually as needed.</p>
+        <p><strong>Note:</strong> The web UI updates the framework registry. Toolforge only changes real schedules after the generated entries are present in <code>jobs.yaml</code> and the tool is redeployed or jobs are reloaded.</p>
       </div>
 
       <div class="yaml-section">
@@ -108,8 +108,8 @@ h1 {
 }
 
 .instructions {
-  background-color: #f5f5f5;
-  border-left: 4px solid #036;
+  background-color: #f6f9ff;
+  border-left: 4px solid #315fa8;
   padding: 15px;
   margin-bottom: 20px;
   border-radius: 4px;
@@ -125,21 +125,21 @@ h1 {
 }
 
 code {
-  background-color: #eee;
+  background-color: #eef5ff;
   padding: 2px 6px;
   border-radius: 3px;
   font-family: monospace;
 }
 
 .yaml-section {
-  border: 1px solid #ccc;
+  border: 1px solid #a7bde5;
   border-radius: 4px;
   overflow: hidden;
 }
 
 .yaml-header {
-  background-color: #f9f9f9;
-  border-bottom: 1px solid #ccc;
+  background-color: #f6f9ff;
+  border-bottom: 1px solid #a7bde5;
   padding: 12px 15px;
   display: flex;
   justify-content: space-between;
@@ -151,12 +151,12 @@ code {
 }
 
 .yaml-content {
-  background-color: #fafafa;
+  background-color: #fbfdff;
   padding: 15px;
   margin: 0;
   overflow-x: auto;
   font-size: 13px;
   line-height: 1.5;
-  color: #333;
+  color: #202122;
 }
 </style>

@@ -2,19 +2,27 @@
 @import ( reference ) '@wikimedia/codex-design-tokens/theme-wikimedia-ui.less';
 @import ( reference ) '@wikimedia/codex/mixins/link.less';
 
+@chuck-navy: #001f4d;
+@chuck-blue: #315fa8;
+@chuck-light-blue: #d9e9ff;
+@chuck-ice: #f6f9ff;
+@chuck-border: #a7bde5;
+
 .header {
     width: calc( 100% - 2 * @spacing-125 );
-    padding: @spacing-125;
-    background-color: @background-color-interactive;
+    padding: @spacing-75 @spacing-125;
+    background: linear-gradient( 90deg, @chuck-navy 0%, #173e7d 56%, @chuck-blue 100% );
     display: flex;
     flex-direction: row;
     align-items: center;
     gap: @spacing-100;
+    box-shadow: 0 2px 10px rgba( 0, 31, 77, 0.14 );
 }
 
 .header-tabs {
     display: flex;
     gap: @spacing-50;
+    margin-left: @spacing-100;
 }
 
 .header-tab {
@@ -22,22 +30,22 @@
     align-items: center;
     min-height: 36px;
     padding: 0 @spacing-100;
-    border: @border-base;
+    border: @border-width-base @border-style-base rgba( 255, 255, 255, 0.32 );
     border-radius: @border-radius-base;
-    background-color: @background-color-base;
-    color: @color-base;
+    background-color: rgba( 255, 255, 255, 0.08 );
+    color: @color-inverted;
     text-decoration: none;
 }
 
 .header-tab:hover {
-    background-color: @background-color-neutral-subtle;
+    background-color: rgba( 255, 255, 255, 0.18 );
     text-decoration: none;
 }
 
 .header-tab.is-active {
-    background-color: @background-color-progressive-subtle;
-    border-color: @border-color-progressive;
-    color: @color-progressive;
+    background-color: @color-inverted;
+    border-color: @color-inverted;
+    color: @chuck-navy;
     font-weight: @font-weight-bold;
 }
 
@@ -46,6 +54,7 @@
     display: inline-flex;
     align-items: center;
     gap: @spacing-100;
+    color: @color-inverted;
 }
 
 a {
@@ -57,19 +66,51 @@ a {
 }
 
 .logout {
-    color: @color-disabled;
+    color: @chuck-light-blue;
 }
 
-.logo {
-    justify-self: flex-start;
-    margin-right: auto;
+.brand-mark {
+    display: inline-flex;
+    align-items: center;
+    gap: @spacing-50;
+    color: @color-inverted;
+    font-weight: @font-weight-bold;
+    white-space: nowrap;
+}
+
+.brand-mark:hover {
+    color: @color-inverted;
+    text-decoration: none;
+}
+
+.brand-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: @color-inverted;
+    object-fit: cover;
+}
+
+.brand-text {
+    max-width: 230px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.brand-wordmark {
+    width: 150px;
+    max-height: 44px;
+    object-fit: contain;
+    background: @color-inverted;
+    border-radius: @border-radius-base;
+    padding: 2px 6px;
 }
 
 .container {
-    margin: 10vw;
-    margin-top:3vw;
+    margin: 7vw;
+    margin-top: 3vw;
     min-width: 50vw;
-    background-color: @color-inverted;
+    background-color: transparent;
 }
 
 .subnav {
@@ -78,7 +119,7 @@ a {
     gap: @spacing-50;
     margin-bottom: @spacing-125;
     padding-bottom: @spacing-75;
-    border-bottom: @border-base;
+    border-bottom: @border-width-base @border-style-base @chuck-border;
 }
 
 .subnav-item {
@@ -91,13 +132,13 @@ a {
 }
 
 .subnav-item:hover {
-    background-color: @background-color-neutral-subtle;
+    background-color: @chuck-ice;
     text-decoration: none;
 }
 
 .subnav-item.is-active {
-    background-color: @background-color-progressive-subtle;
-    color: @color-progressive;
+    background-color: @chuck-light-blue;
+    color: @chuck-navy;
     font-weight: @font-weight-bold;
 }
 
@@ -106,7 +147,8 @@ a {
     margin-top: auto;
     width: calc( 100% - 2 * @spacing-125 );
     padding: @spacing-125;
-    background-color: @background-color-interactive;
+    background-color: @chuck-navy;
+    color: @color-inverted;
 }
 
 .log-pre {
@@ -159,7 +201,7 @@ a {
 body {
     margin: 0;
     padding: 0;
-    background-color: @color-inverted;
+    background: linear-gradient( 180deg, @chuck-ice 0%, @color-inverted 220px );
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -285,6 +327,14 @@ body {
 
     .user-area {
         margin-left: 0;
+    }
+
+    .brand-text {
+        max-width: 170px;
+    }
+
+    .brand-wordmark {
+        width: 118px;
     }
 
     .layout {

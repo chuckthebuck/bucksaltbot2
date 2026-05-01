@@ -665,6 +665,127 @@ def list_module_cron_jobs(module_name: str | None = None) -> list[dict[str, Any]
     ]
 
 
+def update_module_cron_job(
+    module_name: str,
+    job_name: str,
+    *,
+    schedule_text: str | None = None,
+    schedule: str | None = None,
+    timeout_seconds: int | None = None,
+    enabled: bool | None = None,
+) -> dict[str, Any]:
+    """Update a persisted module job schedule and keep manifest JSON in sync."""
+    module_name = str(module_name or "").strip()
+    job_name = str(job_name or "").strip()
+    if not module_name or not job_name:
+        raise ValueError("module_name and job_name are required")
+
+    record = get_module_definition(module_name)
+    if record is None:
+        raise ValueError("Module not found")
+
+    cron_jobs = list(record.definition.cron_jobs)
+    job_index = next((i for i, job in enumerate(cron_jobs) if job.name == job_name), None)
+    if job_index is None:
+        raise ValueError("Job not found")
+
+    current = cron_jobs[job_index]
+    new_schedule_text = current.schedule_text
+    new_schedule = current.schedule
+
+    if schedule_text is not None:
+        new_schedule_text = str(schedule_text or "").strip() or None
+        if new_schedule_text:
+            new_schedule = human_schedule_to_cron(new_schedule_text)
+        elif schedule is None:
+            raise ValueError("schedule_text cannot be empty without schedule")
+
+    if schedule is not None:
+        new_schedule = str(schedule or "").strip()
+        if not new_schedule:
+            raise ValueError("schedule cannot be empty")
+
+    new_timeout_seconds = current.timeout_seconds
+    if timeout_seconds is not None:
+        new_timeout_seconds = _coerce_positive_int(
+            timeout_seconds,
+            field_name="timeout_seconds",
+            default=current.timeout_seconds,
+        )
+
+    new_enabled = current.enabled if enabled is None else bool(enabled)
+
+    updated_job = ModuleCronJob(
+        name=current.name,
+        schedule=new_schedule,
+        endpoint=current.endpoint,
+        handler=current.handler,
+        schedule_text=new_schedule_text,
+        timeout_seconds=new_timeout_seconds,
+        enabled=new_enabled,
+        execution_mode=current.execution_mode,
+        concurrency_policy=current.concurrency_policy,
+    )
+    cron_jobs[job_index] = updated_job
+
+    updated_definition = ModuleDefinition(
+        name=record.definition.name,
+        repo_url=record.definition.repo_url,
+        entry_point=record.definition.entry_point,
+        ui_enabled=record.definition.ui_enabled,
+        cron_jobs=tuple(cron_jobs),
+        buildpacks=record.definition.buildpacks,
+        oauth_consumer_mode=record.definition.oauth_consumer_mode,
+        oauth_consumer_key_env=record.definition.oauth_consumer_key_env,
+        oauth_consumer_secret_env=record.definition.oauth_consumer_secret_env,
+        redis_namespace=record.definition.redis_namespace,
+        title=record.definition.title,
+    )
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE module_cron_jobs
+                SET schedule=%s,
+                    schedule_text=%s,
+                    timeout_seconds=%s,
+                    enabled=%s
+                WHERE module_name=%s AND job_name=%s
+                """,
+                (
+                    updated_job.schedule,
+                    updated_job.schedule_text,
+                    updated_job.timeout_seconds,
+                    1 if updated_job.enabled else 0,
+                    module_name,
+                    job_name,
+                ),
+            )
+            cursor.execute(
+                """
+                UPDATE module_registry
+                SET manifest_json=%s
+                WHERE name=%s
+                """,
+                (_serialize_manifest(updated_definition), module_name),
+            )
+        conn.commit()
+
+    return {
+        "module_name": module_name,
+        "job_name": updated_job.name,
+        "schedule": updated_job.schedule,
+        "endpoint": updated_job.endpoint,
+        "timeout_seconds": updated_job.timeout_seconds,
+        "enabled": updated_job.enabled,
+        "schedule_text": updated_job.schedule_text,
+        "handler": updated_job.handler,
+        "execution_mode": updated_job.execution_mode,
+        "concurrency_policy": updated_job.concurrency_policy,
+    }
+
+
 def create_module_job_run(
     module_name: str,
     job_name: str,
