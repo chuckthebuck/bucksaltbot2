@@ -29,6 +29,8 @@
   {% set current_section = 'config' %}
 {% elif type == 'modules' %}
   {% set current_section = 'modules' %}
+{% elif type == 'jobs-yaml' %}
+  {% set current_section = 'jobs-yaml' %}
 {% endif %}
 
 <header class="header">
@@ -65,6 +67,13 @@
       href="/goto?tab=modules"
     >
       Modules
+    </a>
+    <a
+      class="header-tab{% if current_section == 'jobs-yaml' %} is-active{% endif %}"
+      aria-current="{% if current_section == 'jobs-yaml' %}page{% else %}false{% endif %}"
+      href="/goto?tab=jobs-yaml"
+    >
+      Jobs YAML
     </a>
     {% endif %}
   </nav>

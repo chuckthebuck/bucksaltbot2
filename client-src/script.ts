@@ -10,6 +10,7 @@ import AccountRollbackApp from "./AccountRollbackApp.vue";
 import ConfigApp from "./ConfigApp.vue";
 import RequestReviewApp from "./RequestReviewApp.vue";
 import ModulesApp from "./ModulesApp.vue";
+import JobsYamlApp from "./JobsYamlApp.vue";
 
 if (document.getElementById("batch-props")) {
   createApp(BatchApp).mount("#app");
@@ -25,6 +26,8 @@ if (document.getElementById("batch-props")) {
   createApp(RequestReviewApp).mount("#app");
 } else if (document.getElementById("modules-props")) {
   createApp(ModulesApp).mount("#modules-container");
+} else if (document.getElementById("jobs-yaml-props")) {
+  createApp(JobsYamlApp).mount("#app");
 } else if (document.getElementById("rollback-queue-props")) {
   createApp(App).mount("#app");
 }

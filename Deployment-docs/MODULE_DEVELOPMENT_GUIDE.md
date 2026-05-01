@@ -251,6 +251,34 @@ has_access = user_has_module_access(
 - PUT `/api/v1/modules/<module>/access` — Grant/revoke user access
 - POST `/api/v1/modules/install` — Install a module from a GitHub or GitLab repository URL
 
+## Toolforge Cron Jobs
+
+On Toolforge, module cron jobs are managed via `jobs.yaml` instead of Celery Beat.
+
+**Declaring cron jobs** in your module manifest:
+```toml
+[[cron_jobs]]
+name = "daily-sync"
+schedule = "0 1 * * *"  # Unix cron format
+endpoint = "/api/v1/my_module/cron/daily-sync"
+timeout_seconds = 300
+enabled = true
+```
+
+**Implementing the endpoint** in your module:
+```python
+@blueprint.route("/cron/daily-sync", methods=["POST"])
+def cron_daily_sync():
+    # Do work...
+    return {"status": "ok"}
+```
+
+**Registering cron jobs** with Toolforge:
+1. Install/update the module in the framework
+2. As a maintainer, visit `/admin/jobs-yaml-preview` to generate entries
+3. Copy the YAML section to `jobs.yaml` in the repo
+4. Commit and push; Toolforge will redeploy with new cron schedules
+
 ## Best Practices
 
 1. **Use unique namespace**: Prefix Redis keys with module name to avoid conflicts
@@ -306,7 +334,9 @@ See `modules/rollback/` for a complete bundled module example.
 - Check `module_access` table for user grants
 
 **Cron jobs not running?**
-- Verify Celery Beat is running
-- Check `module_cron_jobs` table for job definitions
+- Verify your module declares `cron_jobs` in its manifest with `name`, `schedule`, and `endpoint`
+- On Toolforge, cron jobs are defined in `jobs.yaml`; regenerate via the admin tool and update the repo
+- Verify the job endpoint exists in your module blueprint and is callable as `POST <endpoint>`
+- For local dev, ensure Celery Beat is running: `celery -A celery_worker beat`
+- Check `module_cron_jobs` table for job definitions and `enabled=1` flag
 - Review logs for endpoint invocation errors
-- Confirm `enabled=1` for the job

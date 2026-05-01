@@ -160,6 +160,17 @@ export CELERY_RESULT_BACKEND=redis://broker:6379/9
 7. **Install external modules**:
    - Use `POST /api/v1/modules/install` with a GitHub or GitLab repo URL to add a module without bundling it in the framework repo.
 
+8. **Set up Toolforge cron jobs** (one-time, after deployment):
+   - Log into Toolforge
+   - Generate jobs.yaml entries:
+     ```bash
+     curl -H "Cookie: session=<your_cookie>" http://localhost:5000/admin/jobs-yaml-preview
+     ```
+   - Copy the output to your local `jobs.yaml` (keeping the existing buckbot-celery and other framework jobs)
+   - Commit and push the updated `jobs.yaml` to the repo
+   - Toolforge will automatically redeploy with the new cron jobs
+   - **Note**: Cron jobs won't auto-update when modules are installed/removed; regenerate and update jobs.yaml manually as needed
+
 ### 9. Rollback Plan
 
 If issues occur:

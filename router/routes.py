@@ -1,5 +1,6 @@
 """Flask route handlers and route helper functions."""
 
+import logging
 import os
 import sys as _sys
 import secrets
@@ -7,7 +8,7 @@ import time
 
 import mwoauth
 import mwoauth.flask
-import logging
+import requests
 
 from flask import (
     Response,
@@ -75,6 +76,7 @@ from router.framework_config import (
     WORKER_HEARTBEAT_KEY,
     oauth_callback_url,
 )
+from jobs_yaml_generator import generate_jobs_yaml_section
 
 
 def _r():
@@ -615,6 +617,11 @@ def goto():
         if not (is_maintainer(username) or is_admin_user(username)):
             abort(403)
         return redirect("/modules")
+
+    if tab == "jobs-yaml":
+        if not (is_maintainer(username) or is_admin_user(username)):
+            abort(403)
+        return redirect("/jobs-yaml")
 
     if tab == "documentation":
         return redirect(DOCS_URL)
@@ -1536,6 +1543,25 @@ def modules_ui():
         is_maintainer=is_maintainer(username),
         is_bot_admin=is_admin_user(username),
         type="modules",
+    )
+
+
+@app.route("/jobs-yaml")
+def jobs_yaml_ui():
+    username = session.get("username")
+
+    if not username:
+        abort(401)
+
+    if not (is_maintainer(username) or is_admin_user(username)):
+        abort(403)
+
+    return render_template(
+        "jobs_yaml.html",
+        username=username,
+        is_maintainer=is_maintainer(username),
+        is_bot_admin=is_admin_user(username),
+        type="jobs-yaml",
     )
 
 
@@ -2930,3 +2956,85 @@ def module_registry_install_api():
         return jsonify({"detail": "Internal server error"}), 500
 
     return jsonify({"module": definition.name, "installed": True, "definition": definition.as_dict()})
+
+
+@app.route("/admin/jobs-yaml-preview", methods=["GET"])
+def admin_jobs_yaml_preview():
+    """Generate and preview Toolforge jobs.yaml entries for module cron jobs.
+    
+    This is a manual admin workflow: review the output, add to jobs.yaml in repo, and push.
+    """
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    if not (is_maintainer(username) or is_admin_user(username)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    try:
+        yaml_section = generate_jobs_yaml_section()
+    except Exception:
+        logging.exception("Failed to generate jobs.yaml entries")
+        return jsonify({"detail": "Failed to generate jobs.yaml"}), 500
+
+    # Return as plain text for easy copy-paste
+    return Response(yaml_section, mimetype="text/plain")
+
+
+@app.route("/api/v1/modules/<path:module_name>/cron/<path:job_name>", methods=["POST"])
+def module_cron_job_trigger(module_name: str, job_name: str):
+    """Trigger a cron job for a module.
+    
+    Called by Toolforge cron scheduler. Validates the job exists and is enabled,
+    then invokes the module's actual endpoint.
+    """
+    module_name = str(module_name or "").strip()
+    job_name = str(job_name or "").strip()
+
+    # Validate module exists and is enabled
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    if not record.enabled:
+        return jsonify({"detail": "Module is disabled"}), 403
+
+    # Find the cron job in the module's manifest
+    cron_job = None
+    for job in record.definition.cron_jobs:
+        if job.name == job_name:
+            cron_job = job
+            break
+
+    if cron_job is None:
+        return jsonify({"detail": "Cron job not found"}), 404
+
+    if not cron_job.enabled:
+        return jsonify({"detail": "Cron job is disabled"}), 403
+
+    # Invoke the module's cron endpoint via internal HTTP request
+    endpoint = cron_job.endpoint
+    timeout = cron_job.timeout_seconds
+
+    try:
+        # Make an internal request to the module's endpoint
+        # The endpoint should be registered by the module blueprint
+        resp = requests.post(
+            f"http://localhost:5000{endpoint}",
+            timeout=timeout,
+        )
+        return jsonify(
+            {
+                "module": module_name,
+                "job": job_name,
+                "status": "invoked",
+                "endpoint_status": resp.status_code,
+            }
+        )
+    except requests.Timeout:
+        return jsonify(
+            {"detail": f"Cron job timeout after {timeout}s"}
+        ), 504
+    except Exception as exc:
+        logging.exception("Failed to invoke cron job %s/%s", module_name, job_name)
+        return jsonify({"detail": "Failed to invoke cron job"}), 500
