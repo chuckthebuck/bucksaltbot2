@@ -30,7 +30,7 @@
   {% set current_section = 'jobs' %}
 {% elif type in ['runtime-config', 'documentation'] %}
   {% set current_section = 'config' %}
-{% elif type == 'modules' %}
+{% elif type in ['modules', 'module-run-report'] %}
   {% set current_section = 'modules' %}
 {% elif type == 'jobs-yaml' %}
   {% set current_section = 'jobs-yaml' %}

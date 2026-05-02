@@ -3224,6 +3224,41 @@ def module_job_run_restart_api(run_id: int):
     ), 202
 
 
+@app.route("/modules/runs/<int:run_id>/report", methods=["GET"])
+def module_job_run_report_page(run_id: int):
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login"))
+
+    run = get_module_job_run(run_id)
+    if run is None:
+        abort(404)
+
+    is_admin = bool(_can_manage_modules(username))
+    if not user_has_module_access(run["module_name"], username, is_maintainer=is_admin):
+        abort(403)
+
+    result = run.get("result") or {}
+    if not isinstance(result, dict):
+        result = {}
+    dry_run_edits = result.get("dry_run_edits") or []
+    if not isinstance(dry_run_edits, list):
+        dry_run_edits = []
+    dry_run_report = result.get("dry_run_report") or {}
+    if not isinstance(dry_run_report, dict):
+        dry_run_report = {}
+
+    return render_template(
+        "module_run_report.html",
+        type="module-run-report",
+        username=username,
+        run=run,
+        result=result,
+        dry_run_edits=dry_run_edits,
+        report_wikitext=dry_run_report.get("wikitext") or "",
+    )
+
+
 @app.route("/admin/jobs-yaml-preview", methods=["GET"])
 def admin_jobs_yaml_preview():
     """Generate and preview Toolforge jobs.yaml entries for module cron jobs.

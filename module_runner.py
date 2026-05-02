@@ -154,10 +154,15 @@ def run_module_job(
         payload = run.get("payload") or {}
         parameters = inspect.signature(handler).parameters
         if len(parameters) == 0:
-            handler()
+            result = handler()
         else:
-            handler(ctx, payload)
-        update_module_job_run(run_id, status="completed", exit_code=0)
+            result = handler(ctx, payload)
+        update_module_job_run(
+            run_id,
+            status="completed",
+            exit_code=0,
+            result=result if isinstance(result, dict) else {"result": result},
+        )
         return 0
     except ModuleRunCancelled as exc:
         logger.log(str(exc))

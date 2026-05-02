@@ -1,5 +1,6 @@
 """Tests for status_updater.py."""
 
+import time
 from unittest.mock import MagicMock, patch
 
 
@@ -333,6 +334,61 @@ def test_run_status_cron_update_preserves_job_fields(monkeypatch):
 
     assert "current_job" not in written_keys
     assert "last_job" not in written_keys
+
+
+def test_run_status_cron_update_uses_configurable_text(monkeypatch):
+    import status_updater
+
+    monkeypatch.setenv("NOTDEV", "1")
+    monkeypatch.setenv("STATUS_CRON_EDITING", "Watching")
+    monkeypatch.setenv("STATUS_CRON_WEB", "Degraded")
+    monkeypatch.setenv("STATUS_CRON_DETAILS", "Custom heartbeat")
+
+    written = {}
+
+    def track_save(site, key, text):
+        written[key] = text
+
+    with (
+        patch("status_updater._save_status_subpage", side_effect=track_save),
+        patch("status_updater._get_authenticated_site", return_value=MagicMock()),
+    ):
+        status_updater.run_status_cron_update()
+
+    assert written["editing"] == "Watching"
+    assert written["web"] == "Degraded"
+    assert written["details"] == "Custom heartbeat"
+
+
+def test_update_wiki_status_skips_duplicate_inside_configured_interval(monkeypatch):
+    import status_updater
+
+    monkeypatch.setenv("NOTDEV", "1")
+    monkeypatch.setenv("STATUS_UPDATE_MIN_INTERVAL_SECONDS", "60")
+
+    fields = {
+        "editing": "Idle",
+        "web": "Online",
+        "last_edit": "Unknown",
+        "details": "",
+        "warning": "",
+        "updated": "ignored",
+        "current_job": "None",
+        "last_job": "None",
+    }
+    fingerprint = status_updater._status_payload_fingerprint(fields)
+    mock_redis = MagicMock()
+    mock_redis.get.side_effect = [fingerprint, str(time.time())]
+
+    with (
+        patch.object(status_updater, "_redis", mock_redis),
+        patch("status_updater._save_status_subpage") as mock_save,
+        patch("status_updater._get_authenticated_site", return_value=MagicMock()),
+        patch("status_updater.get_last_bot_edit", return_value="Unknown"),
+    ):
+        status_updater.update_wiki_status("Idle")
+
+    mock_save.assert_not_called()
 
 
 # ── notify_maintainers ────────────────────────────────────────────────────────

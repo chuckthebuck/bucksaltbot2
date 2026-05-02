@@ -838,7 +838,7 @@ def get_module_job_run(run_id: int) -> dict[str, Any] | None:
                 """
                 SELECT id, module_name, job_name, status, trigger_type, triggered_by,
                        k8s_job_name, started_at, finished_at, exit_code, error,
-                       payload_json, created_at
+                       payload_json, result_json, created_at
                 FROM module_job_runs
                 WHERE id=%s
                 """,
@@ -862,7 +862,8 @@ def get_module_job_run(run_id: int) -> dict[str, Any] | None:
         "exit_code": row[9],
         "error": row[10],
         "payload": json.loads(row[11] or "{}"),
-        "created_at": str(row[12]) if row[12] is not None else None,
+        "result": json.loads(row[12] or "{}"),
+        "created_at": str(row[13]) if row[13] is not None else None,
     }
 
 
@@ -907,6 +908,7 @@ def update_module_job_run(
     error: str | None = None,
     exit_code: int | None = None,
     k8s_job_name: str | None = None,
+    result: dict[str, Any] | None = None,
 ) -> None:
     """Update lifecycle state for a tracked module job run."""
     status = str(status or "").strip()
@@ -915,6 +917,7 @@ def update_module_job_run(
 
     set_started = status in {"launching", "running"}
     set_finished = status in {"completed", "failed", "canceled"}
+    result_json = json.dumps(result, sort_keys=True) if result is not None else None
 
     with get_conn() as conn:
         with conn.cursor() as cursor:
@@ -925,6 +928,7 @@ def update_module_job_run(
                     error=%s,
                     exit_code=COALESCE(%s, exit_code),
                     k8s_job_name=COALESCE(%s, k8s_job_name),
+                    result_json=COALESCE(%s, result_json),
                     started_at=CASE
                         WHEN %s=1 AND started_at IS NULL THEN CURRENT_TIMESTAMP
                         ELSE started_at
@@ -940,6 +944,7 @@ def update_module_job_run(
                     error,
                     exit_code,
                     k8s_job_name,
+                    result_json,
                     1 if set_started else 0,
                     1 if set_finished else 0,
                     run_id,
@@ -967,7 +972,7 @@ def list_module_job_runs(
     query = """
         SELECT id, module_name, job_name, status, trigger_type, triggered_by,
                k8s_job_name, started_at, finished_at, exit_code, error,
-               payload_json, created_at
+               payload_json, result_json, created_at
         FROM module_job_runs
     """
     if conditions:
@@ -994,7 +999,8 @@ def list_module_job_runs(
             "exit_code": row[9],
             "error": row[10],
             "payload": json.loads(row[11] or "{}"),
-            "created_at": str(row[12]) if row[12] is not None else None,
+            "result": json.loads(row[12] or "{}"),
+            "created_at": str(row[13]) if row[13] is not None else None,
         }
         for row in rows
     ]

@@ -616,6 +616,42 @@ export interface ModuleItem {
   }>;
 }
 
+export interface ModuleRunItem {
+  id: number;
+  module_name: string;
+  job_name: string;
+  status: string;
+  trigger_type: string;
+  triggered_by?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  exit_code?: number | null;
+  error?: string | null;
+  payload?: Record<string, unknown>;
+  result?: {
+    dry_run?: boolean;
+    approved?: number;
+    failed?: number;
+    manual?: number;
+    dry_run_edits?: Array<{
+      title?: string;
+      summary?: string;
+      before_chars?: number;
+      after_chars?: number;
+      delta_chars?: number;
+      diff?: string;
+    }>;
+    dry_run_report?: {
+      published?: {
+        title?: string;
+        saved?: boolean;
+      } | null;
+      wikitext?: string;
+    };
+  };
+  created_at?: string | null;
+}
+
 export async function fetchModules(): Promise<ModuleItem[]> {
   const r = await fetch("/api/v1/modules");
   const data = await r.json();
@@ -695,6 +731,22 @@ export async function updateModuleJob(
   }
 
   return data;
+}
+
+export async function fetchModuleJobs(
+  moduleName: string
+): Promise<{ jobs: ModuleItem["cron_jobs"]; runs: ModuleRunItem[] }> {
+  const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/jobs`);
+  const data = await r.json();
+
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to fetch module jobs: ${r.status}`);
+  }
+
+  return {
+    jobs: Array.isArray(data.jobs) ? data.jobs : [],
+    runs: Array.isArray(data.runs) ? data.runs : [],
+  };
 }
 
 export async function fetchModuleConfig(

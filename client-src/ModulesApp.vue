@@ -4,7 +4,9 @@ import { CdxButton, CdxProgressBar } from "@wikimedia/codex";
 import {
   getInitialProps,
   fetchModuleConfig,
+  fetchModuleJobs,
   fetchModules,
+  type ModuleRunItem,
   toggleModuleEnabled,
   updateModuleAccess,
   updateModuleConfig,
@@ -46,6 +48,7 @@ const grantingAccess = ref<{ module: string; username: string } | null>(null);
 const newAccessUsername = ref("");
 const success = ref("");
 const savingJob = ref<string | null>(null);
+const moduleRuns = ref<ModuleRunItem[]>([]);
 const jobDrafts = ref<
   Record<string, { scheduleText: string; timeoutSeconds: number; enabled: boolean }>
 >({});
@@ -186,6 +189,16 @@ async function saveJob(moduleName: string, jobName: string) {
   }
 }
 
+async function loadSelectedModuleRuns(moduleName: string) {
+  try {
+    const data = await fetchModuleJobs(moduleName);
+    moduleRuns.value = data.runs;
+  } catch (err) {
+    error.value = `Failed to load module runs: ${String(err)}`;
+    console.error(err);
+  }
+}
+
 async function loadSelectedModuleConfig(moduleName: string) {
   try {
     error.value = "";
@@ -248,6 +261,7 @@ function selectModule(moduleName: string) {
   selectedModule.value = moduleName;
   if (canManageModules.value) {
     loadSelectedModuleConfig(moduleName);
+    loadSelectedModuleRuns(moduleName);
   }
 }
 
@@ -257,15 +271,17 @@ function defaultModuleConfig(moduleName: string): Record<string, unknown> {
   }
 
   return {
-    wiki_code: "test",
+    wiki_code: "en",
     wiki_family: "wikipedia",
-    wiki_api_url: "https://test.wikipedia.org/w/api.php",
+    wiki_api_url: "https://en.wikipedia.org/w/api.php",
     dry_run: true,
     enabled: true,
     max_nominations_per_run: 25,
     four_page: "Wikipedia:Four Award",
     records_page: "Wikipedia:Four Award/Records",
     leaderboard_page: "Wikipedia:Four Award/Leaderboard",
+    dry_run_report_page: "User:Chuckbot/4awardhelper dry-run report",
+    publish_dry_run_report: false,
     enable_replies: true,
     enable_records: true,
     enable_removal: true,
@@ -350,6 +366,22 @@ function readCheckboxValue(event: Event): boolean {
 function readNumberValue(event: Event, fallback: number): number {
   const value = Number(readInputValue(event));
   return Number.isFinite(value) ? value : fallback;
+}
+
+function dryRunEditCount(run: ModuleRunItem): number {
+  return run.result?.dry_run_edits?.length ?? 0;
+}
+
+function dryRunReportTitle(run: ModuleRunItem): string {
+  return run.result?.dry_run_report?.published?.title || "";
+}
+
+function wikiPageUrl(title: string): string {
+  return `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replaceAll(" ", "_"))}`;
+}
+
+function moduleRunReportUrl(runId: number): string {
+  return `/modules/runs/${runId}/report`;
 }
 
 onMounted(() => {
@@ -625,6 +657,18 @@ onMounted(() => {
                 />
               </label>
 
+              <label class="config-field wide">
+                <span>Dry-run report page</span>
+                <input
+                  :value="getStringConfig('dry_run_report_page')"
+                  placeholder="User:Chuckbot/4awardhelper dry-run report"
+                  type="text"
+                  @input="
+                    setConfigValue('dry_run_report_page', readInputValue($event))
+                  "
+                />
+              </label>
+
               <label class="config-field">
                 <span>Max nominations per run</span>
                 <input
@@ -657,6 +701,16 @@ onMounted(() => {
                   @change="setConfigValue('dry_run', readCheckboxValue($event))"
                 />
                 Dry run
+              </label>
+              <label>
+                <input
+                  :checked="getBooleanConfig('publish_dry_run_report', false)"
+                  type="checkbox"
+                  @change="
+                    setConfigValue('publish_dry_run_report', readCheckboxValue($event))
+                  "
+                />
+                Publish dry-run report to userspace
               </label>
               <label>
                 <input
@@ -772,6 +826,58 @@ onMounted(() => {
                   : "Grant Access"
               }}
             </CdxButton>
+          </div>
+        </section>
+
+        <section v-if="canManageModules" class="module-runs">
+          <h3>Recent Runs</h3>
+          <p class="help-text">
+            Dry-run runs include the proposed edit count and, when configured, a
+            Buckbot-hosted output report.
+          </p>
+          <div v-if="moduleRuns.length === 0" class="no-modules">
+            <p>No runs recorded yet.</p>
+          </div>
+          <div v-else class="runs-table-scroll">
+            <table class="runs-table">
+              <thead>
+                <tr>
+                  <th>Run</th>
+                  <th>Status</th>
+                  <th>Result</th>
+                  <th>Output</th>
+                  <th>Wiki Report</th>
+                  <th>Finished</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="run in moduleRuns.slice(0, 10)" :key="run.id">
+                  <td>#{{ run.id }}</td>
+                  <td>{{ run.status }}</td>
+                  <td>
+                    {{ run.result?.approved ?? 0 }} approved,
+                    {{ run.result?.failed ?? 0 }} failed,
+                    {{ run.result?.manual ?? 0 }} manual,
+                    {{ dryRunEditCount(run) }} proposed edits
+                  </td>
+                  <td>
+                    <a :href="moduleRunReportUrl(run.id)">View output</a>
+                  </td>
+                  <td>
+                    <a
+                      v-if="dryRunReportTitle(run)"
+                      :href="wikiPageUrl(dryRunReportTitle(run))"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {{ dryRunReportTitle(run) }}
+                    </a>
+                    <span v-else>Not published</span>
+                  </td>
+                  <td>{{ run.finished_at || run.created_at || "" }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
       </section>
@@ -1143,6 +1249,38 @@ h3 {
   border-top: 2px solid #d9e9ff;
   padding-top: 20px;
   margin-top: 25px;
+}
+
+.module-runs {
+  border-top: 2px solid #d9e9ff;
+  padding-top: 20px;
+  margin-top: 25px;
+}
+
+.runs-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.runs-table {
+  width: max(100%, 760px);
+  border-collapse: collapse;
+  table-layout: fixed;
+
+  th,
+  td {
+    padding: 10px;
+    border-bottom: 1px solid #eee;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+
+  th {
+    background: #f6f9ff;
+    border-bottom: 2px solid #ddd;
+    font-weight: 600;
+  }
 }
 
 .help-text {

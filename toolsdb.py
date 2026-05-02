@@ -121,6 +121,7 @@ def init_db():
                     exit_code INT NULL,
                     error TEXT NULL,
                     payload_json LONGTEXT NULL,
+                    result_json LONGTEXT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         ON UPDATE CURRENT_TIMESTAMP,
@@ -128,6 +129,12 @@ def init_db():
                     INDEX idx_status_created (status, created_at)
                 )
                 """
+            )
+            _ensure_column(
+                cursor,
+                "module_job_runs",
+                "result_json",
+                "result_json LONGTEXT NULL",
             )
 
             cursor.execute(
