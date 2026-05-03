@@ -94,7 +94,7 @@ const userGrantGroupFields: Array<{ key: GrantGroupKey; label: string; help: str
     help: "Can approve/review jobs and perform moderation actions.",
   },
   { key: "config_editor", label: "config_editor", help: "Can edit runtime access configuration." },
-  { key: "rights_manager", label: "rights_manager", help: "Can manage rollback-control groups for users." },
+  { key: "rights_manager", label: "rights_manager", help: "Can manage framework groups for users." },
   { key: "module_operator", label: "module_operator", help: "Can manage modules and module jobs." },
   { key: "admin", label: "admin", help: "Broad rollback, jobs, and config rights." },
 ];
@@ -732,7 +732,7 @@ onMounted(() => {
             v-model:selected="userSearchSelected"
             :menu-items="userSearchLookupItems"
             :disabled="!canManageUserGrants"
-            placeholder="Search Commons username"
+            placeholder="Search Wikimedia username"
             @input="onUserSearchLookupInput"
           />
         </CdxField>
@@ -749,15 +749,15 @@ onMounted(() => {
           :disabled="!canManageUserGrants || !selectedGrantUser || userGrantRefreshing"
           @click="() => void refreshSelectedUserCommonsRights()"
         >
-          {{ userGrantRefreshing ? "Refreshing..." : "Refresh Commons rights" }}
+          {{ userGrantRefreshing ? "Refreshing..." : "Refresh project rights" }}
         </CdxButton>
       </div>
 
       <div v-if="userGrantLoaded" class="runtime-rights-columns">
         <div>
-          <h4>Commons groups (live)</h4>
+          <h4>Project groups (live)</h4>
           <p class="runtime-config-help">
-            {{ commonsGroups.length ? commonsGroups.join(", ") : "No explicit Commons groups found." }}
+            {{ commonsGroups.length ? commonsGroups.join(", ") : "No explicit project groups found." }}
             <span v-if="commonsGroupsFresh"> (freshly queried)</span>
           </p>
           <h4>Global groups (live)</h4>
@@ -808,10 +808,11 @@ onMounted(() => {
 
     <div v-if="!loading" class="runtime-config-grid runtime-config-grid--numbers">
       <section class="runtime-config-card">
-        <h3>Rollback control groups by user</h3>
+        <h3>Framework groups by user</h3>
         <p class="runtime-config-help">
-          MediaWiki-style user rights storage: usernames map to groups, and groups
-          provide rights. Prefer editing this through the user rights editor above.
+          MediaWiki-style user rights storage: usernames map to framework groups,
+          and groups provide rights. Prefer editing this through the user rights
+          editor above.
         </p>
         <textarea
           v-model="grantsJsonText"
@@ -869,7 +870,7 @@ onMounted(() => {
       </section>
 
       <section class="runtime-config-card">
-        <h3>Chuckbot groups</h3>
+        <h3>Chuckbot framework groups</h3>
         <p class="runtime-config-help">
           Edit framework groups without changing code. Group values are rights atoms;
           module-scoped atoms are <code>module:&lt;module&gt;:access</code>,

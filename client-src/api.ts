@@ -686,6 +686,25 @@ export async function toggleModuleEnabled(
   return data;
 }
 
+export async function emergencyStopModule(moduleName: string): Promise<{
+  module: string;
+  enabled: boolean;
+  canceled_runs: number;
+  kill_results: Array<unknown>;
+  module_specific?: Record<string, unknown>;
+}> {
+  const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/estop`, {
+    method: "POST",
+  });
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to emergency-stop module: ${r.status}`);
+  }
+
+  return data;
+}
+
 export async function updateModuleAccess(
   moduleName: string,
   username: string,

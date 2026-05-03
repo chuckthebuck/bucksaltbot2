@@ -3027,9 +3027,21 @@ def module_registry_toggle_api(module_name: str):
     if record is None:
         return jsonify({"detail": "Module not found"}), 404
 
-    if enabled:
-        set_module_enabled(module_name, True)
-        return jsonify({"module": module_name, "enabled": True})
+    set_module_enabled(module_name, enabled)
+    return jsonify({"module": module_name, "enabled": bool(enabled)})
+
+
+@app.route("/api/v1/modules/<path:module_name>/estop", methods=["POST"])
+def module_registry_estop_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (_can_manage_module(username, module_name)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
 
     result = emergency_stop_module(module_name, actor=username)
     return jsonify(

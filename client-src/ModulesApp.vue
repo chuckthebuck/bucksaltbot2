@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { CdxButton, CdxProgressBar } from "@wikimedia/codex";
 import {
   getInitialProps,
+  emergencyStopModule,
   fetchModuleConfig,
   fetchModuleJobs,
   fetchModules,
@@ -44,6 +45,7 @@ const loading = ref(true);
 const error = ref("");
 const selectedModule = ref<string | null>(null);
 const togglingModule = ref<string | null>(null);
+const estoppingModule = ref<string | null>(null);
 const grantingAccess = ref<{ module: string; username: string } | null>(null);
 const newAccessUsername = ref("");
 const success = ref("");
@@ -120,13 +122,35 @@ function syncJobDrafts() {
 async function toggleModule(moduleName: string, enabled: boolean) {
   try {
     togglingModule.value = moduleName;
+    error.value = "";
+    success.value = "";
     await toggleModuleEnabled(moduleName, enabled);
+    success.value = enabled
+      ? "Module enabled."
+      : "Module disabled. Active work was not killed; use E-STOP for immediate shutdown.";
     await loadModules();
   } catch (err) {
     error.value = `Failed to toggle module: ${String(err)}`;
     console.error(err);
   } finally {
     togglingModule.value = null;
+  }
+}
+
+async function estopModule(moduleName: string) {
+  try {
+    estoppingModule.value = moduleName;
+    error.value = "";
+    success.value = "";
+    const result = await emergencyStopModule(moduleName);
+    success.value = `Emergency stop sent. ${result.canceled_runs} active framework run(s) were canceled.`;
+    await loadModules();
+    await loadSelectedModuleRuns(moduleName);
+  } catch (err) {
+    error.value = `Failed to emergency-stop module: ${String(err)}`;
+    console.error(err);
+  } finally {
+    estoppingModule.value = null;
   }
 }
 
@@ -459,6 +483,19 @@ onMounted(() => {
                   : selectedModuleData.enabled
                     ? "Disable"
                     : "Enable"
+              }}
+            </CdxButton>
+            <CdxButton
+              class="estop-action"
+              action="destructive"
+              weight="primary"
+              :disabled="estoppingModule === selectedModuleData.name"
+              @click="estopModule(selectedModuleData.name)"
+            >
+              {{
+                estoppingModule === selectedModuleData.name
+                  ? "Stopping..."
+                  : "E-STOP"
               }}
             </CdxButton>
           </div>
@@ -1008,6 +1045,19 @@ h3 {
 .detail-actions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+.estop-action {
+  background: #b32424;
+  border-color: #7a1616;
+  color: #fff;
+
+  &:hover:not(:disabled) {
+    background: #8f1c1c;
+    border-color: #7a1616;
+    color: #fff;
+  }
 }
 
 .detail-info {
