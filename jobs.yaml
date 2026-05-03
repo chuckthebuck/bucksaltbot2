@@ -5,7 +5,7 @@
   mem: 1.0Gi
   mount: all
   name: buckbot-celery
-  health-check-script: bash scripts/ping_celery.sh
+ 
 - command: bash -c "export NOTDEV=1; python3 -m module_job_controller"
   continuous: true
   cpu: '0.2'
