@@ -61,6 +61,7 @@ class ModuleDefinition:
     oauth_consumer_secret_env: str | None = None
     redis_namespace: str | None = None
     title: str | None = None
+    rights: tuple[str, ...] = ()
 
     @property
     def is_cron_only(self) -> bool:
@@ -230,6 +231,26 @@ def _parse_buildpacks(raw_buildpacks: Any) -> tuple[str, ...]:
     return tuple(buildpacks)
 
 
+def _parse_module_rights(raw_rights: Any) -> tuple[str, ...]:
+    if raw_rights in (None, ""):
+        return ()
+    if isinstance(raw_rights, str):
+        raw_rights = [raw_rights]
+    if not isinstance(raw_rights, list):
+        raise ValueError("rights must be a list of module right strings")
+
+    rights = []
+    for index, raw_right in enumerate(raw_rights, start=1):
+        right = str(raw_right or "").strip().lower().replace(" ", "_").replace("-", "_")
+        if not right:
+            raise ValueError(f"right {index} must be a non-empty string")
+        if ":" in right:
+            raise ValueError(f"right {index} must not contain ':'")
+        rights.append(right)
+
+    return tuple(sorted(set(rights)))
+
+
 def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
     """Validate and normalize a module manifest dictionary."""
     if not isinstance(raw, dict):
@@ -252,6 +273,9 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
     )
     cron_jobs = _parse_cron_jobs(raw.get("jobs", raw.get("cron_jobs", raw.get("cron"))))
     buildpacks = _parse_buildpacks(raw.get("buildpacks"))
+    rights = _parse_module_rights(
+        raw.get("rights", raw.get("module_rights", raw.get("capabilities")))
+    )
 
     if not ui_enabled and not cron_jobs:
         raise ValueError("module must declare either a UI or at least one cron job")
@@ -289,6 +313,7 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
         oauth_consumer_secret_env=oauth_consumer_secret_env,
         redis_namespace=redis_namespace,
         title=title,
+        rights=rights,
     )
 
 
@@ -740,6 +765,7 @@ def update_module_cron_job(
         oauth_consumer_secret_env=record.definition.oauth_consumer_secret_env,
         redis_namespace=record.definition.redis_namespace,
         title=record.definition.title,
+        rights=record.definition.rights,
     )
 
     with get_conn() as conn:
@@ -1143,6 +1169,14 @@ def user_has_module_access(module_name: str, username: str, *, is_maintainer: bo
     username = str(username or "").strip().lower()
     if not module_name or not username:
         return False
+
+    try:
+        from router.authz import user_has_module_right
+
+        if user_has_module_right(username, module_name, "access"):
+            return True
+    except Exception:
+        pass
 
     with get_conn() as conn:
         with conn.cursor() as cursor:

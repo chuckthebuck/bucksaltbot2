@@ -55,6 +55,7 @@ export interface AllJobsRow {
 export interface RuntimeAuthzConfig {
   ROLLBACK_CONTROL_JSON: Record<string, string[]>;
   ROLE_GRANTS_JSON: Record<string, string[]>;
+  CHUCKBOT_GROUPS_JSON: Record<string, string[]>;
   RATE_LIMIT_JOBS_PER_HOUR: number;
   RATE_LIMIT_TESTER_JOBS_PER_HOUR: number;
 }
@@ -67,6 +68,7 @@ export interface RuntimeAuthzResponse {
   grant_groups?: string[];
   grant_rights?: string[];
   auto_grant_roles?: string[];
+  module_rights?: Record<string, string[]>;
 }
 
 export interface RuntimeUserGrantsResponse {
@@ -79,6 +81,7 @@ export interface RuntimeUserGrantsResponse {
   expanded_rights: string[];
   implicit: Record<string, boolean>;
   commons_groups?: string[];
+  global_groups?: string[];
   commons_groups_refreshed?: boolean;
   implicit_flag_order?: string[];
   grant_groups?: string[];

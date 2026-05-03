@@ -214,6 +214,7 @@ const errorMessage = ref("");
 const successMessage = ref("");
 const canEditConfig = ref(initialProps.can_edit_config);
 const canManageUserGrants = ref(initialProps.can_edit_config);
+const moduleRights = ref<Record<string, string[]>>({});
 
 const config = ref<RuntimeAuthzConfig>({
   ROLLBACK_CONTROL_JSON: {},
@@ -221,11 +222,14 @@ const config = ref<RuntimeAuthzConfig>({
     commons_admin: ["group:basic"],
     commons_rollbacker: ["group:basic"],
   },
+  CHUCKBOT_GROUPS_JSON: {},
   RATE_LIMIT_JOBS_PER_HOUR: 0,
   RATE_LIMIT_TESTER_JOBS_PER_HOUR: 0,
 });
 
 const grantsJsonText = ref("{}");
+const groupsJsonText = ref("{}");
+const autoGrantsJsonText = ref("{}");
 
 const userSearchLookupItems = ref<Array<{ label: string; value: string }>>([]);
 const userSearchSelected = ref<string | number | null>(null);
@@ -238,27 +242,29 @@ const userGrantSaving = ref(false);
 const userGrantRefreshing = ref(false);
 const userGrantReason = ref("");
 const commonsGroups = ref<string[]>([]);
+const globalGroups = ref<string[]>([]);
 const commonsGroupsFresh = ref(false);
 const selectedAutoGrantRole = ref<AutoGrantRoleKey>("commons_admin");
 
 const implicitFlags = ref<Record<ImplicitFlagKey, boolean>>({
   authenticated: false,
-  bot_admin: false,
-  maintainer: false,
   commons_admin: false,
   commons_rollbacker: false,
-  tester: false,
-  read_only: false,
-  extra_authorized: false,
 });
 
 function emptyGroupChecks(): Record<GrantGroupKey, boolean> {
   return {
+    basic: false,
+    read_only: false,
+    tester: false,
     viewer: false,
     rollbacker: false,
     rollbacker_dry_run: false,
     batch_runner: false,
     jobs_moderator: false,
+    config_editor: false,
+    rights_manager: false,
+    module_operator: false,
     admin: false,
   };
 }
@@ -266,6 +272,7 @@ function emptyGroupChecks(): Record<GrantGroupKey, boolean> {
 function emptyRightChecks(): Record<GrantRightKey, boolean> {
   return {
     view_all: false,
+    write: false,
     rollback_diff: false,
     rollback_account: false,
     rollback_diff_dry_run_only: false,
@@ -277,6 +284,9 @@ function emptyRightChecks(): Record<GrantRightKey, boolean> {
     manage_user_grants: false,
     cancel_any: false,
     retry_any: false,
+    manage_modules: false,
+    run_module_jobs: false,
+    edit_module_config: false,
   };
 }
 
@@ -404,6 +414,7 @@ function persistSelectedAutoGrantRoleChecks(): void {
   }
 
   config.value.ROLE_GRANTS_JSON = next;
+  autoGrantsJsonText.value = JSON.stringify(next, null, 2);
 }
 
 function loadSelectedAutoGrantRoleChecks(): void {
@@ -484,6 +495,7 @@ function applyUserGrantPayload(payload: {
   implicit: Record<string, boolean>;
   atoms: string[];
   commons_groups?: string[];
+  global_groups?: string[];
   commons_groups_refreshed?: boolean;
 }): void {
   selectedGrantUser.value = payload.normalized_username;
@@ -507,6 +519,7 @@ function applyUserGrantPayload(payload: {
   }
 
   commonsGroups.value = [...(payload.commons_groups || [])];
+  globalGroups.value = [...(payload.global_groups || [])];
   commonsGroupsFresh.value = !!payload.commons_groups_refreshed;
 
   const nextMap = { ...(config.value.ROLLBACK_CONTROL_JSON || {}) };
@@ -595,12 +608,27 @@ function applyServerConfig(nextConfig: RuntimeAuthzConfig): void {
     ...nextConfig,
     ROLLBACK_CONTROL_JSON: { ...(nextConfig.ROLLBACK_CONTROL_JSON || {}) },
     ROLE_GRANTS_JSON: { ...(nextConfig.ROLE_GRANTS_JSON || {}) },
+    CHUCKBOT_GROUPS_JSON: { ...(nextConfig.CHUCKBOT_GROUPS_JSON || {}) },
     RATE_LIMIT_JOBS_PER_HOUR: Number(nextConfig.RATE_LIMIT_JOBS_PER_HOUR || 0),
     RATE_LIMIT_TESTER_JOBS_PER_HOUR: Number(nextConfig.RATE_LIMIT_TESTER_JOBS_PER_HOUR || 0),
   };
 
   grantsJsonText.value = JSON.stringify(config.value.ROLLBACK_CONTROL_JSON || {}, null, 2);
+  groupsJsonText.value = JSON.stringify(config.value.CHUCKBOT_GROUPS_JSON || {}, null, 2);
+  autoGrantsJsonText.value = JSON.stringify(config.value.ROLE_GRANTS_JSON || {}, null, 2);
   loadSelectedAutoGrantRoleChecks();
+}
+
+function parseJsonObjectText(text: string, label: string): Record<string, string[]> {
+  const trimmed = text.trim();
+  if (!trimmed) return {};
+
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must be an object`);
+  }
+
+  return parsed as Record<string, string[]>;
 }
 
 function parseUserGrantsJsonText(): Record<string, string[]> {
@@ -624,6 +652,7 @@ async function loadConfig(): Promise<void> {
     applyServerConfig(response.config);
     canEditConfig.value = !!response.can_edit;
     canManageUserGrants.value = !!response.can_manage_user_grants;
+    moduleRights.value = response.module_rights || {};
   } catch (err) {
     errorMessage.value = err instanceof Error ? err.message : "Failed to load config";
   } finally {
@@ -642,6 +671,14 @@ async function saveConfig(): Promise<void> {
     const parsedUserGrants = parseUserGrantsJsonText();
     config.value.ROLLBACK_CONTROL_JSON = parsedUserGrants;
     persistSelectedAutoGrantRoleChecks();
+    config.value.CHUCKBOT_GROUPS_JSON = parseJsonObjectText(
+      groupsJsonText.value,
+      "Chuckbot groups JSON",
+    );
+    config.value.ROLE_GRANTS_JSON = parseJsonObjectText(
+      autoGrantsJsonText.value,
+      "Auto grants JSON",
+    );
 
     const response = await updateRuntimeAuthzConfig(config.value);
     applyServerConfig(response.config);
@@ -723,6 +760,10 @@ onMounted(() => {
             {{ commonsGroups.length ? commonsGroups.join(", ") : "No explicit Commons groups found." }}
             <span v-if="commonsGroupsFresh"> (freshly queried)</span>
           </p>
+          <h4>Global groups (live)</h4>
+          <p class="runtime-config-help">
+            {{ globalGroups.length ? globalGroups.join(", ") : "No global groups found." }}
+          </p>
 
           <h4>Groups you cannot change</h4>
           <UnifiedTable
@@ -783,7 +824,8 @@ onMounted(() => {
         <h3>Auto grants by implicit role</h3>
         <p class="runtime-config-help">
           Configure grants automatically based on implicit roles.
-          Commons admin maps to Commons <b>sysop</b>; Commons rollbacker maps to Commons <b>rollbacker</b>.
+          Roles can be <code>authenticated</code>, <code>project:commons:sysop</code>,
+          <code>project:enwiki:rollbacker</code>, or <code>global:global-sysop</code>.
         </p>
 
         <label class="runtime-reason-label" for="auto-grant-role-select">Role</label>
@@ -813,6 +855,53 @@ onMounted(() => {
           table-class="runtime-rights-table"
         />
 
+        <h4>Auto grants JSON</h4>
+        <p class="runtime-config-help">
+          Use this for project/global roles or module-specific rights such as
+          <code>module:four_award:manage</code>, <code>module:four_award:run_jobs</code>,
+          and <code>module:four_award:edit_config</code>.
+        </p>
+        <textarea
+          v-model="autoGrantsJsonText"
+          :disabled="!canEditConfig"
+          rows="8"
+        />
+      </section>
+
+      <section class="runtime-config-card">
+        <h3>Chuckbot groups</h3>
+        <p class="runtime-config-help">
+          Edit framework groups without changing code. Group values are rights atoms;
+          module-scoped atoms are <code>module:&lt;module&gt;:access</code>,
+          <code>module:&lt;module&gt;:manage</code>,
+          <code>module:&lt;module&gt;:run_jobs</code>, and
+          <code>module:&lt;module&gt;:edit_config</code>.
+        </p>
+        <textarea
+          v-model="groupsJsonText"
+          :disabled="!canEditConfig"
+          rows="10"
+        />
+      </section>
+
+      <section class="runtime-config-card">
+        <h3>Module-declared rights</h3>
+        <p class="runtime-config-help">
+          Modules publish their framework rights here. Grant them with atoms like
+          <code>module:four_award:run_jobs</code>; project/global roles only decide
+          who receives those atoms.
+        </p>
+        <div v-if="Object.keys(moduleRights).length === 0" class="runtime-config-help">
+          No modules currently declare rights.
+        </div>
+        <dl v-else class="module-rights-list">
+          <template v-for="(rights, moduleName) in moduleRights" :key="moduleName">
+            <dt>{{ moduleName }}</dt>
+            <dd>
+              <code v-for="right in rights" :key="right">module:{{ moduleName }}:{{ right }}</code>
+            </dd>
+          </template>
+        </dl>
       </section>
 
       <section v-for="field in numberFields" :key="field.key" class="runtime-config-card">

@@ -4,6 +4,7 @@ entry_point = "chuck_the_4awardhelper.service:run_four_award_sync"
 redis_namespace = "four_award"
 title = "Chuck the 4awardhelper"
 oauth_consumer_mode = "default"
+rights = ["manage", "run_jobs", "edit_config"]
 
 [[jobs]]
 name = "four-award-sync"

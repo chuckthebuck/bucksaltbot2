@@ -36,6 +36,8 @@ from router.authz import (  # noqa: F401
     _normalize_username,
     _normalize_user_grants_map_input,
     _normalize_auto_grants_map_input,
+    _configured_user_grant_groups,
+    user_has_module_right,
 )
 from router.diff_state import _diff_error_key, _maybe_mark_stale_resolving_job_failed
 
@@ -199,6 +201,47 @@ def _can_manage_modules(username: str | None) -> bool:
     return bool(username and (is_maintainer(username) or _has_permission(username, "manage_modules")))
 
 
+def _can_view_modules(username: str | None) -> bool:
+    if not username:
+        return False
+    if _can_manage_modules(username):
+        return True
+    return any(str(permission).startswith("module:") for permission in _user_permissions(username))
+
+
+def _can_manage_module(username: str | None, module_name: str) -> bool:
+    return bool(
+        username
+        and (
+            is_maintainer(username)
+            or _has_permission(username, "manage_modules")
+            or user_has_module_right(username, module_name, "manage")
+        )
+    )
+
+
+def _can_run_module_jobs(username: str | None, module_name: str) -> bool:
+    return bool(
+        username
+        and (
+            _can_manage_module(username, module_name)
+            or _has_permission(username, "run_module_jobs")
+            or user_has_module_right(username, module_name, "run_jobs")
+        )
+    )
+
+
+def _can_edit_module_config(username: str | None, module_name: str) -> bool:
+    return bool(
+        username
+        and (
+            _can_manage_module(username, module_name)
+            or _has_permission(username, "edit_module_config")
+            or user_has_module_right(username, module_name, "edit_config")
+        )
+    )
+
+
 def _check_rate_limit(*a, **kw):
     return _r()._check_rate_limit(*a, **kw)
 
@@ -250,7 +293,7 @@ def inject_nav_capabilities():
 
     perms = _user_permissions(username)
     is_admin = bool(session.get("is_admin") or is_admin_user(username))
-    can_manage_modules = _can_manage_modules(username)
+    can_manage_modules = _can_view_modules(username)
 
     return {
         "nav_can_write": bool("write" in perms),
@@ -635,7 +678,7 @@ def goto():
         return redirect("/rollback-config")
 
     if tab == "modules":
-        if not (_can_manage_modules(username)):
+        if not (_can_view_modules(username)):
             abort(403)
         return redirect("/modules")
 
@@ -1603,9 +1646,14 @@ def get_runtime_authz_api():
             "can_edit": _can_edit_runtime_config(username),
             "can_manage_user_grants": _can_manage_user_grants(username),
             "editable_keys": _RUNTIME_AUTHZ_ALLOWED_KEYS,
-            "grant_groups": sorted(_USER_GRANT_GROUPS.keys()),
+            "grant_groups": sorted(_configured_user_grant_groups(config).keys()),
             "grant_rights": sorted(_USER_GRANT_RIGHTS),
-            "auto_grant_roles": sorted(_AUTO_GRANT_ROLE_KEYS),
+            "auto_grant_roles": sorted((config.get("ROLE_GRANTS_JSON") or {}).keys()),
+            "module_rights": {
+                record.definition.name: list(record.definition.rights)
+                for record in list_module_definitions()
+                if record.definition.rights
+            },
         }
     )
 
@@ -1645,9 +1693,14 @@ def update_runtime_authz_api():
             "can_edit": _can_edit_runtime_config(username),
             "can_manage_user_grants": _can_manage_user_grants(username),
             "editable_keys": _RUNTIME_AUTHZ_ALLOWED_KEYS,
-            "grant_groups": sorted(_USER_GRANT_GROUPS.keys()),
+            "grant_groups": sorted(_configured_user_grant_groups(effective).keys()),
             "grant_rights": sorted(_USER_GRANT_RIGHTS),
-            "auto_grant_roles": sorted(_AUTO_GRANT_ROLE_KEYS),
+            "auto_grant_roles": sorted((effective.get("ROLE_GRANTS_JSON") or {}).keys()),
+            "module_rights": {
+                record.definition.name: list(record.definition.rights)
+                for record in list_module_definitions()
+                if record.definition.rights
+            },
         }
     )
 
@@ -1676,7 +1729,7 @@ def get_runtime_authz_user_grants(target_username: str):
         normalized_target, config, commons_groups=commons_groups
     )
     payload["implicit_flag_order"] = list(_USER_IMPLICIT_FLAGS)
-    payload["grant_groups"] = sorted(_USER_GRANT_GROUPS.keys())
+    payload["grant_groups"] = sorted(_configured_user_grant_groups(config).keys())
     payload["grant_rights"] = sorted(_USER_GRANT_RIGHTS)
     payload["can_edit"] = _can_manage_user_grants(username)
     payload["commons_groups_refreshed"] = bool(refresh_commons)
@@ -2761,9 +2814,7 @@ def get_rollback_job(job_id):
 @app.route("/")
 def index():
     username = session.get("username")
-    can_manage_modules = bool(
-        username and (_can_manage_modules(username))
-    )
+    can_manage_modules = bool(username and _can_view_modules(username))
     module_rows = []
     if can_manage_modules:
         module_rows = [
@@ -2790,7 +2841,7 @@ def module_estop_form(module_name: str):
     username = session.get("username")
     if not username:
         return redirect(url_for("login", referrer=url_for("index")))
-    if not (_can_manage_modules(username)):
+    if not (_can_manage_module(username, module_name)):
         abort(403)
 
     if get_module_definition(module_name) is None:
@@ -2916,6 +2967,12 @@ def module_registry_api():
     modules = []
     for record in list_module_definitions():
         definition = record.definition
+        module_admin = _can_manage_module(username, definition.name)
+        has_access = user_has_module_access(
+            definition.name,
+            username,
+            is_maintainer=is_admin or module_admin,
+        )
         modules.append(
             {
                 "name": definition.name,
@@ -2924,7 +2981,10 @@ def module_registry_api():
                 "ui_enabled": bool(definition.ui_enabled),
                 "cron_jobs": [job.as_dict() for job in definition.cron_jobs],
                 "jobs": [job.as_dict() for job in definition.cron_jobs],
-                "has_access": bool(record.enabled or is_admin),
+                "has_access": bool(has_access),
+                "can_manage": bool(module_admin),
+                "can_run_jobs": bool(_can_run_module_jobs(username, definition.name)),
+                "can_edit_config": bool(_can_edit_module_config(username, definition.name)),
                 "redis_namespace": definition.redis_namespace,
                 "oauth_consumer_mode": definition.oauth_consumer_mode,
             }
@@ -2943,7 +3003,7 @@ def module_registry_item_api(module_name: str):
     if record is None:
         return jsonify({"detail": "Module not found"}), 404
 
-    is_admin = bool(_can_manage_modules(username))
+    is_admin = bool(_can_manage_modules(username) or _can_manage_module(username, module_name))
     if not user_has_module_access(module_name, username, is_maintainer=is_admin):
         return jsonify({"detail": "Forbidden"}), 403
 
@@ -2957,7 +3017,7 @@ def module_registry_toggle_api(module_name: str):
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
-    if not (_can_manage_modules(username)):
+    if not (_can_manage_module(username, module_name)):
         return jsonify({"detail": "Forbidden"}), 403
 
     payload = request.get_json(silent=True) or {}
@@ -2975,7 +3035,7 @@ def module_registry_access_api(module_name: str):
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
-    if not (_can_manage_modules(username)):
+    if not (_can_manage_module(username, module_name)):
         return jsonify({"detail": "Forbidden"}), 403
 
     payload = request.get_json(silent=True) or {}
@@ -3009,7 +3069,7 @@ def module_config_get_api(module_name: str):
     if record is None:
         return jsonify({"detail": "Module not found"}), 404
 
-    is_admin = bool(_can_manage_modules(username))
+    is_admin = bool(_can_manage_modules(username) or _can_manage_module(username, module_name))
     if not user_has_module_access(module_name, username, is_maintainer=is_admin):
         return jsonify({"detail": "Forbidden"}), 403
 
@@ -3021,7 +3081,7 @@ def module_config_put_api(module_name: str):
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
-    if not (_can_manage_modules(username)):
+    if not (_can_edit_module_config(username, module_name)):
         return jsonify({"detail": "Forbidden"}), 403
 
     record = get_module_definition(module_name)
@@ -3074,7 +3134,7 @@ def module_jobs_api(module_name: str):
     if record is None:
         return jsonify({"detail": "Module not found"}), 404
 
-    is_admin = bool(_can_manage_modules(username))
+    is_admin = bool(_can_manage_modules(username) or _can_manage_module(username, module_name))
     if not user_has_module_access(module_name, username, is_maintainer=is_admin):
         return jsonify({"detail": "Forbidden"}), 403
 
@@ -3095,7 +3155,7 @@ def module_job_update_api(module_name: str, job_name: str):
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
-    if not (_can_manage_modules(username)):
+    if not (_can_manage_module(username, module_name)):
         return jsonify({"detail": "Forbidden"}), 403
 
     record = get_module_definition(module_name)
@@ -3145,7 +3205,7 @@ def module_job_run_now_api(module_name: str, job_name: str):
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
-    if not (_can_manage_modules(username)):
+    if not (_can_run_module_jobs(username, module_name)):
         return jsonify({"detail": "Forbidden"}), 403
 
     record = get_module_definition(module_name)
@@ -3188,7 +3248,10 @@ def module_job_run_cancel_api(run_id: int):
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
-    if not (_can_manage_modules(username)):
+    run = get_module_job_run(run_id)
+    if run is None:
+        return jsonify({"detail": "Run not found"}), 404
+    if not (_can_run_module_jobs(username, run["module_name"])):
         return jsonify({"detail": "Forbidden"}), 403
 
     request_module_job_run_cancel(run_id)
@@ -3200,12 +3263,11 @@ def module_job_run_restart_api(run_id: int):
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
-    if not (_can_manage_modules(username)):
-        return jsonify({"detail": "Forbidden"}), 403
-
     run = get_module_job_run(run_id)
     if run is None:
         return jsonify({"detail": "Run not found"}), 404
+    if not (_can_run_module_jobs(username, run["module_name"])):
+        return jsonify({"detail": "Forbidden"}), 403
 
     request_module_job_run_cancel(run_id)
     new_run_id = create_module_job_run(
@@ -3234,7 +3296,7 @@ def module_job_run_report_page(run_id: int):
     if run is None:
         abort(404)
 
-    is_admin = bool(_can_manage_modules(username))
+    is_admin = bool(_can_manage_modules(username) or _can_manage_module(username, run["module_name"]))
     if not user_has_module_access(run["module_name"], username, is_maintainer=is_admin):
         abort(403)
 

@@ -5,6 +5,10 @@ ui = true
 redis_namespace = "template_module"
 title = "Template Module"
 
+# Optional: declare framework rights exposed by this module.
+# Grant these with module-scoped atoms such as module:template_module:run_jobs.
+# rights = ["manage", "run_jobs", "edit_config"]
+
 # For cron-only modules, add:
 # [[cron_jobs]]
 # name = "some-job"

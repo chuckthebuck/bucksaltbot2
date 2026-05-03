@@ -68,6 +68,13 @@ _USER_GRANT_RIGHTS = {
     "edit_module_config",
 }
 
+_MODULE_BUILTIN_RIGHTS = {
+    "access",
+    "manage",
+    "run_jobs",
+    "edit_config",
+}
+
 _USER_GRANT_GROUPS = {
     "basic": {"write"},
     "read_only": set(),
@@ -157,6 +164,7 @@ _INT_CONFIG_KEYS = {
 _JSON_CONFIG_KEYS = {
     "ROLLBACK_CONTROL_JSON",
     "ROLE_GRANTS_JSON",
+    "CHUCKBOT_GROUPS_JSON",
 }
 
 _LEGACY_JSON_CONFIG_KEYS = {
@@ -190,6 +198,27 @@ def _normalize_username(raw_value: str) -> str:
     return cleaned.lower()
 
 
+def _normalize_auto_grant_role_name(raw_value: str) -> str:
+    value = str(raw_value or "").strip().lower().replace(" ", "_")
+    if value in {"commons_admin", "project:commons:sysop"}:
+        return "commons_admin"
+    if value in {"commons_rollbacker", "project:commons:rollbacker"}:
+        return "commons_rollbacker"
+    return value
+
+
+def _is_valid_auto_grant_role(role_name: str) -> bool:
+    role_name = _normalize_auto_grant_role_name(role_name)
+    if role_name in _AUTO_GRANT_ROLE_KEYS:
+        return True
+    parts = role_name.split(":")
+    if len(parts) == 2 and parts[0] == "global" and bool(parts[1]):
+        return True
+    if len(parts) == 3 and parts[0] == "project" and bool(parts[1]) and bool(parts[2]):
+        return True
+    return False
+
+
 def _normalize_grant_atom(atom: str) -> str:
     """Return a lowercase-normalised form of a grant atom.
 
@@ -199,6 +228,28 @@ def _normalize_grant_atom(atom: str) -> str:
     :func:`_expand_user_grants` and :func:`_expand_auto_grants`.
     """
     return str(atom or "").strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def _normalize_module_name(raw_value: str) -> str:
+    return str(raw_value or "").strip().lower().replace("-", "_")
+
+
+def _is_module_right_atom(atom: str) -> bool:
+    parts = _normalize_grant_atom(atom).split(":")
+    return (
+        len(parts) == 3
+        and parts[0] == "module"
+        and bool(parts[1])
+        and bool(parts[2])
+    )
+
+
+def module_right_atom(module_name: str, right: str) -> str:
+    normalized_module = _normalize_module_name(module_name)
+    normalized_right = _normalize_grant_atom(right)
+    if not normalized_module or not normalized_right:
+        return ""
+    return f"module:{normalized_module}:{normalized_right}"
 
 
 def _resolve_grant_atom(atom: str) -> str:
@@ -213,6 +264,61 @@ def _resolve_grant_atom(atom: str) -> str:
         return f"group:{group_name}"
 
     return _LEGACY_RIGHT_ALIASES.get(normalized, normalized)
+
+
+def _configured_user_grant_groups(config: dict | None = None) -> dict[str, set[str]]:
+    groups = {name: set(rights) for name, rights in _USER_GRANT_GROUPS.items()}
+    custom = {}
+    if isinstance(config, dict):
+        custom = config.get("CHUCKBOT_GROUPS_JSON") or {}
+    if not isinstance(custom, dict):
+        return groups
+
+    for raw_group, atoms in custom.items():
+        group_name = _normalize_grant_atom(str(raw_group))
+        if not group_name:
+            continue
+        normalized_atoms = set()
+        for atom in atoms or []:
+            normalized_atom = _resolve_grant_atom(str(atom))
+            if normalized_atom in _USER_GRANT_RIGHTS or _is_module_right_atom(normalized_atom):
+                normalized_atoms.add(normalized_atom)
+        groups[group_name] = normalized_atoms
+    return groups
+
+
+def _normalize_groups_config_input(value, key: str) -> dict:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{key} must be valid JSON") from exc
+
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be an object mapping group name to rights")
+
+    normalized = {}
+    for raw_group, raw_atoms in value.items():
+        group_name = _normalize_grant_atom(str(raw_group))
+        if not group_name:
+            continue
+        if isinstance(raw_atoms, str):
+            atoms = [part.strip() for part in raw_atoms.replace("\n", ",").split(",")]
+        elif isinstance(raw_atoms, list):
+            atoms = [str(item) for item in raw_atoms]
+        else:
+            raise ValueError(f"{key}.{group_name} must be a list or string")
+
+        rights = set()
+        for atom in atoms:
+            normalized_atom = _resolve_grant_atom(atom)
+            if not normalized_atom:
+                continue
+            if normalized_atom not in _USER_GRANT_RIGHTS and not _is_module_right_atom(normalized_atom):
+                raise ValueError(f"Unknown right '{normalized_atom}' for group {group_name}")
+            rights.add(normalized_atom)
+        normalized[group_name] = sorted(rights)
+    return normalized
 
 
 def _normalize_user_grants_map_input(value, key: str) -> dict:
@@ -252,7 +358,9 @@ def _normalize_user_grants_map_input(value, key: str) -> dict:
             raise ValueError(f"{key}.{user} must be a list/string/object")
 
         user_atoms = set()
-        _all_valid_groups = set(_USER_GRANT_GROUPS) | set(_LEGACY_GROUP_ALIASES)
+        _all_valid_groups = (
+            set(_configured_user_grant_groups().keys()) | set(_LEGACY_GROUP_ALIASES)
+        )
         _all_valid_rights = set(_USER_GRANT_RIGHTS) | set(_LEGACY_RIGHT_ALIASES)
         for atom in atoms:
             normalized_atom = _normalize_grant_atom(atom)
@@ -261,7 +369,7 @@ def _normalize_user_grants_map_input(value, key: str) -> dict:
 
             if normalized_atom.startswith("group:"):
                 group_name = normalized_atom.split(":", 1)[1]
-                if group_name not in _all_valid_groups:
+                if not group_name:
                     raise ValueError(f"Unknown grant group '{group_name}' for {user}")
                 user_atoms.add(normalized_atom)
                 continue
@@ -270,7 +378,7 @@ def _normalize_user_grants_map_input(value, key: str) -> dict:
                 user_atoms.add(f"group:{normalized_atom}")
                 continue
 
-            if normalized_atom not in _all_valid_rights:
+            if normalized_atom not in _all_valid_rights and not _is_module_right_atom(normalized_atom):
                 raise ValueError(f"Unknown right '{normalized_atom}' for {user}")
 
             user_atoms.add(normalized_atom)
@@ -296,6 +404,7 @@ def _expand_user_grants(config: dict, username: str) -> set[str]:
     )
     atoms = grants_map.get(user) or []
     expanded = set()
+    groups = _configured_user_grant_groups(config)
 
     for raw_atom in atoms:
         # Resolve legacy aliases at expansion time (atoms are stored as-is).
@@ -305,14 +414,14 @@ def _expand_user_grants(config: dict, username: str) -> set[str]:
 
         if atom.startswith("group:"):
             group_name = atom.split(":", 1)[1]
-            expanded |= _USER_GRANT_GROUPS.get(group_name, set())
+            expanded |= groups.get(group_name, set())
             continue
 
-        if atom in _USER_GRANT_GROUPS:
-            expanded |= _USER_GRANT_GROUPS[atom]
+        if atom in groups:
+            expanded |= groups[atom]
             continue
 
-        if atom in _USER_GRANT_RIGHTS:
+        if atom in _USER_GRANT_RIGHTS or _is_module_right_atom(atom):
             expanded.add(atom)
 
     return expanded
@@ -325,20 +434,29 @@ def _implicit_role_flags(
     if not normalized_username:
         return {role: False for role in _USER_IMPLICIT_FLAGS}
 
-    groups = set(
-        commons_groups
-        if commons_groups is not None
-        else get_user_groups(normalized_username)
-    )
+    groups = set(commons_groups if commons_groups is not None else get_user_groups(normalized_username))
+    global_groups = set(get_user_global_groups(normalized_username))
 
     _router = _r()
     _is_bot_admin = _router.is_bot_admin if _router else is_bot_admin
     _is_maintainer = _router.is_maintainer if _router else is_maintainer
-    return {
+    flags = {
         "authenticated": True,
         "commons_admin": bool("sysop" in groups),
         "commons_rollbacker": bool("rollbacker" in groups),
+        **{f"project:commons:{group}": True for group in groups},
+        **{f"global:{group}": True for group in global_groups},
     }
+    role_map = config.get("ROLE_GRANTS_JSON") or {}
+    if isinstance(role_map, dict):
+        for role in role_map:
+            normalized_role = _normalize_auto_grant_role_name(role)
+            if normalized_role not in flags and _is_valid_auto_grant_role(normalized_role):
+                flags[normalized_role] = _auto_grant_role_enabled(
+                    normalized_username,
+                    normalized_role,
+                )
+    return flags
 
 
 def _normalize_auto_grants_map_input(value, key: str) -> dict:
@@ -358,7 +476,8 @@ def _normalize_auto_grants_map_input(value, key: str) -> dict:
         if not role_name:
             continue
 
-        if role_name not in _AUTO_GRANT_ROLE_KEYS:
+        role_name = _normalize_auto_grant_role_name(role_name)
+        if not _is_valid_auto_grant_role(role_name):
             raise ValueError(f"Unknown auto-grant role '{role_name}'")
 
         atoms = []
@@ -381,7 +500,9 @@ def _normalize_auto_grants_map_input(value, key: str) -> dict:
             raise ValueError(f"{key}.{role_name} must be a list/string/object")
 
         role_atoms = set()
-        _all_valid_groups = set(_USER_GRANT_GROUPS) | set(_LEGACY_GROUP_ALIASES)
+        _all_valid_groups = (
+            set(_configured_user_grant_groups().keys()) | set(_LEGACY_GROUP_ALIASES)
+        )
         _all_valid_rights = set(_USER_GRANT_RIGHTS) | set(_LEGACY_RIGHT_ALIASES)
         for atom in atoms:
             normalized_atom = _normalize_grant_atom(atom)
@@ -390,7 +511,7 @@ def _normalize_auto_grants_map_input(value, key: str) -> dict:
 
             if normalized_atom.startswith("group:"):
                 group_name = normalized_atom.split(":", 1)[1]
-                if group_name not in _all_valid_groups:
+                if not group_name:
                     raise ValueError(
                         f"Unknown grant group '{group_name}' for role {role_name}"
                     )
@@ -401,7 +522,7 @@ def _normalize_auto_grants_map_input(value, key: str) -> dict:
                 role_atoms.add(f"group:{normalized_atom}")
                 continue
 
-            if normalized_atom not in _all_valid_rights:
+            if normalized_atom not in _all_valid_rights and not _is_module_right_atom(normalized_atom):
                 raise ValueError(
                     f"Unknown right '{normalized_atom}' for role {role_name}"
                 )
@@ -418,14 +539,14 @@ def _expand_auto_grants(config: dict, username: str) -> set[str]:
     if not isinstance(role_map, dict):
         return set()
 
-    implicit_flags = _implicit_role_flags(config, username)
     expanded = set()
+    groups = _configured_user_grant_groups(config)
 
-    for role, enabled in implicit_flags.items():
-        if not enabled:
+    for raw_role, role_atoms in role_map.items():
+        role = _normalize_auto_grant_role_name(raw_role)
+        if not _auto_grant_role_enabled(username, role):
             continue
 
-        role_atoms = role_map.get(role) or []
         for raw_atom in role_atoms:
             # Resolve legacy aliases at expansion time.
             atom = _resolve_grant_atom(raw_atom)
@@ -434,14 +555,14 @@ def _expand_auto_grants(config: dict, username: str) -> set[str]:
 
             if atom.startswith("group:"):
                 group_name = atom.split(":", 1)[1]
-                expanded |= _USER_GRANT_GROUPS.get(group_name, set())
+                expanded |= groups.get(group_name, set())
                 continue
 
-            if atom in _USER_GRANT_GROUPS:
-                expanded |= _USER_GRANT_GROUPS[atom]
+            if atom in groups:
+                expanded |= groups[atom]
                 continue
 
-            if atom in _USER_GRANT_RIGHTS:
+            if atom in _USER_GRANT_RIGHTS or _is_module_right_atom(atom):
                 expanded.add(atom)
 
     return expanded
@@ -488,11 +609,18 @@ def _get_user_grants_payload(
         "expanded_rights": expanded_rights,
         "implicit": implicit,
         "commons_groups": sorted(resolved_groups),
+        "global_groups": sorted(get_user_global_groups(normalized_username)),
     }
 
 
 def _parse_user_grants_env(raw_value: str) -> dict:
     if not raw_value:
+        return {}
+
+    try:
+        return _normalize_user_grants_map_input(raw_value, "USER_GRANTS_JSON")
+    except ValueError as exc:
+        app.logger.warning("Invalid USER_GRANTS_JSON env var; ignoring: %s", exc)
         return {}
 
 
@@ -505,19 +633,6 @@ def _parse_role_grants_env(raw_value: str) -> dict:
     except ValueError as exc:
         app.logger.warning("Invalid ROLE_GRANTS_JSON env var; ignoring: %s", exc)
         return {}
-
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError:
-        app.logger.warning("Invalid USER_GRANTS_JSON env var; ignoring.")
-        return {}
-
-    try:
-        return _normalize_user_grants_map_input(parsed, "USER_GRANTS_JSON")
-    except ValueError as exc:
-        app.logger.warning("Invalid USER_GRANTS_JSON env var; ignoring: %s", exc)
-        return {}
-
 
 def _parse_nonnegative_int(value, fallback: int) -> int:
     try:
@@ -590,6 +705,9 @@ def _runtime_authz_defaults() -> dict:
         "RATE_LIMIT_TESTER_JOBS_PER_HOUR": int(_rate_tester),
         "ROLLBACK_CONTROL_JSON": rollback_control,
         "ROLE_GRANTS_JSON": role_grants,
+        "CHUCKBOT_GROUPS_JSON": {
+            name: sorted(rights) for name, rights in _USER_GRANT_GROUPS.items()
+        },
     }
 
 
@@ -632,6 +750,8 @@ def _load_runtime_authz_overrides() -> dict:
             try:
                 if key == "ROLE_GRANTS_JSON":
                     overrides[key] = _normalize_auto_grants_map_input(raw_value, key)
+                elif key == "CHUCKBOT_GROUPS_JSON":
+                    overrides[key] = _normalize_groups_config_input(raw_value, key)
                 else:
                     overrides[key] = _normalize_user_grants_map_input(raw_value, key)
             except ValueError:
@@ -772,6 +892,8 @@ def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
             try:
                 if key == "ROLE_GRANTS_JSON":
                     normalized[key] = _normalize_auto_grants_map_input(value, key)
+                elif key == "CHUCKBOT_GROUPS_JSON":
+                    normalized[key] = _normalize_groups_config_input(value, key)
                 else:
                     normalized[key] = _normalize_user_grants_map_input(value, key)
             except ValueError as exc:
@@ -820,6 +942,126 @@ def get_user_groups(username, force_refresh: bool = False):
 
     _group_cache[username] = {"groups": groups, "ts": now}
     return groups
+
+
+def _project_api_url(project: str) -> str:
+    value = str(project or "").strip().lower()
+    if value in {"commons", "commonswiki"}:
+        return "https://commons.wikimedia.org/w/api.php"
+    if value in {"wikidata", "wikidatawiki"}:
+        return "https://www.wikidata.org/w/api.php"
+    if value in {"meta", "metawiki"}:
+        return "https://meta.wikimedia.org/w/api.php"
+    if "." in value:
+        host = value
+        if not host.endswith(".org"):
+            host = f"{host}.org"
+        return f"https://{host}/w/api.php"
+    if value.endswith("wiki") and len(value) > 4:
+        return f"https://{value[:-4]}.wikipedia.org/w/api.php"
+    return f"https://{value}.wikipedia.org/w/api.php"
+
+
+def get_project_user_groups(
+    username: str,
+    project: str,
+    force_refresh: bool = False,
+):
+    normalized_project = str(project or "").strip().lower()
+    cache_key = f"project:{normalized_project}:{username}"
+    now = time.time()
+
+    cached = _group_cache.get(cache_key)
+    if not force_refresh and cached and (now - cached["ts"] < GROUP_CACHE_TTL):
+        return cached["groups"]
+
+    params = {
+        "action": "query",
+        "list": "users",
+        "ususers": username,
+        "usprop": "groups",
+        "format": "json",
+    }
+
+    try:
+        resp = requests.get(
+            _project_api_url(normalized_project),
+            params=params,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        users = data.get("query", {}).get("users", [])
+        groups = users[0].get("groups", []) if users else []
+    except Exception:
+        app.logger.exception(
+            "Failed to fetch %s groups for %s", normalized_project, username
+        )
+        groups = []
+
+    _group_cache[cache_key] = {"groups": groups, "ts": now}
+    return groups
+
+
+def get_user_global_groups(username, force_refresh: bool = False):
+    cache_key = f"global:{username}"
+    now = time.time()
+
+    cached = _group_cache.get(cache_key)
+    if not force_refresh and cached and (now - cached["ts"] < GROUP_CACHE_TTL):
+        return cached["groups"]
+
+    params = {
+        "action": "query",
+        "list": "users",
+        "ususers": username,
+        "usprop": "globalgroups",
+        "format": "json",
+    }
+
+    try:
+        resp = requests.get(WIKI_API_URL, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        users = data.get("query", {}).get("users", [])
+        groups = users[0].get("globalgroups", []) if users else []
+    except Exception:
+        app.logger.exception("Failed to fetch global groups for %s", username)
+        groups = []
+
+    _group_cache[cache_key] = {"groups": groups, "ts": now}
+    return groups
+
+
+def _auto_grant_role_enabled(username: str, role_name: str) -> bool:
+    normalized_username = _normalize_username(username)
+    role_name = _normalize_auto_grant_role_name(role_name)
+    if not normalized_username:
+        return False
+    if role_name == "authenticated":
+        return True
+    if role_name == "commons_admin":
+        return "sysop" in set(get_user_groups(normalized_username))
+    if role_name == "commons_rollbacker":
+        return "rollbacker" in set(get_user_groups(normalized_username))
+
+    parts = role_name.split(":")
+    if len(parts) == 2 and parts[0] == "global":
+        return parts[1] in set(get_user_global_groups(normalized_username))
+    if len(parts) == 3 and parts[0] == "project":
+        return parts[2] in set(get_project_user_groups(normalized_username, parts[1]))
+    return False
+
+
+def user_has_module_right(username: str, module_name: str, right: str) -> bool:
+    if not username:
+        return False
+    config = _effective_runtime_authz_config()
+    grants = _expand_all_grants(config, username)
+    atom = module_right_atom(module_name, right)
+    if not atom:
+        return False
+    return atom in grants or "manage_modules" in grants
 
 
 def is_bot_admin(username: str) -> bool:

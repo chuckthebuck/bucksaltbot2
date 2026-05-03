@@ -77,6 +77,22 @@ def test_parse_module_definition_accepts_human_readable_handler_job():
     assert job.concurrency_policy == "forbid"
 
 
+def test_parse_module_definition_accepts_module_rights():
+    import router.module_registry as registry
+
+    definition = registry.parse_module_definition(
+        {
+            "name": "four_award",
+            "repo": "https://example.invalid/four-award",
+            "entry_point": "modules.four_award.service:run",
+            "ui": True,
+            "rights": ["manage", "run-jobs", "edit config"],
+        }
+    )
+
+    assert definition.rights == ("edit_config", "manage", "run_jobs")
+
+
 def test_parse_module_definition_rejects_api_only_module():
     import router.module_registry as registry
 
