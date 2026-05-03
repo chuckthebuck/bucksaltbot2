@@ -1047,6 +1047,69 @@ def request_module_job_run_cancel(run_id: int) -> None:
         conn.commit()
 
 
+def request_module_job_runs_cancel(module_name: str) -> list[dict[str, Any]]:
+    """Mark every active run for a module as canceled by an emergency stop."""
+    module_name = str(module_name or "").strip()
+    if not module_name:
+        return []
+
+    active_statuses = ("queued", "launching", "running", "cancel_requested")
+    placeholders = ", ".join(["%s"] * len(active_statuses))
+
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT id, module_name, job_name, status, trigger_type, triggered_by,
+                       k8s_job_name, started_at, finished_at, exit_code, error,
+                       payload_json, result_json, created_at
+                FROM module_job_runs
+                WHERE module_name=%s AND status IN ({placeholders})
+                ORDER BY id DESC
+                """,
+                (module_name, *active_statuses),
+            )
+            rows = cursor.fetchall()
+            cursor.execute(
+                f"""
+                UPDATE module_job_runs
+                SET status=%s,
+                    error=%s,
+                    exit_code=COALESCE(exit_code, %s),
+                    finished_at=CURRENT_TIMESTAMP
+                WHERE module_name=%s AND status IN ({placeholders})
+                """,
+                (
+                    "canceled",
+                    "Module emergency stop requested from web UI",
+                    130,
+                    module_name,
+                    *active_statuses,
+                ),
+            )
+        conn.commit()
+
+    return [
+        {
+            "id": int(row[0]),
+            "module_name": row[1],
+            "job_name": row[2],
+            "status": row[3],
+            "trigger_type": row[4],
+            "triggered_by": row[5],
+            "k8s_job_name": row[6],
+            "started_at": str(row[7]) if row[7] is not None else None,
+            "finished_at": str(row[8]) if row[8] is not None else None,
+            "exit_code": row[9],
+            "error": row[10],
+            "payload": json.loads(row[11] or "{}"),
+            "result": json.loads(row[12] or "{}"),
+            "created_at": str(row[13]) if row[13] is not None else None,
+        }
+        for row in rows
+    ]
+
+
 def get_module_config(module_name: str) -> dict[str, Any]:
     """Return DB-backed non-secret config for a module."""
     module_name = str(module_name or "").strip()

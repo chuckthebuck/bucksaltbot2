@@ -19,7 +19,7 @@
             <div class="module-estop-header">
                 <div>
                     <h2 id="module-estop-heading">Module Emergency Stops</h2>
-                    <p>Disabling a module stops new framework-controlled runs for that module. Toolforge jobs may still need to be reloaded if jobs.yaml changed.</p>
+                    <p>Emergency stops disable the module, cancel active framework runs, and try to delete the matching Toolforge job/pods immediately.</p>
                 </div>
                 <form method="post" action="/modules/estop-all">
                     <button class="module-estop-button module-estop-button--all" type="submit">

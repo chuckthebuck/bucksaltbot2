@@ -83,6 +83,7 @@ from router.module_registry import (  # noqa: F401
     get_module_job_run,
     list_module_job_runs,
     request_module_job_run_cancel,
+    request_module_job_runs_cancel,
     update_module_job_run,
     upsert_module_config,
 )

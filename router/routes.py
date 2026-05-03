@@ -87,6 +87,7 @@ from router.framework_config import (
     oauth_callback_url,
 )
 from jobs_yaml_generator import generate_jobs_yaml_section
+from router.module_estop import emergency_stop_module
 
 
 def _r():
@@ -2847,7 +2848,7 @@ def module_estop_form(module_name: str):
     if get_module_definition(module_name) is None:
         abort(404)
 
-    set_module_enabled(module_name, False)
+    emergency_stop_module(module_name, actor=username)
     return redirect(url_for("index"))
 
 
@@ -2860,7 +2861,7 @@ def module_estop_all_form():
         abort(403)
 
     for record in list_module_definitions():
-        set_module_enabled(record.definition.name, False)
+        emergency_stop_module(record.definition.name, actor=username)
     return redirect(url_for("index"))
 
 
@@ -3026,8 +3027,20 @@ def module_registry_toggle_api(module_name: str):
     if record is None:
         return jsonify({"detail": "Module not found"}), 404
 
-    set_module_enabled(module_name, enabled)
-    return jsonify({"module": module_name, "enabled": bool(enabled)})
+    if enabled:
+        set_module_enabled(module_name, True)
+        return jsonify({"module": module_name, "enabled": True})
+
+    result = emergency_stop_module(module_name, actor=username)
+    return jsonify(
+        {
+            "module": module_name,
+            "enabled": False,
+            "canceled_runs": len(result["canceled_runs"]),
+            "kill_results": result["kill_results"],
+            "module_specific": result["module_specific"],
+        }
+    )
 
 
 @app.route("/api/v1/modules/<path:module_name>/access", methods=["PUT"])
