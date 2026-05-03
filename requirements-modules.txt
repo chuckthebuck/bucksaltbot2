@@ -4,6 +4,4 @@
 # without publishing anything to PyPI or npm. Pin to a tag or commit for
 # production deploys.
 #
-# Example, once module4awardhelper has pyproject.toml packaging:
-# chuck-the-4awardhelper @ git+https://github.com/chuckthebuck/module4awardhelper@main
-
+chuck-the-4awardhelper @ git+https://github.com/chuckthebuck/module4awardhelper@main
