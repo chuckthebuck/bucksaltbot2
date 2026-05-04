@@ -88,7 +88,6 @@ from router.framework_config import (
     WORKER_HEARTBEAT_KEY,
     oauth_callback_url,
 )
-from jobs_yaml_generator import generate_jobs_yaml_section
 from router.module_estop import emergency_stop_module
 
 
@@ -699,6 +698,17 @@ def goto():
         if not (_can_view_modules(username)):
             abort(403)
         return redirect("/modules")
+
+    if tab == "four-award":
+        if not user_has_module_access(
+            "four_award",
+            username,
+            is_maintainer=_can_manage_modules(username)
+            or _can_manage_module(username, "four_award")
+            or _can_run_module_jobs(username, "four_award"),
+        ):
+            abort(403)
+        return redirect("/four-award")
 
     if tab == "jobs-yaml":
         if not (_can_manage_modules(username)):
@@ -3215,6 +3225,155 @@ def module_jobs_api(module_name: str):
     )
 
 
+def _four_award_operator_allowed(username: str | None) -> bool:
+    if not username:
+        return False
+    return bool(
+        user_has_module_access(
+            "four_award",
+            username,
+            is_maintainer=_can_manage_modules(username)
+            or _can_manage_module(username, "four_award")
+            or _can_run_module_jobs(username, "four_award"),
+        )
+    )
+
+
+def _four_award_run_allowed(username: str | None) -> bool:
+    return bool(username and _can_run_module_jobs(username, "four_award"))
+
+
+def _four_award_default_job_name(record) -> str | None:
+    jobs = list(record.definition.cron_jobs)
+    if not jobs:
+        return None
+    for job in jobs:
+        if job.enabled:
+            return job.name
+    return jobs[0].name
+
+
+@app.route("/four-award")
+@app.route("/4award")
+def four_award_runs_page():
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login", referrer=url_for("four_award_runs_page")))
+
+    if not _four_award_operator_allowed(username):
+        abort(403)
+
+    return render_template(
+        "four_award_runs.html",
+        type="four-award",
+        username=username,
+        can_run_four_award=_four_award_run_allowed(username),
+    )
+
+
+@app.route("/api/v1/four-award/runs", methods=["GET"])
+def four_award_runs_api():
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not _four_award_operator_allowed(username):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    record = get_module_definition("four_award")
+    if record is None:
+        return jsonify({"detail": "Chuck the 4awardhelper is not installed"}), 404
+
+    return jsonify(
+        {
+            "module": "four_award",
+            "jobs": list_module_cron_jobs("four_award"),
+            "runs": list_module_job_runs("four_award", limit=50),
+            "can_run": _four_award_run_allowed(username),
+        }
+    )
+
+
+@app.route("/api/v1/four-award/runs/<int:run_id>", methods=["GET"])
+def four_award_run_api(run_id: int):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not _four_award_operator_allowed(username):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    run = get_module_job_run(run_id)
+    if run is None or run.get("module_name") != "four_award":
+        return jsonify({"detail": "Run not found"}), 404
+
+    return jsonify({"run": run})
+
+
+@app.route("/api/v1/four-award/test-runs", methods=["POST"])
+def four_award_test_run_api():
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not _four_award_run_allowed(username):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    record = get_module_definition("four_award")
+    if record is None:
+        return jsonify({"detail": "Chuck the 4awardhelper is not installed"}), 404
+    if not record.enabled:
+        return jsonify({"detail": "Chuck the 4awardhelper is disabled"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    diff = str(payload.get("diff") or "").strip()
+    if not diff:
+        return jsonify({"detail": "Missing required parameter: diff"}), 400
+
+    try:
+        oldid = _extract_oldid(diff)
+    except ValueError as exc:
+        return jsonify({"detail": str(exc)}), 400
+
+    job_name = str(payload.get("job_name") or "").strip()
+    available_jobs = {job.name: job for job in record.definition.cron_jobs}
+    if not job_name:
+        job_name = _four_award_default_job_name(record) or ""
+    if not job_name or job_name not in available_jobs:
+        return jsonify({"detail": "No runnable 4award module job is configured"}), 400
+    if not available_jobs[job_name].enabled:
+        return jsonify({"detail": "Selected 4award job is disabled"}), 403
+
+    run_payload = {
+        "mode": "historical_diff_dry_run",
+        "source": "four_award_live_page",
+        "dry_run": True,
+        "diff": diff,
+        "historical_diff": diff,
+        "oldid": oldid,
+        "publish_dry_run_report": False,
+        "config_overrides": {
+            "dry_run": True,
+            "enabled": True,
+            "publish_dry_run_report": False,
+        },
+    }
+    run_id = create_module_job_run(
+        "four_award",
+        job_name,
+        trigger_type="web_test",
+        triggered_by=username,
+        payload=run_payload,
+    )
+
+    return jsonify(
+        {
+            "module": "four_award",
+            "job": job_name,
+            "run_id": run_id,
+            "status": "queued",
+            "detail": "Historical-diff dry run queued.",
+        }
+    ), 202
+
+
 @app.route(
     "/api/v1/modules/<path:module_name>/jobs/<path:job_name>",
     methods=["PUT"],
@@ -3403,6 +3562,8 @@ def admin_jobs_yaml_preview():
         return jsonify({"detail": "Forbidden"}), 403
 
     try:
+        from jobs_yaml_generator import generate_jobs_yaml_section
+
         yaml_section = generate_jobs_yaml_section()
     except Exception:
         logging.exception("Failed to generate jobs.yaml entries")

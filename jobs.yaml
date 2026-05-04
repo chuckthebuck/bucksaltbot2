@@ -14,7 +14,7 @@
   mount: all
   name: buckbot-module-controller
 - name: chuckbot-status-cron
-  command: bash -c "export NOTDEV=1; export STATUS_UPDATE_MIN_INTERVAL_SECONDS=${STATUS_UPDATE_MIN_INTERVAL_SECONDS:-86400}; cd $HOME && python3 status_updater.py"
+  command: bash -c "export NOTDEV=1; export STATUS_UPDATE_MIN_INTERVAL_SECONDS=${STATUS_UPDATE_MIN_INTERVAL_SECONDS:-86400}; cd /workspace && python3 -m status_updater"
   image: tool-buckbot/tool-buckbot:latest
   schedule: "*/15 * * * *"
   cpu: 0.1

@@ -30,7 +30,7 @@
   {% set current_section = 'jobs' %}
 {% elif type in ['runtime-config', 'documentation'] %}
   {% set current_section = 'config' %}
-{% elif type in ['modules', 'module-run-report'] %}
+{% elif type in ['modules', 'module-run-report', 'four-award'] %}
   {% set current_section = 'modules' %}
 {% elif type == 'jobs-yaml' %}
   {% set current_section = 'jobs-yaml' %}
@@ -115,6 +115,7 @@
       {% elif current_section == 'modules' %}
       {% if nav_can_modules %}
       <a class="subnav-item{% if type == 'modules' %} is-active{% endif %}" href="/goto?tab=modules">Module Management</a>
+      <a class="subnav-item{% if type == 'four-award' %} is-active{% endif %}" href="/goto?tab=four-award">4award Runs</a>
       {% endif %}
       {% endif %}
     </div>

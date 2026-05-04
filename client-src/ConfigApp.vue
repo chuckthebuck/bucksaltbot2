@@ -797,14 +797,10 @@ function normalizeRolePart(value: string): string {
 function addAutoGrantRole(): void {
   persistSelectedAutoGrantRoleChecks();
   const group = normalizeRolePart(newAutoGrantGroup.value);
-  let role = "";
-
-  if (newAutoGrantScope.value === "global") {
-    role = group ? `global:${group}` : "";
-  } else {
-    const project = normalizeRolePart(newAutoGrantProject.value);
-    role = project && group ? `project:${project}:${group}` : "";
-  }
+  const project = normalizeRolePart(newAutoGrantProject.value);
+  const role = newAutoGrantScope.value === "global"
+    ? group ? `global:${group}` : ""
+    : project && group ? `project:${project}:${group}` : "";
 
   if (!role) {
     errorMessage.value = "Enter a project/group or global group before adding an auto-grant role.";

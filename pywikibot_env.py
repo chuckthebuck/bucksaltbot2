@@ -15,16 +15,21 @@ def _desired_user_config(bot_username: str) -> str:
         "family = 'commons'\n"
         "mylang = 'commons'\n"
         f"usernames['commons']['commons'] = '{bot_username}'\n\n"
+        f"usernames['commons']['*'] = '{bot_username}'\n"
+        f"usernames['wikipedia']['en'] = '{bot_username}'\n"
+        f"usernames['wikipedia']['*'] = '{bot_username}'\n\n"
         "if all(\n"
         "    os.getenv(name)\n"
         "    for name in ('CONSUMER_TOKEN', 'CONSUMER_SECRET', 'ACCESS_TOKEN', 'ACCESS_SECRET')\n"
         "):\n"
-        "    authenticate['commons.wikimedia.org'] = (\n"
+        "    _oauth = (\n"
         "        os.getenv('CONSUMER_TOKEN'),\n"
         "        os.getenv('CONSUMER_SECRET'),\n"
         "        os.getenv('ACCESS_TOKEN'),\n"
         "        os.getenv('ACCESS_SECRET'),\n"
         "    )\n"
+        "    authenticate['commons.wikimedia.org'] = _oauth\n"
+        "    authenticate['en.wikipedia.org'] = _oauth\n"
     )
 
 
@@ -46,6 +51,9 @@ def resolve_pywikibot_dir() -> Path:
     for candidate in candidates:
         try:
             candidate.mkdir(parents=True, exist_ok=True)
+            probe = candidate / ".chuckbot-write-test"
+            probe.write_text("", encoding="utf-8")
+            probe.unlink(missing_ok=True)
             return candidate
         except OSError:
             continue
@@ -90,7 +98,11 @@ def ensure_pywikibot_env(
                     "family = 'commons'",
                     "mylang = 'commons'",
                     "usernames['commons']['commons']",
+                    "usernames['commons']['*']",
+                    "usernames['wikipedia']['en']",
+                    "usernames['wikipedia']['*']",
                     "authenticate['commons.wikimedia.org']",
+                    "authenticate['en.wikipedia.org']",
                 )
             )
 

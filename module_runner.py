@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from logger import Logger
+from pywikibot_env import ensure_pywikibot_env
 from router.module_registry import (
     bootstrap_installed_module_definitions,
     bootstrap_module_definitions,
@@ -107,6 +108,7 @@ def run_module_job(
 ) -> int:
     """Run one module job and return a process exit code."""
     os.environ.setdefault("NOTDEV", "1")
+    ensure_pywikibot_env(strict=True)
     _bootstrap_local_registry()
 
     record = get_module_definition(module_name)
@@ -143,15 +145,19 @@ def run_module_job(
 
     try:
         handler = _import_handler(job.handler)
+        run = get_module_job_run(run_id) or {}
+        payload = run.get("payload") or {}
+        config_values = get_module_config(module_name)
+        config_overrides = payload.get("config_overrides")
+        if isinstance(config_overrides, dict):
+            config_values.update(config_overrides)
         ctx = ModuleRunContext(
             module_name=module_name,
             job_name=job_name,
             run_id=run_id,
-            config=_ConfigView(get_module_config(module_name)),
+            config=_ConfigView(config_values),
             logger=logger,
         )
-        run = get_module_job_run(run_id) or {}
-        payload = run.get("payload") or {}
         parameters = inspect.signature(handler).parameters
         if len(parameters) == 0:
             result = handler()

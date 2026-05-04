@@ -747,6 +747,109 @@ body {
     word-break: break-word;
 }
 
+.four-award-page {
+    display: grid;
+    gap: @spacing-100;
+}
+
+.four-award-runner {
+    border: @border-width-base @border-style-base @border-color-subtle;
+    padding: @spacing-100;
+}
+
+.four-award-runner h3,
+.four-award-layout h3,
+.four-award-output h4 {
+    margin-top: 0;
+}
+
+.four-award-form {
+    display: grid;
+    grid-template-columns: minmax( 12rem, 16rem ) minmax( 18rem, 1fr ) auto;
+    gap: @spacing-75;
+    align-items: end;
+}
+
+.four-award-form label {
+    display: grid;
+    gap: @spacing-25;
+}
+
+.four-award-form span {
+    font-weight: @font-weight-bold;
+}
+
+.four-award-layout {
+    display: grid;
+    grid-template-columns: minmax( 0, 1fr ) minmax( 22rem, 0.9fr );
+    gap: @spacing-100;
+    align-items: start;
+}
+
+.four-award-runs {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.four-award-runs th,
+.four-award-runs td {
+    border-bottom: @border-width-base @border-style-base @border-color-subtle;
+    padding: @spacing-50;
+    text-align: left;
+    vertical-align: top;
+}
+
+.four-award-runs tbody tr {
+    cursor: pointer;
+}
+
+.four-award-runs tbody tr.selected {
+    background-color: @background-color-progressive-subtle;
+}
+
+.four-award-output {
+    border: @border-width-base @border-style-base @border-color-subtle;
+    padding: @spacing-100;
+    min-width: 0;
+}
+
+.four-award-output-header {
+    display: flex;
+    justify-content: space-between;
+    gap: @spacing-75;
+    align-items: start;
+}
+
+.four-award-summary {
+    display: grid;
+    grid-template-columns: max-content minmax( 0, 1fr );
+    gap: @spacing-25 @spacing-75;
+}
+
+.four-award-summary dt {
+    font-weight: @font-weight-bold;
+}
+
+.four-award-summary dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.four-award-edit {
+    border-top: @border-width-base @border-style-base @border-color-subtle;
+    padding: @spacing-50 0;
+}
+
+.four-award-edit pre,
+.four-award-report {
+    max-height: 22rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background-color: @background-color-neutral-subtle;
+    padding: @spacing-75;
+}
+
 .runtime-checkbox-row {
     display: grid;
     grid-template-columns: auto minmax( 0, 1fr );

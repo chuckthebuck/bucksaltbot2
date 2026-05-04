@@ -11,17 +11,32 @@ def test_resolve_pywikibot_dir_falls_back_from_unwritable_home(monkeypatch):
     monkeypatch.setenv("HOME", "/data/project/buckbot")
 
     attempted: list[str] = []
+    original_mkdir = pywikibot_env.Path.mkdir
 
     def fake_mkdir(path_obj, parents=False, exist_ok=False):
         attempted.append(str(path_obj))
         if str(path_obj).startswith("/data/project"):
             raise PermissionError("denied")
+        return original_mkdir(path_obj, parents=parents, exist_ok=exist_ok)
 
     with patch("pywikibot_env.Path.mkdir", new=fake_mkdir):
         resolved = pywikibot_env.resolve_pywikibot_dir()
 
-    assert str(resolved) == "/workspace/.pywikibot"
+    assert str(resolved) in {"/workspace/.pywikibot", f"/tmp/.pywikibot-{pywikibot_env.os.getuid()}"}
     assert attempted[0] == "/data/project/buckbot/.pywikibot"
+
+
+def test_generated_pywikibot_config_supports_commons_and_enwiki():
+    import pywikibot_env
+
+    config = pywikibot_env._desired_user_config("Chuckbot")
+
+    assert "usernames['commons']['commons'] = 'Chuckbot'" in config
+    assert "usernames['commons']['*'] = 'Chuckbot'" in config
+    assert "usernames['wikipedia']['en'] = 'Chuckbot'" in config
+    assert "usernames['wikipedia']['*'] = 'Chuckbot'" in config
+    assert "authenticate['commons.wikimedia.org'] = _oauth" in config
+    assert "authenticate['en.wikipedia.org'] = _oauth" in config
 
 
 # ── is_large_job ──────────────────────────────────────────────────────────────

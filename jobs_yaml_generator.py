@@ -7,12 +7,17 @@ add it to the repo, and push to trigger a Toolforge redeploy.
 
 from typing import Any
 
-from router.module_registry import list_module_cron_jobs
-
 
 def _escape_bash_string(s: str) -> str:
     """Escape a string for use in a bash command."""
     return s.replace("'", "'\\''")
+
+
+def list_module_cron_jobs():
+    """Lazy proxy to avoid a router ↔ jobs_yaml_generator import cycle."""
+    from router.module_registry import list_module_cron_jobs as _list_module_cron_jobs
+
+    return _list_module_cron_jobs()
 
 
 def _generate_cron_job_entries() -> list[dict[str, Any]]:
