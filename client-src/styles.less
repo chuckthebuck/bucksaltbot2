@@ -704,6 +704,67 @@ body {
     margin-bottom: @spacing-25;
 }
 
+.auto-role-builder,
+.auto-role-select-row,
+.framework-group-builder,
+.framework-group-select-row {
+    display: grid;
+    grid-template-columns: repeat( 3, minmax( 0, 1fr ) ) auto;
+    gap: @spacing-75;
+    align-items: end;
+    margin-bottom: @spacing-100;
+}
+
+.auto-role-builder label,
+.auto-role-select-row label,
+.framework-group-builder label,
+.framework-group-select-row label {
+    display: flex;
+    flex-direction: column;
+    gap: @spacing-25;
+    min-width: 0;
+}
+
+.auto-role-builder span,
+.auto-role-select-row span,
+.framework-group-builder span,
+.framework-group-select-row span {
+    color: @color-subtle;
+    font-size: @font-size-small;
+    font-weight: @font-weight-bold;
+}
+
+.advanced-config-json {
+    margin-top: @spacing-100;
+}
+
+.advanced-config-json summary {
+    color: @chuck-blue;
+    cursor: pointer;
+    font-weight: @font-weight-bold;
+    margin-bottom: @spacing-50;
+}
+
+.grant-advisories {
+    display: grid;
+    gap: @spacing-50;
+    margin: @spacing-100 0;
+    padding: @spacing-75 @spacing-100;
+    border: @border-width-base @border-style-base #d5a021;
+    border-radius: @border-radius-base;
+    background: #fff8e5;
+    color: #4b3a00;
+}
+
+.grant-advisories li {
+    display: grid;
+    gap: @spacing-25;
+}
+
+.grant-advisories strong {
+    color: #5f4300;
+}
+
 .runtime-config-save {
     margin-top: @spacing-100;
     margin-bottom: @spacing-150;
@@ -716,7 +777,11 @@ body {
     }
 
     .runtime-rights-columns,
-    .runtime-user-picker {
+    .runtime-user-picker,
+    .auto-role-builder,
+    .auto-role-select-row,
+    .framework-group-builder,
+    .framework-group-select-row {
         grid-template-columns: 1fr;
     }
 

@@ -67,10 +67,13 @@ type ImplicitFlagKey =
   | "commons_admin"
   | "commons_rollbacker";
 
-type AutoGrantRoleKey =
-  | "authenticated"
-  | "commons_admin"
-  | "commons_rollbacker";
+type AutoGrantRoleKey = string;
+
+interface GrantAdvisory {
+  key: string;
+  title: string;
+  detail: string;
+}
 
 const userGrantGroupFields: Array<{ key: GrantGroupKey; label: string; help: string }> = [
   { key: "basic", label: "basic", help: "Can submit and manage their own rollback queue jobs." },
@@ -98,6 +101,37 @@ const userGrantGroupFields: Array<{ key: GrantGroupKey; label: string; help: str
   { key: "module_operator", label: "module_operator", help: "Can manage modules and module jobs." },
   { key: "admin", label: "admin", help: "Broad rollback, jobs, and config rights." },
 ];
+
+const builtInFrameworkGroupRights: Record<GrantGroupKey, GrantRightKey[]> = {
+  basic: ["write"],
+  read_only: [],
+  tester: ["write", "view_all", "rollback_diff", "rollback_account", "rollback_batch"],
+  viewer: ["view_all"],
+  rollbacker: ["write", "rollback_diff", "rollback_account"],
+  rollbacker_dry_run: ["write", "rollback_diff", "rollback_account", "rollback_diff_dry_run_only"],
+  batch_runner: ["write", "rollback_batch"],
+  jobs_moderator: ["approve_jobs", "force_dry_run", "cancel_any", "retry_any"],
+  config_editor: ["edit_config"],
+  rights_manager: ["manage_user_grants"],
+  module_operator: ["manage_modules", "run_module_jobs", "edit_module_config"],
+  admin: [
+    "write",
+    "view_all",
+    "rollback_diff",
+    "rollback_account",
+    "rollback_batch",
+    "approve_jobs",
+    "autoapprove_jobs",
+    "force_dry_run",
+    "cancel_any",
+    "retry_any",
+    "edit_config",
+    "manage_user_grants",
+    "manage_modules",
+    "run_module_jobs",
+    "edit_module_config",
+  ],
+};
 
 const userGrantRightSections: Array<{
   title: string;
@@ -160,7 +194,7 @@ const implicitFlagFields: Array<{ key: ImplicitFlagKey; label: string }> = [
   { key: "commons_rollbacker", label: "commons rollbacker" },
 ];
 
-const autoGrantRoleFields: Array<{ key: AutoGrantRoleKey; label: string; help: string }> = [
+const baseAutoGrantRoleFields: Array<{ key: AutoGrantRoleKey; label: string; help: string }> = [
   { key: "authenticated", label: "authenticated", help: "Any logged-in user." },
   { key: "commons_admin", label: "commons admin", help: "Users in Commons sysop group." },
   {
@@ -245,6 +279,13 @@ const commonsGroups = ref<string[]>([]);
 const globalGroups = ref<string[]>([]);
 const commonsGroupsFresh = ref(false);
 const selectedAutoGrantRole = ref<AutoGrantRoleKey>("commons_admin");
+const selectedAutoGrantSource = ref<"built_in" | "project" | "global">("project");
+const selectedAutoGrantProject = ref("commons");
+const newAutoGrantScope = ref<"project" | "global">("project");
+const newAutoGrantProject = ref("commons");
+const newAutoGrantGroup = ref("");
+const selectedFrameworkGroup = ref<GrantGroupKey | string>("basic");
+const newFrameworkGroup = ref("");
 
 const implicitFlags = ref<Record<ImplicitFlagKey, boolean>>({
   authenticated: false,
@@ -294,6 +335,9 @@ const userGroupChecks = ref<Record<GrantGroupKey, boolean>>(emptyGroupChecks());
 const userRightChecks = ref<Record<GrantRightKey, boolean>>(emptyRightChecks());
 const autoGrantGroupChecks = ref<Record<GrantGroupKey, boolean>>(emptyGroupChecks());
 const autoGrantRightChecks = ref<Record<GrantRightKey, boolean>>(emptyRightChecks());
+const autoGrantModuleRightChecks = ref<Record<string, boolean>>({});
+const frameworkGroupRightChecks = ref<Record<GrantRightKey, boolean>>(emptyRightChecks());
+const frameworkGroupModuleRightChecks = ref<Record<string, boolean>>({});
 
 const implicitFlagRows = computed<ToggleFieldRow<ImplicitFlagKey>[]>(() =>
   buildToggleRows(implicitFlagFields)
@@ -304,8 +348,63 @@ const groupRows = computed<ToggleFieldRow<GrantGroupKey>[]>(() =>
 const rightRows = computed<ToggleFieldRow<GrantRightKey>[]>(() =>
   buildSectionedToggleRows(userGrantRightSections)
 );
+const autoGrantRoleFields = computed<Array<{ key: AutoGrantRoleKey; label: string; help: string }>>(() => {
+  const baseByKey = new Map(baseAutoGrantRoleFields.map((field) => [field.key, field]));
+  const roles = new Set<string>([
+    ...baseAutoGrantRoleFields.map((field) => field.key),
+    ...Object.keys(config.value.ROLE_GRANTS_JSON || {}),
+  ]);
+
+  return [...roles].sort().map((role) => {
+    const base = baseByKey.get(role);
+    if (base) return base;
+    return {
+      key: role,
+      label: role,
+      help: autoGrantRoleHelp(role),
+    };
+  });
+});
+
+const autoGrantProjects = computed(() => {
+  const projects = new Set(["commons", "enwiki"]);
+  for (const role of Object.keys(config.value.ROLE_GRANTS_JSON || {})) {
+    const parts = role.split(":");
+    if (parts.length === 3 && parts[0] === "project" && parts[1]) {
+      projects.add(parts[1]);
+    }
+  }
+  const pendingProject = normalizeRolePart(newAutoGrantProject.value);
+  if (pendingProject) {
+    projects.add(pendingProject);
+  }
+  return [...projects].sort();
+});
+
+const filteredAutoGrantRoleFields = computed(() =>
+  autoGrantRoleFields.value.filter((field) => autoGrantRoleMatchesSelection(field.key))
+);
+
+const frameworkGroupFields = computed<Array<{ key: string; label: string; help: string }>>(() => {
+  const configured = Object.keys(config.value.CHUCKBOT_GROUPS_JSON || {});
+  const groups = new Set<string>([
+    ...userGrantGroupFields.map((field) => field.key),
+    ...configured,
+  ]);
+  const baseByKey = new Map(userGrantGroupFields.map((field) => [field.key, field]));
+
+  return [...groups].sort().map((group) => {
+    const base = baseByKey.get(group as GrantGroupKey);
+    return {
+      key: group,
+      label: group,
+      help: base?.help || "Custom framework group.",
+    };
+  });
+});
+
 const autoGrantRoleRows = computed<ToggleFieldRow<AutoGrantRoleKey>[]>(() =>
-  buildToggleRows(autoGrantRoleFields)
+  buildToggleRows(autoGrantRoleFields.value)
 );
 
 const implicitFlagColumns: TableColumn<ToggleFieldRow<ImplicitFlagKey>>[] = [
@@ -385,9 +484,205 @@ function autoGrantRoleRowsForSelected(): ToggleFieldRow<AutoGrantRoleKey>[] {
   return autoGrantRoleRows.value.filter((row) => row.key === selectedAutoGrantRole.value);
 }
 
+function autoGrantRoleMatchesSelection(role: string): boolean {
+  if (selectedAutoGrantSource.value === "built_in") {
+    return role === "authenticated";
+  }
+
+  if (selectedAutoGrantSource.value === "global") {
+    return role.startsWith("global:");
+  }
+
+  const selectedProject = normalizeRolePart(selectedAutoGrantProject.value);
+  if (selectedProject === "commons" && ["commons_admin", "commons_rollbacker"].includes(role)) {
+    return true;
+  }
+  const parts = role.split(":");
+  return parts.length === 3 && parts[0] === "project" && parts[1] === selectedProject;
+}
+
+function selectFirstVisibleAutoGrantRole(): void {
+  const first = filteredAutoGrantRoleFields.value[0]?.key;
+  if (!first) return;
+  selectedAutoGrantRole.value = first;
+  loadSelectedAutoGrantRoleChecks();
+}
+
+function syncSelectedAutoGrantRoleVisibility(): void {
+  if (!filteredAutoGrantRoleFields.value.some((field) => field.key === selectedAutoGrantRole.value)) {
+    selectFirstVisibleAutoGrantRole();
+  }
+}
+
+const autoGrantModuleRightRows = computed(() => {
+  const rows: Array<{ key: string; label: string; help: string; moduleName: string }> = [];
+  for (const [moduleName, rights] of Object.entries(moduleRights.value)) {
+    for (const right of rights) {
+      rows.push({
+        key: `module:${moduleName}:${right}`,
+        label: `module:${moduleName}:${right}`,
+        help: `Grant ${right} for ${moduleName}.`,
+        moduleName,
+      });
+    }
+  }
+  return rows.sort((a, b) => a.key.localeCompare(b.key));
+});
+
+const autoModuleRightColumns: TableColumn<{ key: string; label: string; help: string; moduleName: string }>[] = [
+  toggleLabelColumn("Module right"),
+  toggleHelpColumn("Description"),
+  toggleCheckboxColumn(
+    "Auto-grant",
+    (row) => !!autoGrantModuleRightChecks.value[row.key],
+    (row, checked) => {
+      autoGrantModuleRightChecks.value[row.key] = checked;
+    },
+    () => !canEditConfig.value || saving.value,
+  ),
+];
+
+const frameworkGroupRows = computed<ToggleFieldRow<string>[]>(() =>
+  buildToggleRows(frameworkGroupFields.value)
+);
+
+const frameworkGroupColumns: TableColumn<ToggleFieldRow<string>>[] = [
+  toggleLabelColumn("Group"),
+  toggleHelpColumn("Description"),
+];
+
+const frameworkGroupRightColumns: TableColumn<ToggleFieldRow<GrantRightKey>>[] = [
+  toggleLabelColumn("Right"),
+  toggleHelpColumn("Description"),
+  toggleCheckboxColumn(
+    "Included",
+    (row) => frameworkGroupRightChecks.value[row.key],
+    (row, checked) => {
+      frameworkGroupRightChecks.value[row.key] = checked;
+    },
+    () => !canEditConfig.value || saving.value,
+  ),
+];
+
+const frameworkGroupModuleRightColumns: TableColumn<{ key: string; label: string; help: string; moduleName: string }>[] = [
+  toggleLabelColumn("Module right"),
+  toggleHelpColumn("Description"),
+  toggleCheckboxColumn(
+    "Included",
+    (row) => !!frameworkGroupModuleRightChecks.value[row.key],
+    (row, checked) => {
+      frameworkGroupModuleRightChecks.value[row.key] = checked;
+    },
+    () => !canEditConfig.value || saving.value,
+  ),
+];
+
+function frameworkGroupRowsForSelected(): ToggleFieldRow<string>[] {
+  return frameworkGroupRows.value.filter((row) => row.key === selectedFrameworkGroup.value);
+}
+
+function checkedRights(checks: Record<GrantRightKey, boolean>): Set<GrantRightKey> {
+  return new Set(
+    userGrantRightFields
+      .filter((field) => checks[field.key])
+      .map((field) => field.key),
+  );
+}
+
+function expandCheckedGroups(checks: Record<GrantGroupKey, boolean>): Set<GrantRightKey> {
+  const rights = new Set<GrantRightKey>();
+  for (const field of userGrantGroupFields) {
+    if (!checks[field.key]) continue;
+    for (const right of builtInFrameworkGroupRights[field.key] || []) {
+      rights.add(right);
+    }
+  }
+  return rights;
+}
+
+function collectGrantAdvisories(rights: Set<GrantRightKey>): GrantAdvisory[] {
+  const advisories: GrantAdvisory[] = [];
+  const hasAnyRequestRight = [
+    "write",
+    "rollback_diff",
+    "rollback_account",
+    "rollback_batch",
+  ].some((right) => rights.has(right as GrantRightKey));
+
+  if (hasAnyRequestRight && rights.has("autoapprove_jobs")) {
+    advisories.push({
+      key: "request-autoapprove",
+      title: "Request and auto-approve are combined",
+      detail:
+        "This grant can let the same role submit rollback work and bypass review for eligible requests. Use only for highly trusted operators or test-only flows.",
+    });
+  }
+
+  if (rights.has("view_all") && rights.has("approve_jobs")) {
+    advisories.push({
+      key: "view-approve",
+      title: "View-all and approve are combined",
+      detail:
+        "This is effectively a request moderator role: the user can inspect other users' requests and approve or reject them.",
+    });
+  }
+
+  if (rights.has("approve_jobs") && !rights.has("view_all")) {
+    advisories.push({
+      key: "approve-without-view",
+      title: "Approve without view-all",
+      detail:
+        "Approvers normally need broad request visibility. Without view_all, review screens may be incomplete or confusing.",
+    });
+  }
+
+  if (rights.has("autoapprove_jobs") && rights.has("force_dry_run")) {
+    advisories.push({
+      key: "autoapprove-force-dry-run",
+      title: "Auto-approve with force-dry-run",
+      detail:
+        "Requests may be auto-approved but still forced into dry-run mode. That can be useful for testing, but surprising in production.",
+    });
+  }
+
+  if (rights.has("manage_user_grants") && rights.has("edit_config")) {
+    advisories.push({
+      key: "grant-admin-config",
+      title: "Grant management and config editing are combined",
+      detail:
+        "This role can change both user grants and runtime authorization config, which is close to full access-control administration.",
+    });
+  }
+
+  return advisories;
+}
+
+const selectedUserGrantAdvisories = computed(() => {
+  const rights = checkedRights(userRightChecks.value);
+  for (const right of expandCheckedGroups(userGroupChecks.value)) {
+    rights.add(right);
+  }
+  return collectGrantAdvisories(rights);
+});
+
+const selectedAutoGrantAdvisories = computed(() => {
+  const rights = checkedRights(autoGrantRightChecks.value);
+  for (const right of expandCheckedGroups(autoGrantGroupChecks.value)) {
+    rights.add(right);
+  }
+  return collectGrantAdvisories(rights);
+});
+
+const selectedFrameworkGroupAdvisories = computed(() =>
+  collectGrantAdvisories(checkedRights(frameworkGroupRightChecks.value))
+);
+
 function clearAutoGrantChecks(): void {
   autoGrantGroupChecks.value = emptyGroupChecks();
   autoGrantRightChecks.value = emptyRightChecks();
+  autoGrantModuleRightChecks.value = Object.fromEntries(
+    autoGrantModuleRightRows.value.map((row) => [row.key, false]),
+  );
 }
 
 function persistSelectedAutoGrantRoleChecks(): void {
@@ -403,6 +698,12 @@ function persistSelectedAutoGrantRoleChecks(): void {
   for (const field of userGrantRightFields) {
     if (autoGrantRightChecks.value[field.key]) {
       atoms.push(field.key);
+    }
+  }
+
+  for (const [atom, checked] of Object.entries(autoGrantModuleRightChecks.value)) {
+    if (checked) {
+      atoms.push(atom);
     }
   }
 
@@ -436,6 +737,11 @@ function loadSelectedAutoGrantRoleChecks(): void {
 
     if (normalized in autoGrantRightChecks.value) {
       autoGrantRightChecks.value[normalized as GrantRightKey] = true;
+      continue;
+    }
+
+    if (normalized.startsWith("module:")) {
+      autoGrantModuleRightChecks.value[normalized] = true;
     }
   }
 }
@@ -446,6 +752,182 @@ function onSelectedAutoGrantRoleChange(event: Event): void {
   if (!target) return;
   selectedAutoGrantRole.value = target.value as AutoGrantRoleKey;
   loadSelectedAutoGrantRoleChecks();
+}
+
+function onSelectedAutoGrantSourceChange(): void {
+  persistSelectedAutoGrantRoleChecks();
+  syncSelectedAutoGrantRoleVisibility();
+}
+
+function onSelectedAutoGrantProjectChange(): void {
+  persistSelectedAutoGrantRoleChecks();
+  syncSelectedAutoGrantRoleVisibility();
+}
+
+function autoGrantRoleHelp(role: string): string {
+  if (role === "authenticated") return "Any logged-in user.";
+  if (role === "commons_admin") return "Users in Commons sysop group.";
+  if (role === "commons_rollbacker") return "Users in Commons rollbacker group.";
+  if (role.startsWith("project:")) {
+    const [, project, group] = role.split(":");
+    return `Users in ${group || "this group"} on ${project || "this project"}.`;
+  }
+  if (role.startsWith("global:")) {
+    return `Users in the global ${role.slice("global:".length)} group.`;
+  }
+  return "Custom auto-grant role.";
+}
+
+function normalizeRolePart(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function addAutoGrantRole(): void {
+  persistSelectedAutoGrantRoleChecks();
+  const group = normalizeRolePart(newAutoGrantGroup.value);
+  let role = "";
+
+  if (newAutoGrantScope.value === "global") {
+    role = group ? `global:${group}` : "";
+  } else {
+    const project = normalizeRolePart(newAutoGrantProject.value);
+    role = project && group ? `project:${project}:${group}` : "";
+  }
+
+  if (!role) {
+    errorMessage.value = "Enter a project/group or global group before adding an auto-grant role.";
+    successMessage.value = "";
+    return;
+  }
+
+  config.value.ROLE_GRANTS_JSON = {
+    ...(config.value.ROLE_GRANTS_JSON || {}),
+    [role]: config.value.ROLE_GRANTS_JSON?.[role] || [],
+  };
+  autoGrantsJsonText.value = JSON.stringify(config.value.ROLE_GRANTS_JSON, null, 2);
+  selectedAutoGrantSource.value = newAutoGrantScope.value;
+  if (newAutoGrantScope.value === "project") {
+    selectedAutoGrantProject.value = role.split(":")[1] || newAutoGrantProject.value;
+  }
+  selectedAutoGrantRole.value = role;
+  newAutoGrantGroup.value = "";
+  loadSelectedAutoGrantRoleChecks();
+  errorMessage.value = "";
+  successMessage.value = `Added auto-grant role ${role}.`;
+}
+
+function removeSelectedAutoGrantRole(): void {
+  const role = selectedAutoGrantRole.value;
+  const next = { ...(config.value.ROLE_GRANTS_JSON || {}) };
+  delete next[role];
+  config.value.ROLE_GRANTS_JSON = next;
+  autoGrantsJsonText.value = JSON.stringify(next, null, 2);
+  syncSelectedAutoGrantRoleVisibility();
+}
+
+function normalizeFrameworkGroupName(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function clearFrameworkGroupChecks(): void {
+  frameworkGroupRightChecks.value = emptyRightChecks();
+  frameworkGroupModuleRightChecks.value = Object.fromEntries(
+    autoGrantModuleRightRows.value.map((row) => [row.key, false]),
+  );
+}
+
+function persistSelectedFrameworkGroupChecks(): void {
+  const group = normalizeFrameworkGroupName(String(selectedFrameworkGroup.value));
+  if (!group) return;
+
+  const atoms: string[] = [];
+  for (const field of userGrantRightFields) {
+    if (frameworkGroupRightChecks.value[field.key]) {
+      atoms.push(field.key);
+    }
+  }
+  for (const [atom, checked] of Object.entries(frameworkGroupModuleRightChecks.value)) {
+    if (checked) {
+      atoms.push(atom);
+    }
+  }
+
+  config.value.CHUCKBOT_GROUPS_JSON = {
+    ...(config.value.CHUCKBOT_GROUPS_JSON || {}),
+    [group]: [...new Set(atoms)].sort(),
+  };
+  groupsJsonText.value = JSON.stringify(config.value.CHUCKBOT_GROUPS_JSON, null, 2);
+}
+
+function loadSelectedFrameworkGroupChecks(): void {
+  clearFrameworkGroupChecks();
+  const group = normalizeFrameworkGroupName(String(selectedFrameworkGroup.value));
+  const hasOverride = Object.prototype.hasOwnProperty.call(
+    config.value.CHUCKBOT_GROUPS_JSON || {},
+    group,
+  );
+  const atoms = hasOverride
+    ? config.value.CHUCKBOT_GROUPS_JSON?.[group] || []
+    : builtInFrameworkGroupRights[group as GrantGroupKey] || [];
+
+  for (const atom of atoms) {
+    const normalized = String(atom || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+    if (!normalized) continue;
+
+    if (normalized in frameworkGroupRightChecks.value) {
+      frameworkGroupRightChecks.value[normalized as GrantRightKey] = true;
+      continue;
+    }
+
+    if (normalized.startsWith("module:")) {
+      frameworkGroupModuleRightChecks.value[normalized] = true;
+    }
+  }
+}
+
+function onSelectedFrameworkGroupChange(event: Event): void {
+  persistSelectedFrameworkGroupChecks();
+  const target = event.target as HTMLSelectElement | null;
+  if (!target) return;
+  selectedFrameworkGroup.value = target.value;
+  loadSelectedFrameworkGroupChecks();
+}
+
+function addFrameworkGroup(): void {
+  persistSelectedFrameworkGroupChecks();
+  const group = normalizeFrameworkGroupName(newFrameworkGroup.value);
+  if (!group) {
+    errorMessage.value = "Enter a framework group name before adding it.";
+    successMessage.value = "";
+    return;
+  }
+
+  config.value.CHUCKBOT_GROUPS_JSON = {
+    ...(config.value.CHUCKBOT_GROUPS_JSON || {}),
+    [group]: config.value.CHUCKBOT_GROUPS_JSON?.[group] || [],
+  };
+  groupsJsonText.value = JSON.stringify(config.value.CHUCKBOT_GROUPS_JSON, null, 2);
+  selectedFrameworkGroup.value = group;
+  newFrameworkGroup.value = "";
+  loadSelectedFrameworkGroupChecks();
+  errorMessage.value = "";
+  successMessage.value = `Added framework group ${group}.`;
+}
+
+function removeSelectedFrameworkGroup(): void {
+  const group = normalizeFrameworkGroupName(String(selectedFrameworkGroup.value));
+  if (userGrantGroupFields.some((field) => field.key === group)) {
+    errorMessage.value = "Built-in framework groups cannot be removed, but you can edit their included rights.";
+    successMessage.value = "";
+    return;
+  }
+
+  const next = { ...(config.value.CHUCKBOT_GROUPS_JSON || {}) };
+  delete next[group];
+  config.value.CHUCKBOT_GROUPS_JSON = next;
+  groupsJsonText.value = JSON.stringify(next, null, 2);
+  selectedFrameworkGroup.value = frameworkGroupFields.value[0]?.key || "basic";
+  loadSelectedFrameworkGroupChecks();
 }
 
 function onNumberInput(key: NumberConfigKey, event: Event): void {
@@ -617,6 +1099,7 @@ function applyServerConfig(nextConfig: RuntimeAuthzConfig): void {
   groupsJsonText.value = JSON.stringify(config.value.CHUCKBOT_GROUPS_JSON || {}, null, 2);
   autoGrantsJsonText.value = JSON.stringify(config.value.ROLE_GRANTS_JSON || {}, null, 2);
   loadSelectedAutoGrantRoleChecks();
+  loadSelectedFrameworkGroupChecks();
 }
 
 function parseJsonObjectText(text: string, label: string): Record<string, string[]> {
@@ -653,6 +1136,8 @@ async function loadConfig(): Promise<void> {
     canEditConfig.value = !!response.can_edit;
     canManageUserGrants.value = !!response.can_manage_user_grants;
     moduleRights.value = response.module_rights || {};
+    loadSelectedAutoGrantRoleChecks();
+    loadSelectedFrameworkGroupChecks();
   } catch (err) {
     errorMessage.value = err instanceof Error ? err.message : "Failed to load config";
   } finally {
@@ -671,6 +1156,8 @@ async function saveConfig(): Promise<void> {
     const parsedUserGrants = parseUserGrantsJsonText();
     config.value.ROLLBACK_CONTROL_JSON = parsedUserGrants;
     persistSelectedAutoGrantRoleChecks();
+    config.value.CHUCKBOT_GROUPS_JSON = parseJsonObjectText(groupsJsonText.value, "Chuckbot groups JSON");
+    persistSelectedFrameworkGroupChecks();
     config.value.CHUCKBOT_GROUPS_JSON = parseJsonObjectText(
       groupsJsonText.value,
       "Chuckbot groups JSON",
@@ -783,6 +1270,13 @@ onMounted(() => {
             table-class="runtime-rights-table"
           />
 
+          <ul v-if="selectedUserGrantAdvisories.length" class="grant-advisories">
+            <li v-for="advisory in selectedUserGrantAdvisories" :key="advisory.key">
+              <strong>{{ advisory.title }}</strong>
+              <span>{{ advisory.detail }}</span>
+            </li>
+          </ul>
+
           <label class="runtime-reason-label">Reason</label>
           <input
             v-model="userGrantReason"
@@ -824,24 +1318,99 @@ onMounted(() => {
       <section class="runtime-config-card">
         <h3>Auto grants by implicit role</h3>
         <p class="runtime-config-help">
-          Configure grants automatically based on implicit roles.
-          Roles can be <code>authenticated</code>, <code>project:commons:sysop</code>,
-          <code>project:enwiki:rollbacker</code>, or <code>global:global-sysop</code>.
+          Configure grants automatically from login status, project groups, or global groups.
+          Add roles here, then toggle framework groups and module rights below.
         </p>
 
-        <label class="runtime-reason-label" for="auto-grant-role-select">Role</label>
-        <select
-          id="auto-grant-role-select"
-          :value="selectedAutoGrantRole"
-          :disabled="!canEditConfig || saving"
-          @change="onSelectedAutoGrantRoleChange"
-        >
-          <option v-for="role in autoGrantRoleFields" :key="role.key" :value="role.key">
-            {{ role.label }}
-          </option>
-        </select>
+        <div class="auto-role-builder">
+          <label>
+            <span>Source</span>
+            <select v-model="newAutoGrantScope" :disabled="!canEditConfig || saving">
+              <option value="project">Project group</option>
+              <option value="global">Global group</option>
+            </select>
+          </label>
+          <label v-if="newAutoGrantScope === 'project'">
+            <span>Project</span>
+            <input
+              v-model="newAutoGrantProject"
+              :disabled="!canEditConfig || saving"
+              placeholder="enwiki"
+              type="text"
+            >
+          </label>
+          <label>
+            <span>Group</span>
+            <input
+              v-model="newAutoGrantGroup"
+              :disabled="!canEditConfig || saving"
+              placeholder="rollbacker"
+              type="text"
+              @keyup.enter="addAutoGrantRole"
+            >
+          </label>
+          <CdxButton
+            type="button"
+            :disabled="!canEditConfig || saving"
+            @click="addAutoGrantRole"
+          >
+            Add role
+          </CdxButton>
+        </div>
+
+        <div class="auto-role-select-row">
+          <label>
+            <span>Role source</span>
+            <select
+              v-model="selectedAutoGrantSource"
+              :disabled="!canEditConfig || saving"
+              @change="onSelectedAutoGrantSourceChange"
+            >
+              <option value="project">Project group</option>
+              <option value="global">Global group</option>
+              <option value="built_in">Authenticated</option>
+            </select>
+          </label>
+          <label v-if="selectedAutoGrantSource === 'project'">
+            <span>Wiki</span>
+            <select
+              v-model="selectedAutoGrantProject"
+              :disabled="!canEditConfig || saving"
+              @change="onSelectedAutoGrantProjectChange"
+            >
+              <option v-for="project in autoGrantProjects" :key="project" :value="project">
+                {{ project }}
+              </option>
+            </select>
+          </label>
+          <label for="auto-grant-role-select">
+            <span>Role</span>
+          <select
+            id="auto-grant-role-select"
+            :value="selectedAutoGrantRole"
+            :disabled="!canEditConfig || saving"
+            @change="onSelectedAutoGrantRoleChange"
+          >
+            <option v-for="role in filteredAutoGrantRoleFields" :key="role.key" :value="role.key">
+              {{ role.label }}
+            </option>
+          </select>
+          </label>
+          <CdxButton
+            type="button"
+            weight="quiet"
+            :disabled="!canEditConfig || saving || ['authenticated', 'commons_admin', 'commons_rollbacker'].includes(selectedAutoGrantRole)"
+            @click="removeSelectedAutoGrantRole"
+          >
+            Remove role
+          </CdxButton>
+        </div>
+        <p v-if="filteredAutoGrantRoleFields.length === 0" class="runtime-config-help">
+          No auto-grant roles exist for this source yet. Add one above first.
+        </p>
 
         <UnifiedTable
+          v-if="filteredAutoGrantRoleFields.length > 0"
           :rows="autoGrantRoleRowsForSelected()"
           :columns="autoGrantRoleColumns"
           row-key="key"
@@ -856,33 +1425,141 @@ onMounted(() => {
           table-class="runtime-rights-table"
         />
 
-        <h4>Auto grants JSON</h4>
-        <p class="runtime-config-help">
-          Use this for project/global roles or module-specific rights such as
-          <code>module:four_award:manage</code>, <code>module:four_award:run_jobs</code>,
-          and <code>module:four_award:edit_config</code>.
-        </p>
+        <h4>Auto-granted rights</h4>
+        <UnifiedTable
+          :rows="rightRows"
+          :columns="autoRightColumns"
+          row-key="key"
+          table-class="runtime-rights-table"
+        />
+
+        <h4>Auto-granted module rights</h4>
+        <div v-if="autoGrantModuleRightRows.length === 0" class="runtime-config-help">
+          No modules currently declare rights.
+        </div>
+        <UnifiedTable
+          v-else
+          :rows="autoGrantModuleRightRows"
+          :columns="autoModuleRightColumns"
+          row-key="key"
+          table-class="runtime-rights-table"
+        />
+
+        <ul v-if="selectedAutoGrantAdvisories.length" class="grant-advisories">
+          <li v-for="advisory in selectedAutoGrantAdvisories" :key="advisory.key">
+            <strong>{{ advisory.title }}</strong>
+            <span>{{ advisory.detail }}</span>
+          </li>
+        </ul>
+
+        <details class="advanced-config-json">
+          <summary>Advanced auto grants JSON</summary>
+          <p class="runtime-config-help">
+            The form above writes this JSON for you. You can still use this for bulk edits.
+          </p>
         <textarea
           v-model="autoGrantsJsonText"
           :disabled="!canEditConfig"
           rows="8"
         />
+        </details>
       </section>
 
       <section class="runtime-config-card">
         <h3>Chuckbot framework groups</h3>
         <p class="runtime-config-help">
-          Edit framework groups without changing code. Group values are rights atoms;
-          module-scoped atoms are <code>module:&lt;module&gt;:access</code>,
-          <code>module:&lt;module&gt;:manage</code>,
-          <code>module:&lt;module&gt;:run_jobs</code>, and
-          <code>module:&lt;module&gt;:edit_config</code>.
+          Edit framework groups without changing code. These groups are what user
+          grants and auto grants attach to.
         </p>
-        <textarea
-          v-model="groupsJsonText"
-          :disabled="!canEditConfig"
-          rows="10"
+
+        <div class="framework-group-builder">
+          <label>
+            <span>New group</span>
+            <input
+              v-model="newFrameworkGroup"
+              :disabled="!canEditConfig || saving"
+              placeholder="four_award_operator"
+              type="text"
+              @keyup.enter="addFrameworkGroup"
+            >
+          </label>
+          <CdxButton
+            type="button"
+            :disabled="!canEditConfig || saving"
+            @click="addFrameworkGroup"
+          >
+            Add group
+          </CdxButton>
+        </div>
+
+        <div class="framework-group-select-row">
+          <label>
+            <span>Group</span>
+            <select
+              :value="selectedFrameworkGroup"
+              :disabled="!canEditConfig || saving"
+              @change="onSelectedFrameworkGroupChange"
+            >
+              <option v-for="group in frameworkGroupFields" :key="group.key" :value="group.key">
+                {{ group.label }}
+              </option>
+            </select>
+          </label>
+          <CdxButton
+            type="button"
+            weight="quiet"
+            :disabled="!canEditConfig || saving || userGrantGroupFields.some((field) => field.key === selectedFrameworkGroup)"
+            @click="removeSelectedFrameworkGroup"
+          >
+            Remove group
+          </CdxButton>
+        </div>
+
+        <UnifiedTable
+          :rows="frameworkGroupRowsForSelected()"
+          :columns="frameworkGroupColumns"
+          row-key="key"
+          table-class="runtime-rights-table"
         />
+
+        <h4>Included rights</h4>
+        <UnifiedTable
+          :rows="rightRows"
+          :columns="frameworkGroupRightColumns"
+          row-key="key"
+          table-class="runtime-rights-table"
+        />
+
+        <h4>Included module rights</h4>
+        <div v-if="autoGrantModuleRightRows.length === 0" class="runtime-config-help">
+          No modules currently declare rights.
+        </div>
+        <UnifiedTable
+          v-else
+          :rows="autoGrantModuleRightRows"
+          :columns="frameworkGroupModuleRightColumns"
+          row-key="key"
+          table-class="runtime-rights-table"
+        />
+
+        <ul v-if="selectedFrameworkGroupAdvisories.length" class="grant-advisories">
+          <li v-for="advisory in selectedFrameworkGroupAdvisories" :key="advisory.key">
+            <strong>{{ advisory.title }}</strong>
+            <span>{{ advisory.detail }}</span>
+          </li>
+        </ul>
+
+        <details class="advanced-config-json">
+          <summary>Advanced framework groups JSON</summary>
+          <p class="runtime-config-help">
+            The group editor above writes this JSON for you. You can still use this for bulk edits.
+          </p>
+          <textarea
+            v-model="groupsJsonText"
+            :disabled="!canEditConfig"
+            rows="10"
+          />
+        </details>
       </section>
 
       <section class="runtime-config-card">
