@@ -249,6 +249,8 @@ const successMessage = ref("");
 const canEditConfig = ref(initialProps.can_edit_config);
 const canManageUserGrants = ref(initialProps.can_edit_config);
 const moduleRights = ref<Record<string, string[]>>({});
+const projectGroupOptions = ref<Record<string, string[]>>({});
+const globalGroupOptions = ref<string[]>([]);
 
 const config = ref<RuntimeAuthzConfig>({
   ROLLBACK_CONTROL_JSON: {},
@@ -276,6 +278,7 @@ const userGrantSaving = ref(false);
 const userGrantRefreshing = ref(false);
 const userGrantReason = ref("");
 const commonsGroups = ref<string[]>([]);
+const projectGroups = ref<Record<string, string[]>>({});
 const globalGroups = ref<string[]>([]);
 const commonsGroupsFresh = ref(false);
 const selectedAutoGrantRole = ref<AutoGrantRoleKey>("commons_admin");
@@ -367,7 +370,7 @@ const autoGrantRoleFields = computed<Array<{ key: AutoGrantRoleKey; label: strin
 });
 
 const autoGrantProjects = computed(() => {
-  const projects = new Set(["commons", "enwiki"]);
+  const projects = new Set(["commons", "enwiki", ...Object.keys(projectGroupOptions.value)]);
   for (const role of Object.keys(config.value.ROLE_GRANTS_JSON || {})) {
     const parts = role.split(":");
     if (parts.length === 3 && parts[0] === "project" && parts[1]) {
@@ -379,6 +382,14 @@ const autoGrantProjects = computed(() => {
     projects.add(pendingProject);
   }
   return [...projects].sort();
+});
+
+const newAutoGrantGroupOptions = computed(() => {
+  if (newAutoGrantScope.value === "global") {
+    return globalGroupOptions.value;
+  }
+  const project = normalizeRolePart(newAutoGrantProject.value);
+  return projectGroupOptions.value[project] || [];
 });
 
 const filteredAutoGrantRoleFields = computed(() =>
@@ -977,6 +988,7 @@ function applyUserGrantPayload(payload: {
   implicit: Record<string, boolean>;
   atoms: string[];
   commons_groups?: string[];
+  project_groups?: Record<string, string[]>;
   global_groups?: string[];
   commons_groups_refreshed?: boolean;
 }): void {
@@ -1001,6 +1013,7 @@ function applyUserGrantPayload(payload: {
   }
 
   commonsGroups.value = [...(payload.commons_groups || [])];
+  projectGroups.value = { ...(payload.project_groups || {}) };
   globalGroups.value = [...(payload.global_groups || [])];
   commonsGroupsFresh.value = !!payload.commons_groups_refreshed;
 
@@ -1136,6 +1149,8 @@ async function loadConfig(): Promise<void> {
     canEditConfig.value = !!response.can_edit;
     canManageUserGrants.value = !!response.can_manage_user_grants;
     moduleRights.value = response.module_rights || {};
+    projectGroupOptions.value = response.project_group_options || {};
+    globalGroupOptions.value = response.global_group_options || [];
     loadSelectedAutoGrantRoleChecks();
     loadSelectedFrameworkGroupChecks();
   } catch (err) {
@@ -1243,10 +1258,15 @@ onMounted(() => {
       <div v-if="userGrantLoaded" class="runtime-rights-columns">
         <div>
           <h4>Project groups (live)</h4>
-          <p class="runtime-config-help">
-            {{ commonsGroups.length ? commonsGroups.join(", ") : "No explicit project groups found." }}
-            <span v-if="commonsGroupsFresh"> (freshly queried)</span>
-          </p>
+          <dl class="project-groups-list">
+            <template v-for="(groups, project) in projectGroups" :key="project">
+              <dt>{{ project }}</dt>
+              <dd>
+                {{ groups.length ? groups.join(", ") : "No explicit project groups found." }}
+                <span v-if="project === 'commons' && commonsGroupsFresh"> (freshly queried)</span>
+              </dd>
+            </template>
+          </dl>
           <h4>Global groups (live)</h4>
           <p class="runtime-config-help">
             {{ globalGroups.length ? globalGroups.join(", ") : "No global groups found." }}
@@ -1318,8 +1338,9 @@ onMounted(() => {
       <section class="runtime-config-card">
         <h3>Auto grants by implicit role</h3>
         <p class="runtime-config-help">
-          Configure grants automatically from login status, project groups, or global groups.
-          Add roles here, then toggle framework groups and module rights below.
+          Configure eligibility rules from login status, project groups, or global
+          groups. This does not change anyone's wiki userrights; it only says who
+          receives Chuckbot framework permissions.
         </p>
 
         <div class="auto-role-builder">
@@ -1331,20 +1352,33 @@ onMounted(() => {
             </select>
           </label>
           <label v-if="newAutoGrantScope === 'project'">
-            <span>Project</span>
-            <input
+            <span>Wiki</span>
+            <select
               v-model="newAutoGrantProject"
               :disabled="!canEditConfig || saving"
-              placeholder="enwiki"
-              type="text"
             >
+              <option v-for="project in autoGrantProjects" :key="project" :value="project">
+                {{ project }}
+              </option>
+            </select>
           </label>
           <label>
-            <span>Group</span>
-            <input
+            <span>Existing wiki group</span>
+            <select
+              v-if="newAutoGrantGroupOptions.length > 0"
               v-model="newAutoGrantGroup"
               :disabled="!canEditConfig || saving"
-              placeholder="rollbacker"
+            >
+              <option value="">Select a group</option>
+              <option v-for="group in newAutoGrantGroupOptions" :key="group" :value="group">
+                {{ group }}
+              </option>
+            </select>
+            <input
+              v-else
+              v-model="newAutoGrantGroup"
+              :disabled="!canEditConfig || saving"
+              placeholder="group name"
               type="text"
               @keyup.enter="addAutoGrantRole"
             >
@@ -1417,7 +1451,7 @@ onMounted(() => {
           table-class="runtime-rights-table"
         />
 
-        <h4>Auto-granted groups</h4>
+        <h4>Framework groups assigned by this rule</h4>
         <UnifiedTable
           :rows="groupRows"
           :columns="autoGroupColumns"
@@ -1425,7 +1459,7 @@ onMounted(() => {
           table-class="runtime-rights-table"
         />
 
-        <h4>Auto-granted rights</h4>
+        <h4>Framework rights assigned by this rule</h4>
         <UnifiedTable
           :rows="rightRows"
           :columns="autoRightColumns"
@@ -1433,7 +1467,7 @@ onMounted(() => {
           table-class="runtime-rights-table"
         />
 
-        <h4>Auto-granted module rights</h4>
+        <h4>Module rights assigned by this rule</h4>
         <div v-if="autoGrantModuleRightRows.length === 0" class="runtime-config-help">
           No modules currently declare rights.
         </div>

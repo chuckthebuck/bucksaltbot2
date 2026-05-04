@@ -680,6 +680,26 @@ body {
     margin-bottom: @spacing-50;
 }
 
+.project-groups-list {
+    display: grid;
+    grid-template-columns: max-content minmax( 0, 1fr );
+    gap: @spacing-25 @spacing-75;
+    margin: 0 0 @spacing-75;
+    color: @color-subtle;
+    font-size: @font-size-small;
+}
+
+.project-groups-list dt {
+    font-weight: @font-weight-bold;
+    color: @color-base;
+}
+
+.project-groups-list dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
 .runtime-checkbox-row {
     display: grid;
     grid-template-columns: auto minmax( 0, 1fr );

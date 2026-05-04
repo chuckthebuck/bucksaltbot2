@@ -68,6 +68,8 @@ export interface RuntimeAuthzResponse {
   grant_groups?: string[];
   grant_rights?: string[];
   auto_grant_roles?: string[];
+  project_group_options?: Record<string, string[]>;
+  global_group_options?: string[];
   module_rights?: Record<string, string[]>;
 }
 
@@ -81,6 +83,7 @@ export interface RuntimeUserGrantsResponse {
   expanded_rights: string[];
   implicit: Record<string, boolean>;
   commons_groups?: string[];
+  project_groups?: Record<string, string[]>;
   global_groups?: string[];
   commons_groups_refreshed?: boolean;
   implicit_flag_order?: string[];

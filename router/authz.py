@@ -195,7 +195,9 @@ def _normalize_username(raw_value: str) -> str:
         cleaned = cleaned[1:-1].strip()
 
     cleaned = " ".join(cleaned.replace("_", " ").split())
-    return cleaned.lower()
+    if not cleaned:
+        return ""
+    return cleaned[0].upper() + cleaned[1:]
 
 
 def _normalize_auto_grant_role_name(raw_value: str) -> str:
@@ -599,6 +601,21 @@ def _get_user_grants_payload(
     implicit = _implicit_role_flags(
         config, normalized_username, commons_groups=resolved_groups
     )
+    role_map = config.get("ROLE_GRANTS_JSON") or {}
+    projects = {"commons"}
+    if isinstance(role_map, dict):
+        for role in role_map:
+            parts = str(role or "").split(":")
+            if len(parts) == 3 and parts[0] == "project" and parts[1]:
+                projects.add(parts[1])
+    project_groups = {
+        project: sorted(
+            resolved_groups
+            if project == "commons"
+            else set(get_project_user_groups(normalized_username, project))
+        )
+        for project in sorted(projects)
+    }
 
     return {
         "username": target_username,
@@ -609,6 +626,7 @@ def _get_user_grants_payload(
         "expanded_rights": expanded_rights,
         "implicit": implicit,
         "commons_groups": sorted(resolved_groups),
+        "project_groups": project_groups,
         "global_groups": sorted(get_user_global_groups(normalized_username)),
     }
 
@@ -962,6 +980,45 @@ def _project_api_url(project: str) -> str:
     return f"https://{value}.wikipedia.org/w/api.php"
 
 
+def get_project_userright_groups(project: str, force_refresh: bool = False) -> list[str]:
+    """Return user group names advertised by a wiki's siteinfo API."""
+    normalized_project = str(project or "").strip().lower()
+    if not normalized_project:
+        return []
+
+    cache_key = f"siteinfo-groups:{normalized_project}"
+    now = time.time()
+    cached = _group_cache.get(cache_key)
+    if not force_refresh and cached and (now - cached["ts"] < GROUP_CACHE_TTL):
+        return cached["groups"]
+
+    params = {
+        "action": "query",
+        "meta": "siteinfo",
+        "siprop": "usergroups",
+        "format": "json",
+    }
+
+    try:
+        resp = requests.get(_project_api_url(normalized_project), params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        raw_groups = data.get("query", {}).get("usergroups", [])
+        groups = sorted(
+            {
+                str(group.get("name") or "").strip()
+                for group in raw_groups
+                if str(group.get("name") or "").strip()
+            }
+        )
+    except Exception:
+        app.logger.exception("Failed to fetch %s userright groups", normalized_project)
+        groups = []
+
+    _group_cache[cache_key] = {"groups": groups, "ts": now}
+    return groups
+
+
 def get_project_user_groups(
     username: str,
     project: str,
@@ -1004,7 +1061,8 @@ def get_project_user_groups(
 
 
 def get_user_global_groups(username, force_refresh: bool = False):
-    cache_key = f"global:{username}"
+    normalized_username = _normalize_username(username)
+    cache_key = f"global:{normalized_username}"
     now = time.time()
 
     cached = _group_cache.get(cache_key)
@@ -1013,9 +1071,9 @@ def get_user_global_groups(username, force_refresh: bool = False):
 
     params = {
         "action": "query",
-        "list": "users",
-        "ususers": username,
-        "usprop": "globalgroups",
+        "meta": "globaluserinfo",
+        "guiuser": normalized_username,
+        "guiprop": "groups",
         "format": "json",
     }
 
@@ -1023,10 +1081,47 @@ def get_user_global_groups(username, force_refresh: bool = False):
         resp = requests.get(WIKI_API_URL, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        users = data.get("query", {}).get("users", [])
-        groups = users[0].get("globalgroups", []) if users else []
+        global_info = data.get("query", {}).get("globaluserinfo", {})
+        raw_groups = global_info.get("groups", [])
+        if isinstance(raw_groups, dict):
+            raw_groups = raw_groups.keys()
+        groups = sorted({str(group).strip() for group in raw_groups if str(group).strip()})
     except Exception:
-        app.logger.exception("Failed to fetch global groups for %s", username)
+        app.logger.exception("Failed to fetch global groups for %s", normalized_username)
+        groups = []
+
+    _group_cache[cache_key] = {"groups": groups, "ts": now}
+    return groups
+
+
+def get_global_userright_groups(force_refresh: bool = False) -> list[str]:
+    """Return CentralAuth global group names from the Wikimedia API."""
+    cache_key = "siteinfo-global-groups"
+    now = time.time()
+    cached = _group_cache.get(cache_key)
+    if not force_refresh and cached and (now - cached["ts"] < GROUP_CACHE_TTL):
+        return cached["groups"]
+
+    params = {
+        "action": "query",
+        "list": "globalgroups",
+        "format": "json",
+    }
+
+    try:
+        resp = requests.get(WIKI_API_URL, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        raw_groups = data.get("query", {}).get("globalgroups", [])
+        groups = sorted(
+            {
+                str(group.get("name") or group.get("group") or "").strip()
+                for group in raw_groups
+                if str(group.get("name") or group.get("group") or "").strip()
+            }
+        )
+    except Exception:
+        app.logger.exception("Failed to fetch global userright groups")
         groups = []
 
     _group_cache[cache_key] = {"groups": groups, "ts": now}

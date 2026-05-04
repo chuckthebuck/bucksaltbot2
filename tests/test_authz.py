@@ -3,6 +3,17 @@
 from unittest.mock import patch
 
 
+class _FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
+
+
 def test_auto_grants_accept_project_groups_for_any_project():
     from router import authz
 
@@ -49,7 +60,7 @@ def test_module_specific_manage_does_not_grant_other_modules():
 
     config = {
         "ROLLBACK_CONTROL_JSON": {
-            "example": ["module:four_award:manage"]
+            "Example": ["module:four_award:manage"]
         },
         "ROLE_GRANTS_JSON": {},
         "CHUCKBOT_GROUPS_JSON": {},
@@ -58,3 +69,108 @@ def test_module_specific_manage_does_not_grant_other_modules():
     with patch("router.authz._effective_runtime_authz_config", return_value=config):
         assert authz.user_has_module_right("Example", "four_award", "manage")
         assert not authz.user_has_module_right("Example", "rollback", "manage")
+
+
+def test_mediawiki_username_normalization_preserves_case_after_first_character():
+    from router import authz
+
+    assert authz._normalize_username("alachuckthebuck") == "Alachuckthebuck"
+    assert authz._normalize_username("AlaChuckthebuck") == "AlaChuckthebuck"
+    assert authz._normalize_username("The_Squirrel_Conspiracy") == "The Squirrel Conspiracy"
+
+
+def test_user_grants_do_not_collapse_distinct_mediawiki_usernames():
+    from router import authz
+
+    config = {
+        "ROLLBACK_CONTROL_JSON": {
+            "Alachuckthebuck": ["module:four_award:manage"],
+            "AlaChuckthebuck": ["module:rollback:manage"],
+        },
+        "ROLE_GRANTS_JSON": {},
+        "CHUCKBOT_GROUPS_JSON": {},
+    }
+
+    assert authz._expand_user_grants(config, "Alachuckthebuck") == {
+        "module:four_award:manage"
+    }
+    assert authz._expand_user_grants(config, "AlaChuckthebuck") == {
+        "module:rollback:manage"
+    }
+
+
+def test_project_userright_group_options_come_from_siteinfo():
+    from router import authz
+
+    authz._group_cache.clear()
+
+    with patch("router.authz.requests.get") as get:
+        get.return_value = _FakeResponse(
+            {
+                "query": {
+                    "usergroups": [
+                        {"name": "sysop"},
+                        {"name": "extendedconfirmed"},
+                    ]
+                }
+            }
+        )
+
+        assert authz.get_project_userright_groups("enwiki", force_refresh=True) == [
+            "extendedconfirmed",
+            "sysop",
+        ]
+
+    _, kwargs = get.call_args
+    assert kwargs["params"]["siprop"] == "usergroups"
+
+
+def test_global_user_groups_use_globaluserinfo_and_preserve_spaces():
+    from router import authz
+
+    authz._group_cache.clear()
+
+    with patch("router.authz.requests.get") as get:
+        get.return_value = _FakeResponse(
+            {
+                "query": {
+                    "globaluserinfo": {
+                        "groups": ["global-sysop", "global-interface-editor"]
+                    }
+                }
+            }
+        )
+
+        assert authz.get_user_global_groups(
+            "The_Squirrel_Conspiracy", force_refresh=True
+        ) == ["global-interface-editor", "global-sysop"]
+
+    _, kwargs = get.call_args
+    assert kwargs["params"]["meta"] == "globaluserinfo"
+    assert kwargs["params"]["guiuser"] == "The Squirrel Conspiracy"
+
+
+def test_global_userright_group_options_come_from_centralauth():
+    from router import authz
+
+    authz._group_cache.clear()
+
+    with patch("router.authz.requests.get") as get:
+        get.return_value = _FakeResponse(
+            {
+                "query": {
+                    "globalgroups": [
+                        {"name": "global-sysop"},
+                        {"name": "steward"},
+                    ]
+                }
+            }
+        )
+
+        assert authz.get_global_userright_groups(force_refresh=True) == [
+            "global-sysop",
+            "steward",
+        ]
+
+    _, kwargs = get.call_args
+    assert kwargs["params"]["list"] == "globalgroups"

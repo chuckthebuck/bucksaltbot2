@@ -37,6 +37,8 @@ from router.authz import (  # noqa: F401
     _normalize_user_grants_map_input,
     _normalize_auto_grants_map_input,
     _configured_user_grant_groups,
+    get_global_userright_groups,
+    get_project_userright_groups,
     user_has_module_right,
 )
 from router.diff_state import _diff_error_key, _maybe_mark_stale_resolving_job_failed
@@ -1641,6 +1643,13 @@ def get_runtime_authz_api():
         return jsonify({"detail": "Forbidden"}), 403
 
     config = _effective_runtime_authz_config()
+    role_map = config.get("ROLE_GRANTS_JSON") or {}
+    projects = {"commons", "enwiki"}
+    if isinstance(role_map, dict):
+        for role in role_map:
+            parts = str(role or "").split(":")
+            if len(parts) == 3 and parts[0] == "project" and parts[1]:
+                projects.add(parts[1])
     return jsonify(
         {
             "config": _serialize_runtime_authz_config(config),
@@ -1650,6 +1659,11 @@ def get_runtime_authz_api():
             "grant_groups": sorted(_configured_user_grant_groups(config).keys()),
             "grant_rights": sorted(_USER_GRANT_RIGHTS),
             "auto_grant_roles": sorted((config.get("ROLE_GRANTS_JSON") or {}).keys()),
+            "project_group_options": {
+                project: get_project_userright_groups(project)
+                for project in sorted(projects)
+            },
+            "global_group_options": get_global_userright_groups(),
             "module_rights": {
                 record.definition.name: list(record.definition.rights)
                 for record in list_module_definitions()
@@ -1686,6 +1700,13 @@ def update_runtime_authz_api():
 
     _persist_runtime_authz_updates(normalized_updates, updated_by=username)
     effective = _effective_runtime_authz_config()
+    role_map = effective.get("ROLE_GRANTS_JSON") or {}
+    projects = {"commons", "enwiki"}
+    if isinstance(role_map, dict):
+        for role in role_map:
+            parts = str(role or "").split(":")
+            if len(parts) == 3 and parts[0] == "project" and parts[1]:
+                projects.add(parts[1])
 
     return jsonify(
         {
@@ -1697,6 +1718,11 @@ def update_runtime_authz_api():
             "grant_groups": sorted(_configured_user_grant_groups(effective).keys()),
             "grant_rights": sorted(_USER_GRANT_RIGHTS),
             "auto_grant_roles": sorted((effective.get("ROLE_GRANTS_JSON") or {}).keys()),
+            "project_group_options": {
+                project: get_project_userright_groups(project)
+                for project in sorted(projects)
+            },
+            "global_group_options": get_global_userright_groups(),
             "module_rights": {
                 record.definition.name: list(record.definition.rights)
                 for record in list_module_definitions()
