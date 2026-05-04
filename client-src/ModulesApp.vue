@@ -20,6 +20,8 @@ interface Module {
   enabled: boolean;
   ui_enabled: boolean;
   has_access: boolean;
+  can_manage?: boolean;
+  can_estop?: boolean;
   redis_namespace: string;
   oauth_consumer_mode: string;
   cron_jobs: Array<{
@@ -277,6 +279,14 @@ const selectedModuleData = computed(() => {
   return modules.value.find((m) => m.name === selectedModule.value) || null;
 });
 
+const canManageSelectedModule = computed(
+  () => canManageModules.value || !!selectedModuleData.value?.can_manage
+);
+
+const canEstopSelectedModule = computed(
+  () => canManageSelectedModule.value || !!selectedModuleData.value?.can_estop
+);
+
 const isFourAwardModule = computed(
   () => selectedModuleData.value?.name === "four_award"
 );
@@ -467,8 +477,12 @@ onMounted(() => {
       <section v-if="selectedModuleData" class="module-detail">
         <div class="detail-header">
           <h2>{{ selectedModuleData.title || selectedModuleData.name }}</h2>
-          <div v-if="canManageModules" class="detail-actions">
+          <div
+            v-if="canManageSelectedModule || canEstopSelectedModule"
+            class="detail-actions"
+          >
             <CdxButton
+              v-if="canManageSelectedModule"
               :disabled="togglingModule === selectedModuleData.name"
               @click="
                 toggleModule(
@@ -486,6 +500,7 @@ onMounted(() => {
               }}
             </CdxButton>
             <CdxButton
+              v-if="canEstopSelectedModule"
               class="estop-action"
               action="destructive"
               weight="primary"

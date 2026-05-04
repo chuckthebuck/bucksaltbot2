@@ -93,6 +93,22 @@ def test_parse_module_definition_accepts_module_rights():
     assert definition.rights == ("edit_config", "manage", "run_jobs")
 
 
+def test_parse_module_definition_accepts_module_estop_right():
+    import router.module_registry as registry
+
+    definition = registry.parse_module_definition(
+        {
+            "name": "rollback",
+            "repo": "https://example.invalid/rollback",
+            "entry_point": "modules.rollback.blueprint",
+            "ui": True,
+            "rights": ["estop"],
+        }
+    )
+
+    assert definition.rights == ("estop",)
+
+
 def test_parse_module_definition_rejects_api_only_module():
     import router.module_registry as registry
 

@@ -55,6 +55,7 @@ _USER_GRANT_RIGHTS = {
     "rollback_account",
     "rollback_batch",
     "rollback_diff_dry_run_only",
+    "estop_rollback",
     "approve_jobs",
     "autoapprove_jobs",
     "force_dry_run",
@@ -70,6 +71,7 @@ _USER_GRANT_RIGHTS = {
 
 _MODULE_BUILTIN_RIGHTS = {
     "access",
+    "estop",
     "manage",
     "run_jobs",
     "edit_config",
@@ -109,6 +111,7 @@ _USER_GRANT_GROUPS = {
         "rollback_diff",
         "rollback_account",
         "rollback_batch",
+        "estop_rollback",
         "approve_jobs",
         "autoapprove_jobs",
         "force_dry_run",

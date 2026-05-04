@@ -71,6 +71,22 @@ def test_module_specific_manage_does_not_grant_other_modules():
         assert not authz.user_has_module_right("Example", "rollback", "manage")
 
 
+def test_module_specific_estop_is_a_module_scoped_right():
+    from router import authz
+
+    config = {
+        "ROLLBACK_CONTROL_JSON": {
+            "Example": ["module:four_award:estop"]
+        },
+        "ROLE_GRANTS_JSON": {},
+        "CHUCKBOT_GROUPS_JSON": {},
+    }
+
+    with patch("router.authz._effective_runtime_authz_config", return_value=config):
+        assert authz.user_has_module_right("Example", "four_award", "estop")
+        assert not authz.user_has_module_right("Example", "rollback", "estop")
+
+
 def test_mediawiki_username_normalization_preserves_case_after_first_character():
     from router import authz
 

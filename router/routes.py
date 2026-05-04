@@ -223,6 +223,21 @@ def _can_manage_module(username: str | None, module_name: str) -> bool:
     )
 
 
+def _can_estop_module(username: str | None, module_name: str) -> bool:
+    return bool(
+        username
+        and (
+            _can_manage_module(username, module_name)
+            or _has_permission(username, "manage_modules")
+            or user_has_module_right(username, module_name, "estop")
+            or (
+                module_name == "rollback"
+                and _has_permission(username, "estop_rollback")
+            )
+        )
+    )
+
+
 def _can_run_module_jobs(username: str | None, module_name: str) -> bool:
     return bool(
         username
@@ -1665,9 +1680,9 @@ def get_runtime_authz_api():
             },
             "global_group_options": get_global_userright_groups(),
             "module_rights": {
-                record.definition.name: list(record.definition.rights)
+                record.definition.name: sorted({"estop", *record.definition.rights})
                 for record in list_module_definitions()
-                if record.definition.rights
+                if record.definition.rights or record.definition.name
             },
         }
     )
@@ -1724,9 +1739,9 @@ def update_runtime_authz_api():
             },
             "global_group_options": get_global_userright_groups(),
             "module_rights": {
-                record.definition.name: list(record.definition.rights)
+                record.definition.name: sorted({"estop", *record.definition.rights})
                 for record in list_module_definitions()
-                if record.definition.rights
+                if record.definition.rights or record.definition.name
             },
         }
     )
@@ -2868,7 +2883,7 @@ def module_estop_form(module_name: str):
     username = session.get("username")
     if not username:
         return redirect(url_for("login", referrer=url_for("index")))
-    if not (_can_manage_module(username, module_name)):
+    if not (_can_estop_module(username, module_name)):
         abort(403)
 
     if get_module_definition(module_name) is None:
@@ -2995,10 +3010,11 @@ def module_registry_api():
     for record in list_module_definitions():
         definition = record.definition
         module_admin = _can_manage_module(username, definition.name)
+        module_estopper = _can_estop_module(username, definition.name)
         has_access = user_has_module_access(
             definition.name,
             username,
-            is_maintainer=is_admin or module_admin,
+            is_maintainer=is_admin or module_admin or module_estopper,
         )
         modules.append(
             {
@@ -3010,6 +3026,7 @@ def module_registry_api():
                 "jobs": [job.as_dict() for job in definition.cron_jobs],
                 "has_access": bool(has_access),
                 "can_manage": bool(module_admin),
+                "can_estop": bool(module_estopper),
                 "can_run_jobs": bool(_can_run_module_jobs(username, definition.name)),
                 "can_edit_config": bool(_can_edit_module_config(username, definition.name)),
                 "redis_namespace": definition.redis_namespace,
@@ -3062,7 +3079,7 @@ def module_registry_estop_api(module_name: str):
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
-    if not (_can_manage_module(username, module_name)):
+    if not (_can_estop_module(username, module_name)):
         return jsonify({"detail": "Forbidden"}), 403
 
     record = get_module_definition(module_name)

@@ -700,6 +700,53 @@ body {
     overflow-wrap: anywhere;
 }
 
+.implicit-status-list {
+    display: grid;
+    grid-template-columns: minmax( 0, 1fr ) auto;
+    gap: @spacing-25 @spacing-75;
+    margin: 0 0 @spacing-75;
+    font-size: @font-size-small;
+}
+
+.implicit-status-list dt {
+    min-width: 0;
+    color: @color-subtle;
+    overflow-wrap: anywhere;
+}
+
+.implicit-status-list dd {
+    margin: 0;
+    font-weight: @font-weight-bold;
+}
+
+.module-rights-list {
+    display: grid;
+    grid-template-columns: minmax( 9rem, max-content ) minmax( 0, 1fr );
+    gap: @spacing-50 @spacing-100;
+    margin: 0;
+}
+
+.module-rights-list dt {
+    min-width: 0;
+    font-weight: @font-weight-bold;
+    overflow-wrap: anywhere;
+}
+
+.module-rights-list dd {
+    display: flex;
+    flex-wrap: wrap;
+    gap: @spacing-25 @spacing-50;
+    min-width: 0;
+    margin: 0;
+}
+
+.module-rights-list code {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
 .runtime-checkbox-row {
     display: grid;
     grid-template-columns: auto minmax( 0, 1fr );

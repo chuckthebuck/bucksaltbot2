@@ -51,6 +51,7 @@ type GrantRightKey =
   | "rollback_account"
   | "rollback_batch"
   | "rollback_diff_dry_run_only"
+  | "estop_rollback"
   | "approve_jobs"
   | "autoapprove_jobs"
   | "force_dry_run"
@@ -120,6 +121,7 @@ const builtInFrameworkGroupRights: Record<GrantGroupKey, GrantRightKey[]> = {
     "rollback_diff",
     "rollback_account",
     "rollback_batch",
+    "estop_rollback",
     "approve_jobs",
     "autoapprove_jobs",
     "force_dry_run",
@@ -151,6 +153,11 @@ const userGrantRightSections: Array<{
         key: "rollback_diff_dry_run_only",
         label: "rollback_diff_dry_run_only",
         help: "Enforce dry_run=true for diff/account rollback requests.",
+      },
+      {
+        key: "estop_rollback",
+        label: "estop_rollback",
+        help: "Emergency-stop the bundled rollback module.",
       },
     ],
   },
@@ -321,6 +328,7 @@ function emptyRightChecks(): Record<GrantRightKey, boolean> {
     rollback_account: false,
     rollback_diff_dry_run_only: false,
     rollback_batch: false,
+    estop_rollback: false,
     approve_jobs: false,
     autoapprove_jobs: false,
     force_dry_run: false,
@@ -334,20 +342,14 @@ function emptyRightChecks(): Record<GrantRightKey, boolean> {
   };
 }
 
-const userGroupChecks = ref<Record<GrantGroupKey, boolean>>(emptyGroupChecks());
+const userGroupChecks = ref<Record<string, boolean>>(emptyGroupChecks());
 const userRightChecks = ref<Record<GrantRightKey, boolean>>(emptyRightChecks());
-const autoGrantGroupChecks = ref<Record<GrantGroupKey, boolean>>(emptyGroupChecks());
+const autoGrantGroupChecks = ref<Record<string, boolean>>(emptyGroupChecks());
 const autoGrantRightChecks = ref<Record<GrantRightKey, boolean>>(emptyRightChecks());
 const autoGrantModuleRightChecks = ref<Record<string, boolean>>({});
 const frameworkGroupRightChecks = ref<Record<GrantRightKey, boolean>>(emptyRightChecks());
 const frameworkGroupModuleRightChecks = ref<Record<string, boolean>>({});
 
-const implicitFlagRows = computed<ToggleFieldRow<ImplicitFlagKey>[]>(() =>
-  buildToggleRows(implicitFlagFields)
-);
-const groupRows = computed<ToggleFieldRow<GrantGroupKey>[]>(() =>
-  buildToggleRows(userGrantGroupFields)
-);
 const rightRows = computed<ToggleFieldRow<GrantRightKey>[]>(() =>
   buildSectionedToggleRows(userGrantRightSections)
 );
@@ -414,23 +416,22 @@ const frameworkGroupFields = computed<Array<{ key: string; label: string; help: 
   });
 });
 
+const groupRows = computed<ToggleFieldRow<string>[]>(() =>
+  buildToggleRows(frameworkGroupFields.value)
+);
+
 const autoGrantRoleRows = computed<ToggleFieldRow<AutoGrantRoleKey>[]>(() =>
   buildToggleRows(autoGrantRoleFields.value)
 );
 
-const implicitFlagColumns: TableColumn<ToggleFieldRow<ImplicitFlagKey>>[] = [
-  toggleLabelColumn("Flag"),
-  toggleCheckboxColumn(
-    "Enabled",
-    (row) => implicitFlags.value[row.key],
-    () => {
-      // implicit flags are read-only
-    },
-    () => true,
-  ),
-];
+const implicitFlagStatusRows = computed(() =>
+  implicitFlagFields.map((field) => ({
+    ...field,
+    enabled: !!implicitFlags.value[field.key],
+  }))
+);
 
-const groupColumns: TableColumn<ToggleFieldRow<GrantGroupKey>>[] = [
+const groupColumns: TableColumn<ToggleFieldRow<string>>[] = [
   toggleLabelColumn("Group"),
   toggleHelpColumn("Description"),
   toggleCheckboxColumn(
@@ -461,7 +462,7 @@ const autoGrantRoleColumns: TableColumn<ToggleFieldRow<AutoGrantRoleKey>>[] = [
   toggleHelpColumn("Meaning"),
 ];
 
-const autoGroupColumns: TableColumn<ToggleFieldRow<GrantGroupKey>>[] = [
+const autoGroupColumns: TableColumn<ToggleFieldRow<string>>[] = [
   toggleLabelColumn("Group"),
   toggleHelpColumn("Description"),
   toggleCheckboxColumn(
@@ -600,7 +601,7 @@ function checkedRights(checks: Record<GrantRightKey, boolean>): Set<GrantRightKe
   );
 }
 
-function expandCheckedGroups(checks: Record<GrantGroupKey, boolean>): Set<GrantRightKey> {
+function expandCheckedGroups(checks: Record<string, boolean>): Set<GrantRightKey> {
   const rights = new Set<GrantRightKey>();
   for (const field of userGrantGroupFields) {
     if (!checks[field.key]) continue;
@@ -689,7 +690,9 @@ const selectedFrameworkGroupAdvisories = computed(() =>
 );
 
 function clearAutoGrantChecks(): void {
-  autoGrantGroupChecks.value = emptyGroupChecks();
+  autoGrantGroupChecks.value = Object.fromEntries(
+    groupRows.value.map((row) => [row.key, false]),
+  );
   autoGrantRightChecks.value = emptyRightChecks();
   autoGrantModuleRightChecks.value = Object.fromEntries(
     autoGrantModuleRightRows.value.map((row) => [row.key, false]),
@@ -700,7 +703,7 @@ function persistSelectedAutoGrantRoleChecks(): void {
   const role = selectedAutoGrantRole.value;
   const atoms: string[] = [];
 
-  for (const field of userGrantGroupFields) {
+  for (const field of groupRows.value) {
     if (autoGrantGroupChecks.value[field.key]) {
       atoms.push(`group:${field.key}`);
     }
@@ -739,10 +742,8 @@ function loadSelectedAutoGrantRoleChecks(): void {
     if (!normalized) continue;
 
     if (normalized.startsWith("group:")) {
-      const groupName = normalized.split(":", 2)[1] as GrantGroupKey;
-      if (groupName in autoGrantGroupChecks.value) {
-        autoGrantGroupChecks.value[groupName] = true;
-      }
+      const groupName = normalized.split(":", 2)[1];
+      autoGrantGroupChecks.value[groupName] = true;
       continue;
     }
 
@@ -972,9 +973,9 @@ async function onUserSearchLookupInput(value: string | number): Promise<void> {
 }
 
 function clearUserGrantChecks(): void {
-  for (const field of userGrantGroupFields) {
-    userGroupChecks.value[field.key] = false;
-  }
+  userGroupChecks.value = Object.fromEntries(
+    groupRows.value.map((row) => [row.key, false]),
+  );
 
   for (const field of userGrantRightFields) {
     userRightChecks.value[field.key] = false;
@@ -997,9 +998,7 @@ function applyUserGrantPayload(payload: {
   clearUserGrantChecks();
 
   for (const group of payload.groups || []) {
-    if (group in userGroupChecks.value) {
-      userGroupChecks.value[group as GrantGroupKey] = true;
-    }
+    userGroupChecks.value[group] = true;
   }
 
   for (const right of payload.rights || []) {
@@ -1076,7 +1075,7 @@ async function saveSelectedUserGrants(): Promise<void> {
   successMessage.value = "";
 
   try {
-    const groups = userGrantGroupFields
+    const groups = groupRows.value
       .filter((field) => userGroupChecks.value[field.key])
       .map((field) => field.key);
     const rights = userGrantRightFields
@@ -1272,13 +1271,13 @@ onMounted(() => {
             {{ globalGroups.length ? globalGroups.join(", ") : "No global groups found." }}
           </p>
 
-          <h4>Groups you cannot change</h4>
-          <UnifiedTable
-            :rows="implicitFlagRows"
-            :columns="implicitFlagColumns"
-            row-key="key"
-            table-class="runtime-rights-table"
-          />
+          <h4>Automatic eligibility</h4>
+          <dl class="implicit-status-list">
+            <template v-for="flag in implicitFlagStatusRows" :key="flag.key">
+              <dt>{{ flag.label }}</dt>
+              <dd>{{ flag.enabled ? "Yes" : "No" }}</dd>
+            </template>
+          </dl>
         </div>
 
         <div>

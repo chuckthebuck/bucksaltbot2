@@ -607,6 +607,8 @@ export interface ModuleItem {
   enabled: boolean;
   ui_enabled: boolean;
   has_access: boolean;
+  can_manage?: boolean;
+  can_estop?: boolean;
   redis_namespace: string;
   oauth_consumer_mode: string;
   cron_jobs: Array<{

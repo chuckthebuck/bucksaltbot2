@@ -5,3 +5,4 @@ ui = true
 buildpacks = ["heroku/python"]
 redis_namespace = "rollback"
 title = "Chuck the Rollback"
+rights = ["manage", "run_jobs", "edit_config", "estop"]
