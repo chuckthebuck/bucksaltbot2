@@ -3416,6 +3416,7 @@ def four_award_test_run_api():
             "dry_run": True,
             "enabled": True,
             "allow_automated_approval": True,
+            "ignore_existing_records": True,
             "publish_dry_run_report": False,
         },
     }
