@@ -3253,6 +3253,61 @@ def _four_award_default_job_name(record) -> str | None:
     return jobs[0].name
 
 
+def _four_award_revision_text(oldid: int) -> dict[str, str]:
+    config_values = get_module_config("four_award") or {}
+    wiki_code = str(config_values.get("wiki_code") or "en").strip() or "en"
+    wiki_family = str(config_values.get("wiki_family") or "wikipedia").strip() or "wikipedia"
+    api_url = str(config_values.get("wiki_api_url") or "").strip()
+    if not api_url and wiki_family == "wikipedia":
+        api_url = f"https://{wiki_code}.wikipedia.org/w/api.php"
+    if not api_url:
+        api_url = "https://en.wikipedia.org/w/api.php"
+
+    params = {
+        "action": "query",
+        "prop": "revisions",
+        "revids": str(oldid),
+        "rvprop": "ids|timestamp|user|content",
+        "rvslots": "main",
+        "format": "json",
+        "formatversion": "2",
+    }
+    try:
+        response = requests.get(api_url, params=params, timeout=20)
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as exc:
+        raise ValueError(f"Failed to fetch historical revision {oldid}: {exc}") from exc
+
+    pages = data.get("query", {}).get("pages", [])
+    if not pages or pages[0].get("missing"):
+        raise ValueError(f"Revision {oldid} was not found")
+    page = pages[0]
+    revisions = page.get("revisions") or []
+    if not revisions:
+        raise ValueError(f"Revision {oldid} did not include page text")
+    revision = revisions[0]
+    content = revision.get("slots", {}).get("main", {}).get("content", "")
+    if not isinstance(content, str):
+        content = ""
+    if not content:
+        raise ValueError(f"Revision {oldid} had empty page text")
+
+    expected_title = str(config_values.get("four_page") or "Wikipedia:Four Award").strip()
+    revision_title = str(page.get("title") or "").strip()
+    if expected_title and revision_title and revision_title != expected_title:
+        raise ValueError(
+            f"Revision {oldid} belongs to [[{revision_title}]], not [[{expected_title}]]"
+        )
+
+    return {
+        "title": revision_title,
+        "text": content,
+        "timestamp": str(revision.get("timestamp") or ""),
+        "user": str(revision.get("user") or ""),
+    }
+
+
 @app.route("/four-award")
 @app.route("/4award")
 def four_award_runs_page():
@@ -3331,6 +3386,10 @@ def four_award_test_run_api():
         oldid = _extract_oldid(diff)
     except ValueError as exc:
         return jsonify({"detail": str(exc)}), 400
+    try:
+        revision = _four_award_revision_text(oldid)
+    except ValueError as exc:
+        return jsonify({"detail": str(exc)}), 400
 
     job_name = str(payload.get("job_name") or "").strip()
     available_jobs = {job.name: job for job in record.definition.cron_jobs}
@@ -3343,15 +3402,20 @@ def four_award_test_run_api():
 
     run_payload = {
         "mode": "historical_diff_dry_run",
-        "source": "four_award_live_page",
+        "source": "four_award_historical_revision",
         "dry_run": True,
         "diff": diff,
         "historical_diff": diff,
         "oldid": oldid,
+        "four_page_title": revision["title"],
+        "four_page_revision_timestamp": revision["timestamp"],
+        "four_page_revision_user": revision["user"],
+        "four_page_text": revision["text"],
         "publish_dry_run_report": False,
         "config_overrides": {
             "dry_run": True,
             "enabled": True,
+            "allow_automated_approval": True,
             "publish_dry_run_report": False,
         },
     }
