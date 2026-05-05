@@ -73,6 +73,7 @@ _MODULE_BUILTIN_RIGHTS = {
     "access",
     "estop",
     "manage",
+    "view_jobs",
     "run_jobs",
     "edit_config",
 }

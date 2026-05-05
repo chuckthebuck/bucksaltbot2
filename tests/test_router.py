@@ -1165,6 +1165,52 @@ def test_module_registry_api_lists_loaded_modules(client):
     assert data["modules"][0]["has_access"] is True
 
 
+def test_four_award_view_all_can_open_runs_without_run_jobs(client):
+    _set_session(client, "viewer")
+
+    with (
+        patch("router.routes._user_permissions", return_value={"view_all"}),
+        patch("router.routes.is_maintainer", return_value=False),
+        patch("router.routes.is_admin_user", return_value=False),
+    ):
+        resp = client.get("/goto?tab=four-award")
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == "/four-award"
+
+
+def test_four_award_view_jobs_can_open_runs_without_run_jobs(client):
+    _set_session(client, "viewer")
+
+    with (
+        patch("router.routes._user_permissions", return_value={"module:four_award:view_jobs"}),
+        patch("router.routes.is_maintainer", return_value=False),
+        patch("router.routes.is_admin_user", return_value=False),
+    ):
+        resp = client.get("/goto?tab=four-award")
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == "/four-award"
+
+
+def test_four_award_view_jobs_shows_runs_tab_without_module_management(client):
+    _set_session(client, "viewer")
+
+    with (
+        patch("router.routes._user_permissions", return_value={"module:four_award:view_jobs"}),
+        patch("router.routes.is_maintainer", return_value=False),
+        patch("router.routes.is_admin_user", return_value=False),
+    ):
+        resp = client.get("/four-award")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'href="/goto?tab=four-award"' in html
+    assert "4award Runs" in html
+    assert "Module Management" not in html
+    assert "Jobs YAML" not in html
+
+
 def test_module_registry_install_api_installs_module_for_maintainer(client):
     import router.module_registry as registry
 

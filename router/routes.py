@@ -39,6 +39,7 @@ from router.authz import (  # noqa: F401
     _configured_user_grant_groups,
     get_global_userright_groups,
     get_project_userright_groups,
+    module_right_atom,
     user_has_module_right,
 )
 from router.diff_state import _diff_error_key, _maybe_mark_stale_resolving_job_failed
@@ -208,6 +209,8 @@ def _can_view_modules(username: str | None) -> bool:
         return False
     if _can_manage_modules(username):
         return True
+    if _has_permission(username, "view_all"):
+        return True
     return any(str(permission).startswith("module:") for permission in _user_permissions(username))
 
 
@@ -244,6 +247,18 @@ def _can_run_module_jobs(username: str | None, module_name: str) -> bool:
             _can_manage_module(username, module_name)
             or _has_permission(username, "run_module_jobs")
             or user_has_module_right(username, module_name, "run_jobs")
+        )
+    )
+
+
+def _can_view_module_jobs(username: str | None, module_name: str) -> bool:
+    return bool(
+        username
+        and (
+            _can_run_module_jobs(username, module_name)
+            or _has_permission(username, "view_all")
+            or _has_permission(username, module_right_atom(module_name, "view_jobs"))
+            or user_has_module_right(username, module_name, "view_jobs")
         )
     )
 
@@ -311,6 +326,8 @@ def inject_nav_capabilities():
     perms = _user_permissions(username)
     is_admin = bool(session.get("is_admin") or is_admin_user(username))
     can_manage_modules = _can_view_modules(username)
+    can_edit_modules = _can_manage_modules(username)
+    can_view_four_award = _four_award_operator_allowed(username)
 
     return {
         "nav_can_write": bool("write" in perms),
@@ -318,6 +335,11 @@ def inject_nav_capabilities():
         "nav_can_config": bool(_can_view_runtime_config(username)),
         "nav_is_admin": is_admin,
         "nav_can_modules": can_manage_modules,
+        "nav_can_manage_modules": can_edit_modules,
+        "nav_can_four_award": can_view_four_award,
+        "nav_modules_href": "/goto?tab=four-award"
+        if can_view_four_award and not can_edit_modules
+        else "/goto?tab=modules",
     }
 
 
@@ -700,13 +722,7 @@ def goto():
         return redirect("/modules")
 
     if tab == "four-award":
-        if not user_has_module_access(
-            "four_award",
-            username,
-            is_maintainer=_can_manage_modules(username)
-            or _can_manage_module(username, "four_award")
-            or _can_run_module_jobs(username, "four_award"),
-        ):
+        if not _four_award_operator_allowed(username):
             abort(403)
         return redirect("/four-award")
 
@@ -3021,10 +3037,11 @@ def module_registry_api():
         definition = record.definition
         module_admin = _can_manage_module(username, definition.name)
         module_estopper = _can_estop_module(username, definition.name)
+        module_job_viewer = _can_view_module_jobs(username, definition.name)
         has_access = user_has_module_access(
             definition.name,
             username,
-            is_maintainer=is_admin or module_admin or module_estopper,
+            is_maintainer=is_admin or module_admin or module_estopper or module_job_viewer,
         )
         modules.append(
             {
@@ -3037,6 +3054,7 @@ def module_registry_api():
                 "has_access": bool(has_access),
                 "can_manage": bool(module_admin),
                 "can_estop": bool(module_estopper),
+                "can_view_jobs": bool(module_job_viewer),
                 "can_run_jobs": bool(_can_run_module_jobs(username, definition.name)),
                 "can_edit_config": bool(_can_edit_module_config(username, definition.name)),
                 "redis_namespace": definition.redis_namespace,
@@ -3057,7 +3075,11 @@ def module_registry_item_api(module_name: str):
     if record is None:
         return jsonify({"detail": "Module not found"}), 404
 
-    is_admin = bool(_can_manage_modules(username) or _can_manage_module(username, module_name))
+    is_admin = bool(
+        _can_manage_modules(username)
+        or _can_manage_module(username, module_name)
+        or _can_view_module_jobs(username, module_name)
+    )
     if not user_has_module_access(module_name, username, is_maintainer=is_admin):
         return jsonify({"detail": "Forbidden"}), 403
 
@@ -3234,7 +3256,7 @@ def _four_award_operator_allowed(username: str | None) -> bool:
             username,
             is_maintainer=_can_manage_modules(username)
             or _can_manage_module(username, "four_award")
-            or _can_run_module_jobs(username, "four_award"),
+            or _can_view_module_jobs(username, "four_award"),
         )
     )
 

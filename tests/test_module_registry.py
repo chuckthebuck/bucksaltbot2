@@ -86,11 +86,11 @@ def test_parse_module_definition_accepts_module_rights():
             "repo": "https://example.invalid/four-award",
             "entry_point": "modules.four_award.service:run",
             "ui": True,
-            "rights": ["manage", "run-jobs", "edit config"],
+            "rights": ["manage", "view jobs", "run-jobs", "edit config"],
         }
     )
 
-    assert definition.rights == ("edit_config", "manage", "run_jobs")
+    assert definition.rights == ("edit_config", "manage", "run_jobs", "view_jobs")
 
 
 def test_parse_module_definition_accepts_module_estop_right():

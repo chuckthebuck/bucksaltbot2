@@ -68,10 +68,11 @@
     <a
       class="header-tab{% if current_section == 'modules' %} is-active{% endif %}"
       aria-current="{% if current_section == 'modules' %}page{% else %}false{% endif %}"
-      href="/goto?tab=modules"
+      href="{{ nav_modules_href }}"
     >
       Modules
     </a>
+    {% if nav_can_manage_modules %}
     <a
       class="header-tab{% if current_section == 'jobs-yaml' %} is-active{% endif %}"
       aria-current="{% if current_section == 'jobs-yaml' %}page{% else %}false{% endif %}"
@@ -79,6 +80,7 @@
     >
       Jobs YAML
     </a>
+    {% endif %}
     {% endif %}
   </nav>
 
@@ -114,8 +116,12 @@
       <a class="subnav-item" href="/goto?tab=documentation">Documentation</a>
       {% elif current_section == 'modules' %}
       {% if nav_can_modules %}
+      {% if nav_can_manage_modules %}
       <a class="subnav-item{% if type == 'modules' %} is-active{% endif %}" href="/goto?tab=modules">Module Management</a>
+      {% endif %}
+      {% if nav_can_four_award %}
       <a class="subnav-item{% if type == 'four-award' %} is-active{% endif %}" href="/goto?tab=four-award">4award Runs</a>
+      {% endif %}
       {% endif %}
       {% endif %}
     </div>

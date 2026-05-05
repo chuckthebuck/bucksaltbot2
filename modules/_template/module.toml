@@ -8,7 +8,7 @@ title = "Template Module"
 # Optional: declare framework rights exposed by this module.
 # Grant these with module-scoped atoms such as module:template_module:run_jobs.
 # The framework also understands module:<name>:estop for emergency stops.
-# rights = ["manage", "run_jobs", "edit_config", "estop"]
+# rights = ["manage", "view_jobs", "run_jobs", "edit_config", "estop"]
 
 # For cron-only modules, add:
 # [[cron_jobs]]
