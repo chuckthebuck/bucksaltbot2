@@ -909,6 +909,28 @@ def test_fetch_contribs_after_timestamp_handles_network_error():
             router.fetch_contribs_after_timestamp("TestUser", "2024-01-01T00:00:00Z")
 
 
+def test_extract_oldid_prefers_numeric_diff_revision_for_generated_diff_links():
+    import router
+
+    url = (
+        "https://en.wikipedia.org/w/index.php"
+        "?title=Wikipedia%3AFour_Award&diff=1346969019&oldid=1346428055"
+    )
+
+    assert router._extract_oldid(url) == 1346969019
+
+
+def test_extract_oldid_uses_oldid_for_prev_diff_links():
+    import router
+
+    url = (
+        "https://en.wikipedia.org/w/index.php"
+        "?title=Wikipedia:Four_Award&diff=prev&oldid=1346969019"
+    )
+
+    assert router._extract_oldid(url) == 1346969019
+
+
 def test_retry_job_with_no_items_requeues_diff_resolution(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
