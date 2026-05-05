@@ -909,6 +909,28 @@ def test_fetch_contribs_after_timestamp_handles_network_error():
             router.fetch_contribs_after_timestamp("TestUser", "2024-01-01T00:00:00Z")
 
 
+def test_extract_oldid_prefers_numeric_diff_revision_for_generated_diff_links():
+    import router
+
+    url = (
+        "https://en.wikipedia.org/w/index.php"
+        "?title=Wikipedia%3AFour_Award&diff=1346969019&oldid=1346428055"
+    )
+
+    assert router._extract_oldid(url) == 1346969019
+
+
+def test_extract_oldid_uses_oldid_for_prev_diff_links():
+    import router
+
+    url = (
+        "https://en.wikipedia.org/w/index.php"
+        "?title=Wikipedia:Four_Award&diff=prev&oldid=1346969019"
+    )
+
+    assert router._extract_oldid(url) == 1346969019
+
+
 def test_retry_job_with_no_items_requeues_diff_resolution(client):
     _set_session(client, "alice")
     mock_conn, mock_cursor = _make_mock_conn()
@@ -1116,6 +1138,109 @@ def test_cancel_job_returns_403_when_owned_by_different_user(client):
     with patch("router.get_conn", return_value=mock_conn):
         resp = client.delete("/api/v1/rollback/jobs/1")
     assert resp.status_code == 403
+
+
+def test_module_registry_api_lists_loaded_modules(client):
+    import router.module_registry as registry
+
+    _set_session(client, "maintainer")
+    record = registry.ModuleRecord(
+        definition=registry.parse_module_definition(
+            {
+                "name": "four_award",
+                "repo": "https://example.invalid/four-award",
+                "entry_point": "four_award.handler",
+                "ui": True,
+            }
+        ),
+        enabled=True,
+    )
+
+    with patch("router.routes.list_module_definitions", return_value=[record]):
+        resp = client.get("/api/v1/modules")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["modules"][0]["name"] == "four_award"
+    assert data["modules"][0]["has_access"] is True
+
+
+def test_four_award_view_all_can_open_runs_without_run_jobs(client):
+    _set_session(client, "viewer")
+
+    with (
+        patch("router.routes._user_permissions", return_value={"view_all"}),
+        patch("router.routes.is_maintainer", return_value=False),
+        patch("router.routes.is_admin_user", return_value=False),
+    ):
+        resp = client.get("/goto?tab=four-award")
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == "/four-award"
+
+
+def test_four_award_view_jobs_can_open_runs_without_run_jobs(client):
+    _set_session(client, "viewer")
+
+    with (
+        patch("router.routes._user_permissions", return_value={"module:four_award:view_jobs"}),
+        patch("router.routes.is_maintainer", return_value=False),
+        patch("router.routes.is_admin_user", return_value=False),
+    ):
+        resp = client.get("/goto?tab=four-award")
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == "/four-award"
+
+
+def test_four_award_view_jobs_shows_runs_tab_without_module_management(client):
+    _set_session(client, "viewer")
+
+    with (
+        patch("router.routes._user_permissions", return_value={"module:four_award:view_jobs"}),
+        patch("router.routes.is_maintainer", return_value=False),
+        patch("router.routes.is_admin_user", return_value=False),
+    ):
+        resp = client.get("/four-award")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'href="/goto?tab=four-award"' in html
+    assert "4award Runs" in html
+    assert "Module Management" not in html
+    assert "Jobs YAML" not in html
+
+
+def test_module_registry_install_api_installs_module_for_maintainer(client):
+    import router.module_registry as registry
+
+    _set_session(client, "maintainer")
+    definition = registry.parse_module_definition(
+        {
+            "name": "four_award",
+            "repo": "https://github.com/example/four-award",
+            "entry_point": "handler.py",
+            "ui": True,
+        }
+    )
+
+    with (
+        patch("router.routes.is_maintainer", return_value=True),
+        patch("router.routes.install_remote_module", return_value=definition) as mock_install,
+    ):
+        resp = client.post(
+            "/api/v1/modules/install",
+            json={"repo": "https://github.com/example/four-award", "enabled": False},
+        )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["module"] == "four_award"
+    assert data["installed"] is True
+    assert data["definition"]["name"] == "four_award"
+    mock_install.assert_called_once_with(
+        "https://github.com/example/four-award", enabled_default=False
+    )
 
 
 def test_cancel_job_marks_job_and_items_canceled(client):

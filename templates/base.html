@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rollback queue</title>
+  <link rel="icon" type="image/png" href="/static/assets/chuck-framework-icon.png">
+  <link rel="shortcut icon" type="image/png" href="/static/assets/chuck-framework-icon.png">
+  <link rel="apple-touch-icon" href="/static/assets/chuck-framework-icon.png">
 
   {%- if not is_production %}
     <!-- Vite dev -->
@@ -27,12 +30,17 @@
   {% set current_section = 'jobs' %}
 {% elif type in ['runtime-config', 'documentation'] %}
   {% set current_section = 'config' %}
+{% elif type in ['modules', 'module-run-report', 'four-award'] %}
+  {% set current_section = 'modules' %}
+{% elif type == 'jobs-yaml' %}
+  {% set current_section = 'jobs-yaml' %}
 {% endif %}
 
 <header class="header">
-  <span class="logo">
-    <b>Rollback</b> & <b>Queue</b>
-  </span>
+  <a class="brand-mark" href="/goto?tab=rollback-queue" aria-label="Chuck the Buckbot Framework home">
+    <img src="/static/assets/chuck-framework-icon.png" alt="" class="brand-icon">
+    <span class="brand-text">Chuck the Buckbot Framework</span>
+  </a>
 
   <nav class="header-tabs" aria-label="Primary navigation">
     <a
@@ -52,10 +60,28 @@
     <a
       class="header-tab{% if current_section == 'config' %} is-active{% endif %}"
       aria-current="{% if current_section == 'config' %}page{% else %}false{% endif %}"
-      href="{% if is_bot_admin %}/goto?tab=rollback-config{% else %}/goto?tab=documentation{% endif %}"
+      href="{% if nav_can_config %}/goto?tab=rollback-config{% else %}/goto?tab=documentation{% endif %}"
     >
       Config
     </a>
+    {% if nav_can_modules %}
+    <a
+      class="header-tab{% if current_section == 'modules' %} is-active{% endif %}"
+      aria-current="{% if current_section == 'modules' %}page{% else %}false{% endif %}"
+      href="{{ nav_modules_href }}"
+    >
+      Modules
+    </a>
+    {% if nav_can_manage_modules %}
+    <a
+      class="header-tab{% if current_section == 'jobs-yaml' %} is-active{% endif %}"
+      aria-current="{% if current_section == 'jobs-yaml' %}page{% else %}false{% endif %}"
+      href="/goto?tab=jobs-yaml"
+    >
+      Jobs YAML
+    </a>
+    {% endif %}
+    {% endif %}
   </nav>
 
   {% if username %}
@@ -63,9 +89,11 @@
       <span>{{ username }}</span>
       <a href="/logout" class="logout">Logout</a>
     </div>
+  {% else %}
+    <div class="user-area"></div>
   {% endif %}
 </header>
-  <div class="container">
+  <div class="page-shell">
     <div class="subnav" aria-label="Section navigation">
       {% if current_section == 'rollback' %}
       <a class="subnav-item{% if type == 'rollback-queue' %} is-active{% endif %}" href="/goto?tab=rollback-queue">Rollback Queue</a>
@@ -82,13 +110,21 @@
       {% endif %}
       {% endif %}
       {% elif current_section == 'config' %}
-      {% if is_bot_admin %}
+      {% if nav_can_config %}
       <a class="subnav-item{% if type == 'runtime-config' %} is-active{% endif %}" href="/goto?tab=rollback-config">Runtime Config</a>
       {% endif %}
       <a class="subnav-item" href="/goto?tab=documentation">Documentation</a>
+      {% elif current_section == 'modules' %}
+      {% if nav_can_modules %}
+      {% if nav_can_manage_modules %}
+      <a class="subnav-item{% if type == 'modules' %} is-active{% endif %}" href="/goto?tab=modules">Module Management</a>
+      {% endif %}
+      {% if nav_can_four_award %}
+      <a class="subnav-item{% if type == 'four-award' %} is-active{% endif %}" href="/goto?tab=four-award">4award Runs</a>
+      {% endif %}
+      {% endif %}
       {% endif %}
     </div>
-<div id="app"></div>
     {% block content %}
     {% endblock %}
   </div>

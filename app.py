@@ -3,7 +3,11 @@ import time
 import threading
 import requests
 
-from flask_cors import CORS
+try:
+    from flask_cors import CORS
+except ImportError:  # pragma: no cover - dev/test fallback when deps are incomplete
+    def CORS(*_args, **_kwargs):
+        return None
 from flask import Flask, session
 
 from blueprint import assets_blueprint
@@ -119,6 +123,18 @@ def inject_user_permissions():
 
 
 import router  # noqa: E402,F401
+from pathlib import Path
+
+from router.module_registry import (  # noqa: E402
+    bootstrap_installed_module_definitions,
+    bootstrap_module_definitions,
+)
+from router.module_runtime import register_enabled_modules  # noqa: E402
+
+if os.getenv("ENABLE_MODULE_LOADING", "0") == "1":
+    bootstrap_module_definitions(Path(__file__).resolve().parent / "modules")
+    bootstrap_installed_module_definitions()
+    register_enabled_modules(flask_app)
 
 CORS(
     flask_app,

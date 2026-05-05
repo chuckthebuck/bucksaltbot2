@@ -1,5 +1,6 @@
 """Tests for status_updater.py."""
 
+import time
 from unittest.mock import MagicMock, patch
 
 
@@ -10,17 +11,32 @@ def test_resolve_pywikibot_dir_falls_back_from_unwritable_home(monkeypatch):
     monkeypatch.setenv("HOME", "/data/project/buckbot")
 
     attempted: list[str] = []
+    original_mkdir = pywikibot_env.Path.mkdir
 
     def fake_mkdir(path_obj, parents=False, exist_ok=False):
         attempted.append(str(path_obj))
         if str(path_obj).startswith("/data/project"):
             raise PermissionError("denied")
+        return original_mkdir(path_obj, parents=parents, exist_ok=exist_ok)
 
     with patch("pywikibot_env.Path.mkdir", new=fake_mkdir):
         resolved = pywikibot_env.resolve_pywikibot_dir()
 
-    assert str(resolved) == "/workspace/.pywikibot"
+    assert str(resolved) in {"/workspace/.pywikibot", f"/tmp/.pywikibot-{pywikibot_env.os.getuid()}"}
     assert attempted[0] == "/data/project/buckbot/.pywikibot"
+
+
+def test_generated_pywikibot_config_supports_commons_and_enwiki():
+    import pywikibot_env
+
+    config = pywikibot_env._desired_user_config("Chuckbot")
+
+    assert "usernames['commons']['commons'] = 'Chuckbot'" in config
+    assert "usernames['commons']['*'] = 'Chuckbot'" in config
+    assert "usernames['wikipedia']['en'] = 'Chuckbot'" in config
+    assert "usernames['wikipedia']['*'] = 'Chuckbot'" in config
+    assert "authenticate['commons.wikimedia.org'] = _oauth" in config
+    assert "authenticate['en.wikipedia.org'] = _oauth" in config
 
 
 # ── is_large_job ──────────────────────────────────────────────────────────────
@@ -333,6 +349,61 @@ def test_run_status_cron_update_preserves_job_fields(monkeypatch):
 
     assert "current_job" not in written_keys
     assert "last_job" not in written_keys
+
+
+def test_run_status_cron_update_uses_configurable_text(monkeypatch):
+    import status_updater
+
+    monkeypatch.setenv("NOTDEV", "1")
+    monkeypatch.setenv("STATUS_CRON_EDITING", "Watching")
+    monkeypatch.setenv("STATUS_CRON_WEB", "Degraded")
+    monkeypatch.setenv("STATUS_CRON_DETAILS", "Custom heartbeat")
+
+    written = {}
+
+    def track_save(site, key, text):
+        written[key] = text
+
+    with (
+        patch("status_updater._save_status_subpage", side_effect=track_save),
+        patch("status_updater._get_authenticated_site", return_value=MagicMock()),
+    ):
+        status_updater.run_status_cron_update()
+
+    assert written["editing"] == "Watching"
+    assert written["web"] == "Degraded"
+    assert written["details"] == "Custom heartbeat"
+
+
+def test_update_wiki_status_skips_duplicate_inside_configured_interval(monkeypatch):
+    import status_updater
+
+    monkeypatch.setenv("NOTDEV", "1")
+    monkeypatch.setenv("STATUS_UPDATE_MIN_INTERVAL_SECONDS", "60")
+
+    fields = {
+        "editing": "Idle",
+        "web": "Online",
+        "last_edit": "Unknown",
+        "details": "",
+        "warning": "",
+        "updated": "ignored",
+        "current_job": "None",
+        "last_job": "None",
+    }
+    fingerprint = status_updater._status_payload_fingerprint(fields)
+    mock_redis = MagicMock()
+    mock_redis.get.side_effect = [fingerprint, str(time.time())]
+
+    with (
+        patch.object(status_updater, "_redis", mock_redis),
+        patch("status_updater._save_status_subpage") as mock_save,
+        patch("status_updater._get_authenticated_site", return_value=MagicMock()),
+        patch("status_updater.get_last_bot_edit", return_value="Unknown"),
+    ):
+        status_updater.update_wiki_status("Idle")
+
+    mock_save.assert_not_called()
 
 
 # ── notify_maintainers ────────────────────────────────────────────────────────

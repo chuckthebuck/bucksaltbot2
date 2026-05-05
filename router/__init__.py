@@ -53,8 +53,12 @@ from router.authz import (  # noqa: F401
     _persist_runtime_authz_updates,
     _runtime_authz_defaults,
     _serialize_runtime_authz_config,
+    get_project_user_groups,
+    get_user_global_groups,
     get_user_groups,
     is_bot_admin,
+    module_right_atom,
+    user_has_module_right,
 )
 from router.diff_state import (  # noqa: F401
     _ACCOUNT_ROLLBACK_MAX_LIMIT,
@@ -71,6 +75,19 @@ from router.diff_state import (  # noqa: F401
     _store_diff_payload,
     _update_diff_payload,
 )
+from router import module_registry as module_registry  # noqa: F401
+from router.module_registry import (  # noqa: F401
+    claim_next_queued_module_job_run,
+    create_module_job_run,
+    get_module_config,
+    get_module_job_run,
+    list_module_job_runs,
+    request_module_job_run_cancel,
+    request_module_job_runs_cancel,
+    update_module_job_run,
+    upsert_module_config,
+)
+from router import module_runtime as module_runtime  # noqa: F401
 from router.framework_config import (  # noqa: F401
     ALLOWED_GROUPS as FRAMEWORK_ALLOWED_GROUPS,
     BOT_NAME,

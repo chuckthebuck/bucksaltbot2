@@ -30,6 +30,7 @@ export interface CreateJobItem {
 export interface QueueProps {
   username: string | null;
   is_maintainer: boolean;
+  can_manage_modules?: boolean;
   jobs: JobRow[];
 }
 
@@ -52,16 +53,9 @@ export interface AllJobsRow {
 }
 
 export interface RuntimeAuthzConfig {
-  EXTRA_AUTHORIZED_USERS: string[];
-  USERS_READ_ONLY: string[];
-  USERS_TESTER: string[];
-  USERS_GRANTED_FROM_DIFF: string[];
-  USERS_GRANTED_VIEW_ALL: string[];
-  USERS_GRANTED_BATCH: string[];
-  USERS_GRANTED_CANCEL_ANY: string[];
-  USERS_GRANTED_RETRY_ANY: string[];
-  USER_GRANTS_JSON: Record<string, string[]>;
-  AUTO_GRANTS_JSON: Record<string, string[]>;
+  ROLLBACK_CONTROL_JSON: Record<string, string[]>;
+  ROLE_GRANTS_JSON: Record<string, string[]>;
+  CHUCKBOT_GROUPS_JSON: Record<string, string[]>;
   RATE_LIMIT_JOBS_PER_HOUR: number;
   RATE_LIMIT_TESTER_JOBS_PER_HOUR: number;
 }
@@ -74,6 +68,9 @@ export interface RuntimeAuthzResponse {
   grant_groups?: string[];
   grant_rights?: string[];
   auto_grant_roles?: string[];
+  project_group_options?: Record<string, string[]>;
+  global_group_options?: string[];
+  module_rights?: Record<string, string[]>;
 }
 
 export interface RuntimeUserGrantsResponse {
@@ -86,6 +83,8 @@ export interface RuntimeUserGrantsResponse {
   expanded_rights: string[];
   implicit: Record<string, boolean>;
   commons_groups?: string[];
+  project_groups?: Record<string, string[]>;
+  global_groups?: string[];
   commons_groups_refreshed?: boolean;
   implicit_flag_order?: string[];
   grant_groups?: string[];
@@ -142,7 +141,10 @@ export interface RollbackRequestPreview {
 // ------------------------
 
 export function getInitialProps(): QueueProps {
-  const el = document.getElementById("rollback-queue-props");
+  const el =
+    document.getElementById("rollback-queue-props") ||
+    document.getElementById("modules-props") ||
+    document.getElementById("jobs-yaml-props");
 
   if (!el?.textContent) {
     return { username: null, is_maintainer: false, jobs: [] };
@@ -154,6 +156,7 @@ export function getInitialProps(): QueueProps {
     return {
       username: parsed.username ?? null,
       is_maintainer: !!parsed.is_maintainer,
+      can_manage_modules: !!(parsed.can_manage_modules ?? parsed.is_maintainer),
       jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
     };
   } catch (e) {
@@ -388,7 +391,7 @@ export async function approveJob(id: number, endpoint?: string): Promise<any> {
   try {
     data = await r.json();
   } catch {
-    data = null;
+    // Keep the fallback error below when the response body is not JSON.
   }
 
   if (!r.ok) {
@@ -411,7 +414,7 @@ export async function rejectRollbackRequest(id: number): Promise<any> {
   try {
     data = await r.json();
   } catch {
-    data = null;
+    // Keep the fallback error below when the response body is not JSON.
   }
 
   if (!r.ok) {
@@ -434,7 +437,7 @@ export async function forceDryRunRequest(id: number): Promise<any> {
   try {
     data = await r.json();
   } catch {
-    data = null;
+    // Keep the fallback error below when the response body is not JSON.
   }
 
   if (!r.ok) {
@@ -457,7 +460,7 @@ export async function runJobLive(id: number): Promise<any> {
   try {
     data = await r.json();
   } catch {
-    data = null;
+    // Keep the fallback error below when the response body is not JSON.
   }
 
   if (!r.ok) {
@@ -592,4 +595,270 @@ export async function updateRuntimeUserGrants(
   }
 
   return data;
+}
+
+// ------------------------
+// MODULES
+// ------------------------
+
+export interface ModuleItem {
+  name: string;
+  title: string;
+  enabled: boolean;
+  ui_enabled: boolean;
+  has_access: boolean;
+  can_manage?: boolean;
+  can_estop?: boolean;
+  redis_namespace: string;
+  oauth_consumer_mode: string;
+  cron_jobs: Array<{
+    name: string;
+    schedule: string;
+    schedule_text?: string | null;
+    endpoint: string;
+    handler?: string | null;
+    execution_mode?: string;
+    concurrency_policy?: string;
+    timeout_seconds: number;
+    enabled: boolean;
+  }>;
+}
+
+export interface ModuleRunItem {
+  id: number;
+  module_name: string;
+  job_name: string;
+  status: string;
+  trigger_type: string;
+  triggered_by?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  exit_code?: number | null;
+  error?: string | null;
+  payload?: Record<string, unknown>;
+  result?: {
+    dry_run?: boolean;
+    approved?: number;
+    failed?: number;
+    manual?: number;
+    dry_run_edits?: Array<{
+      title?: string;
+      summary?: string;
+      before_chars?: number;
+      after_chars?: number;
+      delta_chars?: number;
+      diff?: string;
+    }>;
+    dry_run_report?: {
+      published?: {
+        title?: string;
+        saved?: boolean;
+      } | null;
+      wikitext?: string;
+    };
+  };
+  created_at?: string | null;
+}
+
+export async function fetchModules(): Promise<ModuleItem[]> {
+  const r = await fetch("/api/v1/modules");
+  const data = await r.json();
+
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to fetch modules: ${r.status}`);
+  }
+
+  return data.modules || [];
+}
+
+export async function toggleModuleEnabled(
+  moduleName: string,
+  enabled: boolean
+): Promise<{ module: string; enabled: boolean }> {
+  const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/enabled`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ enabled }),
+  });
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to toggle module: ${r.status}`);
+  }
+
+  return data;
+}
+
+export async function emergencyStopModule(moduleName: string): Promise<{
+  module: string;
+  enabled: boolean;
+  canceled_runs: number;
+  kill_results: Array<unknown>;
+  module_specific?: Record<string, unknown>;
+}> {
+  const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/estop`, {
+    method: "POST",
+  });
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to emergency-stop module: ${r.status}`);
+  }
+
+  return data;
+}
+
+export async function updateModuleAccess(
+  moduleName: string,
+  username: string,
+  enabled: boolean
+): Promise<{ module: string; username: string; enabled: boolean }> {
+  const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/access`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ username, enabled }),
+  });
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to update module access: ${r.status}`);
+  }
+
+  return data;
+}
+
+export async function updateModuleJob(
+  moduleName: string,
+  jobName: string,
+  updates: {
+    schedule_text?: string;
+    schedule?: string;
+    timeout_seconds?: number;
+    enabled?: boolean;
+  }
+): Promise<{ detail?: string; jobs: ModuleItem["cron_jobs"] }> {
+  const r = await fetch(
+    `/api/v1/modules/${encodeURIComponent(moduleName)}/jobs/${encodeURIComponent(jobName)}`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(updates),
+    }
+  );
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to update module job: ${r.status}`);
+  }
+
+  return data;
+}
+
+export async function fetchModuleJobs(
+  moduleName: string
+): Promise<{ jobs: ModuleItem["cron_jobs"]; runs: ModuleRunItem[] }> {
+  const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/jobs`);
+  const data = await r.json();
+
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to fetch module jobs: ${r.status}`);
+  }
+
+  return {
+    jobs: Array.isArray(data.jobs) ? data.jobs : [],
+    runs: Array.isArray(data.runs) ? data.runs : [],
+  };
+}
+
+export async function fetchFourAwardRuns(): Promise<{
+  module: string;
+  jobs: ModuleItem["cron_jobs"];
+  runs: ModuleRunItem[];
+  can_run: boolean;
+}> {
+  const r = await fetch("/api/v1/four-award/runs");
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to fetch 4award runs: ${r.status}`);
+  }
+  return {
+    module: data.module || "four_award",
+    jobs: Array.isArray(data.jobs) ? data.jobs : [],
+    runs: Array.isArray(data.runs) ? data.runs : [],
+    can_run: !!data.can_run,
+  };
+}
+
+export async function fetchFourAwardRun(
+  runId: number
+): Promise<{ run: ModuleRunItem }> {
+  const r = await fetch(`/api/v1/four-award/runs/${encodeURIComponent(runId)}`);
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to fetch 4award run: ${r.status}`);
+  }
+  return data;
+}
+
+export async function queueFourAwardHistoricalDiffTest(payload: {
+  diff: string;
+  job_name?: string;
+}): Promise<{
+  module: string;
+  job: string;
+  run_id: number;
+  status: string;
+  detail?: string;
+}> {
+  const r = await fetch("/api/v1/four-award/test-runs", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to queue 4award test: ${r.status}`);
+  }
+  return data;
+}
+
+export async function fetchModuleConfig(
+  moduleName: string
+): Promise<Record<string, unknown>> {
+  const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/config`);
+  const data = await r.json();
+
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to fetch module config: ${r.status}`);
+  }
+
+  return data.config || {};
+}
+
+export async function updateModuleConfig(
+  moduleName: string,
+  config: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/config`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ config }),
+  });
+
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data?.detail || `Failed to update module config: ${r.status}`);
+  }
+
+  return data.config || {};
 }

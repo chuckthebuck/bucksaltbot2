@@ -1,5 +1,6 @@
 """Flask route handlers and route helper functions."""
 
+import logging
 import os
 import sys as _sys
 import secrets
@@ -7,7 +8,7 @@ import time
 
 import mwoauth
 import mwoauth.flask
-import logging
+import requests
 
 from flask import (
     Response,
@@ -35,6 +36,11 @@ from router.authz import (  # noqa: F401
     _normalize_username,
     _normalize_user_grants_map_input,
     _normalize_auto_grants_map_input,
+    _configured_user_grant_groups,
+    get_global_userright_groups,
+    get_project_userright_groups,
+    module_right_atom,
+    user_has_module_right,
 )
 from router.diff_state import _diff_error_key, _maybe_mark_stale_resolving_job_failed
 
@@ -59,6 +65,22 @@ from router.permissions import (
     _can_manage_user_grants,
 )
 from router.diff_state import _ACCOUNT_ROLLBACK_MAX_LIMIT, _ROLLBACKABLE_WINDOW_LIMIT
+from router.module_registry import (
+    create_module_job_run,
+    get_module_config,
+    get_module_definition,
+    get_module_job_run,
+    list_module_cron_jobs,
+    list_module_definitions,
+    list_module_job_runs,
+    request_module_job_run_cancel,
+    set_module_enabled,
+    update_module_cron_job,
+    upsert_module_config,
+    upsert_module_access,
+    user_has_module_access,
+    install_remote_module,
+)
 from router.framework_config import (
     DOCS_URL,
     MWOAUTH_BASE_URL,
@@ -67,6 +89,7 @@ from router.framework_config import (
     WORKER_HEARTBEAT_KEY,
     oauth_callback_url,
 )
+from router.module_estop import emergency_stop_module
 
 
 def _r():
@@ -173,6 +196,84 @@ def _user_permissions(*a, **kw):
     return _r()._user_permissions(*a, **kw)
 
 
+def _has_permission(username: str | None, permission: str) -> bool:
+    return bool(username and permission in _user_permissions(username))
+
+
+def _can_manage_modules(username: str | None) -> bool:
+    return bool(username and (is_maintainer(username) or _has_permission(username, "manage_modules")))
+
+
+def _can_view_modules(username: str | None) -> bool:
+    if not username:
+        return False
+    if _can_manage_modules(username):
+        return True
+    if _has_permission(username, "view_all"):
+        return True
+    return any(str(permission).startswith("module:") for permission in _user_permissions(username))
+
+
+def _can_manage_module(username: str | None, module_name: str) -> bool:
+    return bool(
+        username
+        and (
+            is_maintainer(username)
+            or _has_permission(username, "manage_modules")
+            or user_has_module_right(username, module_name, "manage")
+        )
+    )
+
+
+def _can_estop_module(username: str | None, module_name: str) -> bool:
+    return bool(
+        username
+        and (
+            _can_manage_module(username, module_name)
+            or _has_permission(username, "manage_modules")
+            or user_has_module_right(username, module_name, "estop")
+            or (
+                module_name == "rollback"
+                and _has_permission(username, "estop_rollback")
+            )
+        )
+    )
+
+
+def _can_run_module_jobs(username: str | None, module_name: str) -> bool:
+    return bool(
+        username
+        and (
+            _can_manage_module(username, module_name)
+            or _has_permission(username, "run_module_jobs")
+            or user_has_module_right(username, module_name, "run_jobs")
+        )
+    )
+
+
+def _can_view_module_jobs(username: str | None, module_name: str) -> bool:
+    return bool(
+        username
+        and (
+            _can_run_module_jobs(username, module_name)
+            or _has_permission(username, "view_all")
+            or _has_permission(username, module_right_atom(module_name, "view_jobs"))
+            or user_has_module_right(username, module_name, "view_jobs")
+        )
+    )
+
+
+def _can_edit_module_config(username: str | None, module_name: str) -> bool:
+    return bool(
+        username
+        and (
+            _can_manage_module(username, module_name)
+            or _has_permission(username, "edit_module_config")
+            or user_has_module_right(username, module_name, "edit_config")
+        )
+    )
+
+
 def _check_rate_limit(*a, **kw):
     return _r()._check_rate_limit(*a, **kw)
 
@@ -217,16 +318,28 @@ def inject_nav_capabilities():
         return {
             "nav_can_write": False,
             "nav_can_all_jobs": False,
+            "nav_can_config": False,
             "nav_is_admin": False,
+            "nav_can_modules": False,
         }
 
     perms = _user_permissions(username)
     is_admin = bool(session.get("is_admin") or is_admin_user(username))
+    can_manage_modules = _can_view_modules(username)
+    can_edit_modules = _can_manage_modules(username)
+    can_view_four_award = _four_award_operator_allowed(username)
 
     return {
         "nav_can_write": bool("write" in perms),
         "nav_can_all_jobs": bool("read_all" in perms or is_admin),
+        "nav_can_config": bool(_can_view_runtime_config(username)),
         "nav_is_admin": is_admin,
+        "nav_can_modules": can_manage_modules,
+        "nav_can_manage_modules": can_edit_modules,
+        "nav_can_four_award": can_view_four_award,
+        "nav_modules_href": "/goto?tab=four-award"
+        if can_view_four_award and not can_edit_modules
+        else "/goto?tab=modules",
     }
 
 
@@ -384,7 +497,7 @@ def _can_actor_approve(actor: str, required_level: str | None) -> bool:
 def _can_review_requests_impl(username: str) -> bool:
     if not username:
         return False
-    return is_maintainer(username) or is_admin_user(username)
+    return _has_permission(username, "approve_jobs")
 
 
 def _can_review_requests(username: str) -> bool:
@@ -602,6 +715,21 @@ def goto():
         if not _can_view_runtime_config(username):
             abort(403)
         return redirect("/rollback-config")
+
+    if tab == "modules":
+        if not (_can_view_modules(username)):
+            abort(403)
+        return redirect("/modules")
+
+    if tab == "four-award":
+        if not _four_award_operator_allowed(username):
+            abort(403)
+        return redirect("/four-award")
+
+    if tab == "jobs-yaml":
+        if not (_can_manage_modules(username)):
+            abort(403)
+        return redirect("/jobs-yaml")
 
     if tab == "documentation":
         return redirect(DOCS_URL)
@@ -1467,7 +1595,7 @@ def rollback_queue_all_jobs_ui():
         jobs=jobs,
         username=username,
         can_approve_diff=bool(is_maintainer(username)),
-        can_approve_batch=bool(is_maintainer(username) or is_admin_user(username)),
+        can_approve_batch=bool(_has_permission(username, "approve_jobs")),
         type="rollback-all-jobs",
     )
 
@@ -1507,6 +1635,44 @@ def rollback_config_ui():
     )
 
 
+@app.route("/modules")
+def modules_ui():
+    username = session.get("username")
+
+    if not username:
+        abort(401)
+
+    if not (_can_manage_modules(username)):
+        abort(403)
+
+    return render_template(
+        "modules.html",
+        username=username,
+        is_maintainer=is_maintainer(username),
+        is_bot_admin=is_admin_user(username),
+        type="modules",
+    )
+
+
+@app.route("/jobs-yaml")
+def jobs_yaml_ui():
+    username = session.get("username")
+
+    if not username:
+        abort(401)
+
+    if not (_can_manage_modules(username)):
+        abort(403)
+
+    return render_template(
+        "jobs_yaml.html",
+        username=username,
+        is_maintainer=is_maintainer(username),
+        is_bot_admin=is_admin_user(username),
+        type="jobs-yaml",
+    )
+
+
 @app.route("/api/v1/config/authz", methods=["GET"])
 def get_runtime_authz_api():
     username = session.get("username")
@@ -1518,15 +1684,32 @@ def get_runtime_authz_api():
         return jsonify({"detail": "Forbidden"}), 403
 
     config = _effective_runtime_authz_config()
+    role_map = config.get("ROLE_GRANTS_JSON") or {}
+    projects = {"commons", "enwiki"}
+    if isinstance(role_map, dict):
+        for role in role_map:
+            parts = str(role or "").split(":")
+            if len(parts) == 3 and parts[0] == "project" and parts[1]:
+                projects.add(parts[1])
     return jsonify(
         {
             "config": _serialize_runtime_authz_config(config),
             "can_edit": _can_edit_runtime_config(username),
             "can_manage_user_grants": _can_manage_user_grants(username),
             "editable_keys": _RUNTIME_AUTHZ_ALLOWED_KEYS,
-            "grant_groups": sorted(_USER_GRANT_GROUPS.keys()),
+            "grant_groups": sorted(_configured_user_grant_groups(config).keys()),
             "grant_rights": sorted(_USER_GRANT_RIGHTS),
-            "auto_grant_roles": sorted(_AUTO_GRANT_ROLE_KEYS),
+            "auto_grant_roles": sorted((config.get("ROLE_GRANTS_JSON") or {}).keys()),
+            "project_group_options": {
+                project: get_project_userright_groups(project)
+                for project in sorted(projects)
+            },
+            "global_group_options": get_global_userright_groups(),
+            "module_rights": {
+                record.definition.name: sorted({"estop", *record.definition.rights})
+                for record in list_module_definitions()
+                if record.definition.rights or record.definition.name
+            },
         }
     )
 
@@ -1558,6 +1741,13 @@ def update_runtime_authz_api():
 
     _persist_runtime_authz_updates(normalized_updates, updated_by=username)
     effective = _effective_runtime_authz_config()
+    role_map = effective.get("ROLE_GRANTS_JSON") or {}
+    projects = {"commons", "enwiki"}
+    if isinstance(role_map, dict):
+        for role in role_map:
+            parts = str(role or "").split(":")
+            if len(parts) == 3 and parts[0] == "project" and parts[1]:
+                projects.add(parts[1])
 
     return jsonify(
         {
@@ -1566,9 +1756,19 @@ def update_runtime_authz_api():
             "can_edit": _can_edit_runtime_config(username),
             "can_manage_user_grants": _can_manage_user_grants(username),
             "editable_keys": _RUNTIME_AUTHZ_ALLOWED_KEYS,
-            "grant_groups": sorted(_USER_GRANT_GROUPS.keys()),
+            "grant_groups": sorted(_configured_user_grant_groups(effective).keys()),
             "grant_rights": sorted(_USER_GRANT_RIGHTS),
-            "auto_grant_roles": sorted(_AUTO_GRANT_ROLE_KEYS),
+            "auto_grant_roles": sorted((effective.get("ROLE_GRANTS_JSON") or {}).keys()),
+            "project_group_options": {
+                project: get_project_userright_groups(project)
+                for project in sorted(projects)
+            },
+            "global_group_options": get_global_userright_groups(),
+            "module_rights": {
+                record.definition.name: sorted({"estop", *record.definition.rights})
+                for record in list_module_definitions()
+                if record.definition.rights or record.definition.name
+            },
         }
     )
 
@@ -1597,7 +1797,7 @@ def get_runtime_authz_user_grants(target_username: str):
         normalized_target, config, commons_groups=commons_groups
     )
     payload["implicit_flag_order"] = list(_USER_IMPLICIT_FLAGS)
-    payload["grant_groups"] = sorted(_USER_GRANT_GROUPS.keys())
+    payload["grant_groups"] = sorted(_configured_user_grant_groups(config).keys())
     payload["grant_rights"] = sorted(_USER_GRANT_RIGHTS)
     payload["can_edit"] = _can_manage_user_grants(username)
     payload["commons_groups_refreshed"] = bool(refresh_commons)
@@ -1632,7 +1832,7 @@ def update_runtime_authz_user_grants(target_username: str):
 
     normalized_entry, errors = _normalize_runtime_authz_updates(
         {
-            "USER_GRANTS_JSON": {
+            "ROLLBACK_CONTROL_JSON": {
                 normalized_target: {
                     "groups": groups,
                     "rights": rights,
@@ -1645,16 +1845,16 @@ def update_runtime_authz_user_grants(target_username: str):
         return jsonify({"detail": "; ".join(errors)}), 400
 
     config = _effective_runtime_authz_config()
-    grants_map = dict(config.get("USER_GRANTS_JSON") or {})
+    grants_map = dict(config.get("ROLLBACK_CONTROL_JSON") or {})
 
-    user_map = normalized_entry.get("USER_GRANTS_JSON", {})
+    user_map = normalized_entry.get("ROLLBACK_CONTROL_JSON", {})
     if normalized_target in user_map:
         grants_map[normalized_target] = user_map[normalized_target]
     else:
         grants_map.pop(normalized_target, None)
 
     _persist_runtime_authz_updates(
-        {"USER_GRANTS_JSON": grants_map}, updated_by=username
+        {"ROLLBACK_CONTROL_JSON": grants_map}, updated_by=username
     )
     updated_config = _effective_runtime_authz_config()
     response_payload = _get_user_grants_payload(normalized_target, updated_config)
@@ -2681,11 +2881,55 @@ def get_rollback_job(job_id):
 
 @app.route("/")
 def index():
+    username = session.get("username")
+    can_manage_modules = bool(username and _can_view_modules(username))
+    module_rows = []
+    if can_manage_modules:
+        module_rows = [
+            {
+                "name": record.definition.name,
+                "title": record.definition.title or record.definition.name,
+                "enabled": bool(record.enabled),
+                "jobs": len(record.definition.cron_jobs),
+            }
+            for record in list_module_definitions()
+        ]
+
     return render_template(
         "index.html",
-        username=session.get("username"),
+        username=username,
+        can_manage_modules=can_manage_modules,
+        modules=module_rows,
         type="index",
     )
+
+
+@app.route("/modules/estop/<path:module_name>", methods=["POST"])
+def module_estop_form(module_name: str):
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login", referrer=url_for("index")))
+    if not (_can_estop_module(username, module_name)):
+        abort(403)
+
+    if get_module_definition(module_name) is None:
+        abort(404)
+
+    emergency_stop_module(module_name, actor=username)
+    return redirect(url_for("index"))
+
+
+@app.route("/modules/estop-all", methods=["POST"])
+def module_estop_all_form():
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login", referrer=url_for("index")))
+    if not (_can_manage_modules(username)):
+        abort(403)
+
+    for record in list_module_definitions():
+        emergency_stop_module(record.definition.name, actor=username)
+    return redirect(url_for("index"))
 
 
 @app.route("/login")
@@ -2779,3 +3023,697 @@ def oauth_callback():
 def logout():
     session.clear()
     return redirect(url_for("index"))
+
+
+@app.route("/api/v1/modules", methods=["GET"])
+def module_registry_api():
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    is_admin = bool(_can_manage_modules(username))
+    modules = []
+    for record in list_module_definitions():
+        definition = record.definition
+        module_admin = _can_manage_module(username, definition.name)
+        module_estopper = _can_estop_module(username, definition.name)
+        module_job_viewer = _can_view_module_jobs(username, definition.name)
+        has_access = user_has_module_access(
+            definition.name,
+            username,
+            is_maintainer=is_admin or module_admin or module_estopper or module_job_viewer,
+        )
+        modules.append(
+            {
+                "name": definition.name,
+                "title": definition.title or definition.name,
+                "enabled": bool(record.enabled),
+                "ui_enabled": bool(definition.ui_enabled),
+                "cron_jobs": [job.as_dict() for job in definition.cron_jobs],
+                "jobs": [job.as_dict() for job in definition.cron_jobs],
+                "has_access": bool(has_access),
+                "can_manage": bool(module_admin),
+                "can_estop": bool(module_estopper),
+                "can_view_jobs": bool(module_job_viewer),
+                "can_run_jobs": bool(_can_run_module_jobs(username, definition.name)),
+                "can_edit_config": bool(_can_edit_module_config(username, definition.name)),
+                "redis_namespace": definition.redis_namespace,
+                "oauth_consumer_mode": definition.oauth_consumer_mode,
+            }
+        )
+
+    return jsonify({"modules": modules})
+
+
+@app.route("/api/v1/modules/<path:module_name>", methods=["GET"])
+def module_registry_item_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    is_admin = bool(
+        _can_manage_modules(username)
+        or _can_manage_module(username, module_name)
+        or _can_view_module_jobs(username, module_name)
+    )
+    if not user_has_module_access(module_name, username, is_maintainer=is_admin):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    payload = record.as_dict()
+    payload["has_access"] = True
+    return jsonify(payload)
+
+
+@app.route("/api/v1/modules/<path:module_name>/enabled", methods=["PUT"])
+def module_registry_toggle_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (_can_manage_module(username, module_name)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    enabled = _parse_bool(payload.get("enabled"), default=True)
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    set_module_enabled(module_name, enabled)
+    return jsonify({"module": module_name, "enabled": bool(enabled)})
+
+
+@app.route("/api/v1/modules/<path:module_name>/estop", methods=["POST"])
+def module_registry_estop_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (_can_estop_module(username, module_name)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    result = emergency_stop_module(module_name, actor=username)
+    return jsonify(
+        {
+            "module": module_name,
+            "enabled": False,
+            "canceled_runs": len(result["canceled_runs"]),
+            "kill_results": result["kill_results"],
+            "module_specific": result["module_specific"],
+        }
+    )
+
+
+@app.route("/api/v1/modules/<path:module_name>/access", methods=["PUT"])
+def module_registry_access_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (_can_manage_module(username, module_name)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    target_username = str(payload.get("username") or "").strip()
+    enabled = _parse_bool(payload.get("enabled"), default=True)
+
+    if not target_username:
+        return jsonify({"detail": "Missing required parameter: username"}), 400
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    upsert_module_access(module_name, target_username, enabled=enabled)
+    return jsonify(
+        {
+            "module": module_name,
+            "username": target_username,
+            "enabled": bool(enabled),
+        }
+    )
+
+
+@app.route("/api/v1/modules/<path:module_name>/config", methods=["GET"])
+def module_config_get_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    is_admin = bool(_can_manage_modules(username) or _can_manage_module(username, module_name))
+    if not user_has_module_access(module_name, username, is_maintainer=is_admin):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    return jsonify({"module": module_name, "config": get_module_config(module_name)})
+
+
+@app.route("/api/v1/modules/<path:module_name>/config", methods=["PUT"])
+def module_config_put_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (_can_edit_module_config(username, module_name)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    updates = payload.get("config", payload)
+    if not isinstance(updates, dict):
+        return jsonify({"detail": "config must be an object"}), 400
+
+    upsert_module_config(module_name, updates, updated_by=username)
+    return jsonify({"module": module_name, "config": get_module_config(module_name)})
+
+
+@app.route("/api/v1/modules/install", methods=["POST"])
+def module_registry_install_api():
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    if not (_can_manage_modules(username)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    repo = str(payload.get("repo") or payload.get("url") or "").strip()
+    enabled = _parse_bool(payload.get("enabled"), default=True)
+
+    if not repo:
+        return jsonify({"detail": "Missing required parameter: repo"}), 400
+
+    try:
+        definition = install_remote_module(repo, enabled_default=enabled)
+    except ValueError as exc:
+        return jsonify({"detail": str(exc)}), 400
+    except Exception:
+        logging.exception("Failed to install remote module %s", repo)
+        return jsonify({"detail": "Internal server error"}), 500
+
+    return jsonify({"module": definition.name, "installed": True, "definition": definition.as_dict()})
+
+
+@app.route("/api/v1/modules/<path:module_name>/jobs", methods=["GET"])
+def module_jobs_api(module_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    is_admin = bool(_can_manage_modules(username) or _can_manage_module(username, module_name))
+    if not user_has_module_access(module_name, username, is_maintainer=is_admin):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    return jsonify(
+        {
+            "module": module_name,
+            "jobs": list_module_cron_jobs(module_name),
+            "runs": list_module_job_runs(module_name),
+        }
+    )
+
+
+def _four_award_operator_allowed(username: str | None) -> bool:
+    if not username:
+        return False
+    return bool(
+        user_has_module_access(
+            "four_award",
+            username,
+            is_maintainer=_can_manage_modules(username)
+            or _can_manage_module(username, "four_award")
+            or _can_view_module_jobs(username, "four_award"),
+        )
+    )
+
+
+def _four_award_run_allowed(username: str | None) -> bool:
+    return bool(username and _can_run_module_jobs(username, "four_award"))
+
+
+def _four_award_default_job_name(record) -> str | None:
+    jobs = list(record.definition.cron_jobs)
+    if not jobs:
+        return None
+    for job in jobs:
+        if job.enabled:
+            return job.name
+    return jobs[0].name
+
+
+def _four_award_revision_text(oldid: int) -> dict[str, str]:
+    config_values = get_module_config("four_award") or {}
+    wiki_code = str(config_values.get("wiki_code") or "en").strip() or "en"
+    wiki_family = str(config_values.get("wiki_family") or "wikipedia").strip() or "wikipedia"
+    api_url = str(config_values.get("wiki_api_url") or "").strip()
+    if not api_url and wiki_family == "wikipedia":
+        api_url = f"https://{wiki_code}.wikipedia.org/w/api.php"
+    if not api_url:
+        api_url = "https://en.wikipedia.org/w/api.php"
+
+    params = {
+        "action": "query",
+        "prop": "revisions",
+        "revids": str(oldid),
+        "rvprop": "ids|timestamp|user|content",
+        "rvslots": "main",
+        "format": "json",
+        "formatversion": "2",
+    }
+    try:
+        response = requests.get(api_url, params=params, timeout=20)
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as exc:
+        raise ValueError(f"Failed to fetch historical revision {oldid}: {exc}") from exc
+
+    pages = data.get("query", {}).get("pages", [])
+    if not pages or pages[0].get("missing"):
+        raise ValueError(f"Revision {oldid} was not found")
+    page = pages[0]
+    revisions = page.get("revisions") or []
+    if not revisions:
+        raise ValueError(f"Revision {oldid} did not include page text")
+    revision = revisions[0]
+    content = revision.get("slots", {}).get("main", {}).get("content", "")
+    if not isinstance(content, str):
+        content = ""
+    if not content:
+        raise ValueError(f"Revision {oldid} had empty page text")
+
+    expected_title = str(config_values.get("four_page") or "Wikipedia:Four Award").strip()
+    revision_title = str(page.get("title") or "").strip()
+    if expected_title and revision_title and revision_title != expected_title:
+        raise ValueError(
+            f"Revision {oldid} belongs to [[{revision_title}]], not [[{expected_title}]]"
+        )
+
+    return {
+        "title": revision_title,
+        "text": content,
+        "timestamp": str(revision.get("timestamp") or ""),
+        "user": str(revision.get("user") or ""),
+    }
+
+
+@app.route("/four-award")
+@app.route("/4award")
+def four_award_runs_page():
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login", referrer=url_for("four_award_runs_page")))
+
+    if not _four_award_operator_allowed(username):
+        abort(403)
+
+    return render_template(
+        "four_award_runs.html",
+        type="four-award",
+        username=username,
+        can_run_four_award=_four_award_run_allowed(username),
+    )
+
+
+@app.route("/api/v1/four-award/runs", methods=["GET"])
+def four_award_runs_api():
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not _four_award_operator_allowed(username):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    record = get_module_definition("four_award")
+    if record is None:
+        return jsonify({"detail": "Chuck the 4awardhelper is not installed"}), 404
+
+    return jsonify(
+        {
+            "module": "four_award",
+            "jobs": list_module_cron_jobs("four_award"),
+            "runs": list_module_job_runs("four_award", limit=50),
+            "can_run": _four_award_run_allowed(username),
+        }
+    )
+
+
+@app.route("/api/v1/four-award/runs/<int:run_id>", methods=["GET"])
+def four_award_run_api(run_id: int):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not _four_award_operator_allowed(username):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    run = get_module_job_run(run_id)
+    if run is None or run.get("module_name") != "four_award":
+        return jsonify({"detail": "Run not found"}), 404
+
+    return jsonify({"run": run})
+
+
+@app.route("/api/v1/four-award/test-runs", methods=["POST"])
+def four_award_test_run_api():
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not _four_award_run_allowed(username):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    record = get_module_definition("four_award")
+    if record is None:
+        return jsonify({"detail": "Chuck the 4awardhelper is not installed"}), 404
+    if not record.enabled:
+        return jsonify({"detail": "Chuck the 4awardhelper is disabled"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    diff = str(payload.get("diff") or "").strip()
+    if not diff:
+        return jsonify({"detail": "Missing required parameter: diff"}), 400
+
+    try:
+        oldid = _extract_oldid(diff)
+    except ValueError as exc:
+        return jsonify({"detail": str(exc)}), 400
+    try:
+        revision = _four_award_revision_text(oldid)
+    except ValueError as exc:
+        return jsonify({"detail": str(exc)}), 400
+
+    job_name = str(payload.get("job_name") or "").strip()
+    available_jobs = {job.name: job for job in record.definition.cron_jobs}
+    if not job_name:
+        job_name = _four_award_default_job_name(record) or ""
+    if not job_name or job_name not in available_jobs:
+        return jsonify({"detail": "No runnable 4award module job is configured"}), 400
+    if not available_jobs[job_name].enabled:
+        return jsonify({"detail": "Selected 4award job is disabled"}), 403
+
+    run_payload = {
+        "mode": "historical_diff_dry_run",
+        "source": "four_award_historical_revision",
+        "dry_run": True,
+        "diff": diff,
+        "historical_diff": diff,
+        "oldid": oldid,
+        "four_page_title": revision["title"],
+        "four_page_revision_timestamp": revision["timestamp"],
+        "four_page_revision_user": revision["user"],
+        "four_page_text": revision["text"],
+        "publish_dry_run_report": False,
+        "config_overrides": {
+            "dry_run": True,
+            "enabled": True,
+            "allow_automated_approval": True,
+            "ignore_existing_records": True,
+            "publish_dry_run_report": False,
+        },
+    }
+    run_id = create_module_job_run(
+        "four_award",
+        job_name,
+        trigger_type="web_test",
+        triggered_by=username,
+        payload=run_payload,
+    )
+
+    return jsonify(
+        {
+            "module": "four_award",
+            "job": job_name,
+            "run_id": run_id,
+            "status": "queued",
+            "detail": "Historical-diff dry run queued.",
+        }
+    ), 202
+
+
+@app.route(
+    "/api/v1/modules/<path:module_name>/jobs/<path:job_name>",
+    methods=["PUT"],
+)
+def module_job_update_api(module_name: str, job_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (_can_manage_module(username, module_name)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    kwargs = {}
+    if "schedule_text" in payload:
+        kwargs["schedule_text"] = payload.get("schedule_text")
+    if "schedule" in payload:
+        kwargs["schedule"] = payload.get("schedule")
+    if "timeout_seconds" in payload:
+        kwargs["timeout_seconds"] = payload.get("timeout_seconds")
+    if "enabled" in payload:
+        kwargs["enabled"] = _parse_bool(payload.get("enabled"), default=True)
+
+    if not kwargs:
+        return jsonify({"detail": "No job updates provided"}), 400
+
+    try:
+        updated = update_module_cron_job(module_name, job_name, **kwargs)
+    except ValueError as exc:
+        detail = str(exc)
+        status = 404 if detail in {"Module not found", "Job not found"} else 400
+        return jsonify({"detail": detail}), status
+
+    return jsonify(
+        {
+            "module": module_name,
+            "job": job_name,
+            "updated": updated,
+            "jobs": list_module_cron_jobs(module_name),
+            "detail": (
+                "Schedule saved. Regenerate Jobs YAML and reload Toolforge jobs "
+                "for Toolforge to use the new interval."
+            ),
+        }
+    )
+
+
+@app.route(
+    "/api/v1/modules/<path:module_name>/jobs/<path:job_name>/runs",
+    methods=["POST"],
+)
+def module_job_run_now_api(module_name: str, job_name: str):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    if not (_can_run_module_jobs(username, module_name)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+    if not record.enabled:
+        return jsonify({"detail": "Module is disabled"}), 403
+
+    job = next((j for j in record.definition.cron_jobs if j.name == job_name), None)
+    if job is None:
+        return jsonify({"detail": "Job not found"}), 404
+    if not job.enabled:
+        return jsonify({"detail": "Job is disabled"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    run_id = create_module_job_run(
+        module_name,
+        job_name,
+        trigger_type="manual",
+        triggered_by=username,
+        payload=payload,
+    )
+
+    return jsonify(
+        {
+            "module": module_name,
+            "job": job_name,
+            "run_id": run_id,
+            "status": "queued",
+            "detail": (
+                "Run has been queued in Chuck the Buckbot Framework. "
+                "The external job launcher is responsible for starting it."
+            ),
+        }
+    ), 202
+
+
+@app.route("/api/v1/modules/runs/<int:run_id>/cancel", methods=["POST"])
+def module_job_run_cancel_api(run_id: int):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    run = get_module_job_run(run_id)
+    if run is None:
+        return jsonify({"detail": "Run not found"}), 404
+    if not (_can_run_module_jobs(username, run["module_name"])):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    request_module_job_run_cancel(run_id)
+    return jsonify({"run_id": run_id, "status": "cancel_requested"})
+
+
+@app.route("/api/v1/modules/runs/<int:run_id>/restart", methods=["POST"])
+def module_job_run_restart_api(run_id: int):
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+    run = get_module_job_run(run_id)
+    if run is None:
+        return jsonify({"detail": "Run not found"}), 404
+    if not (_can_run_module_jobs(username, run["module_name"])):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    request_module_job_run_cancel(run_id)
+    new_run_id = create_module_job_run(
+        run["module_name"],
+        run["job_name"],
+        trigger_type="restart",
+        triggered_by=username,
+        payload=run.get("payload") or {},
+    )
+    return jsonify(
+        {
+            "previous_run_id": run_id,
+            "run_id": new_run_id,
+            "status": "queued",
+        }
+    ), 202
+
+
+@app.route("/modules/runs/<int:run_id>/report", methods=["GET"])
+def module_job_run_report_page(run_id: int):
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login"))
+
+    run = get_module_job_run(run_id)
+    if run is None:
+        abort(404)
+
+    is_admin = bool(_can_manage_modules(username) or _can_manage_module(username, run["module_name"]))
+    if not user_has_module_access(run["module_name"], username, is_maintainer=is_admin):
+        abort(403)
+
+    result = run.get("result") or {}
+    if not isinstance(result, dict):
+        result = {}
+    dry_run_edits = result.get("dry_run_edits") or []
+    if not isinstance(dry_run_edits, list):
+        dry_run_edits = []
+    dry_run_report = result.get("dry_run_report") or {}
+    if not isinstance(dry_run_report, dict):
+        dry_run_report = {}
+
+    return render_template(
+        "module_run_report.html",
+        type="module-run-report",
+        username=username,
+        run=run,
+        result=result,
+        dry_run_edits=dry_run_edits,
+        report_wikitext=dry_run_report.get("wikitext") or "",
+    )
+
+
+@app.route("/admin/jobs-yaml-preview", methods=["GET"])
+def admin_jobs_yaml_preview():
+    """Generate and preview Toolforge jobs.yaml entries for module cron jobs.
+    
+    This is a manual admin workflow: review the output, add to jobs.yaml in repo, and push.
+    """
+    username = session.get("username")
+    if not username:
+        return jsonify({"detail": "Not authenticated"}), 401
+
+    if not (_can_manage_modules(username)):
+        return jsonify({"detail": "Forbidden"}), 403
+
+    try:
+        from jobs_yaml_generator import generate_jobs_yaml_section
+
+        yaml_section = generate_jobs_yaml_section()
+    except Exception:
+        logging.exception("Failed to generate jobs.yaml entries")
+        return jsonify({"detail": "Failed to generate jobs.yaml"}), 500
+
+    # Return as plain text for easy copy-paste
+    return Response(yaml_section, mimetype="text/plain")
+
+
+@app.route("/api/v1/modules/<path:module_name>/cron/<path:job_name>", methods=["POST"])
+def module_cron_job_trigger(module_name: str, job_name: str):
+    """Trigger a cron job for a module.
+    
+    Called by Toolforge cron scheduler. Validates the job exists and is enabled,
+    then invokes the module's actual endpoint.
+    """
+    module_name = str(module_name or "").strip()
+    job_name = str(job_name or "").strip()
+
+    # Validate module exists and is enabled
+    record = get_module_definition(module_name)
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+
+    if not record.enabled:
+        return jsonify({"detail": "Module is disabled"}), 403
+
+    # Find the cron job in the module's manifest
+    cron_job = None
+    for job in record.definition.cron_jobs:
+        if job.name == job_name:
+            cron_job = job
+            break
+
+    if cron_job is None:
+        return jsonify({"detail": "Cron job not found"}), 404
+
+    if not cron_job.enabled:
+        return jsonify({"detail": "Cron job is disabled"}), 403
+
+    # Invoke the module's cron endpoint via internal HTTP request
+    endpoint = cron_job.endpoint
+    timeout = cron_job.timeout_seconds
+
+    try:
+        # Make an internal request to the module's endpoint
+        # The endpoint should be registered by the module blueprint
+        resp = requests.post(
+            f"http://localhost:5000{endpoint}",
+            timeout=timeout,
+        )
+        return jsonify(
+            {
+                "module": module_name,
+                "job": job_name,
+                "status": "invoked",
+                "endpoint_status": resp.status_code,
+            }
+        )
+    except requests.Timeout:
+        return jsonify(
+            {"detail": f"Cron job timeout after {timeout}s"}
+        ), 504
+    except Exception as exc:
+        logging.exception("Failed to invoke cron job %s/%s", module_name, job_name)
+        return jsonify({"detail": "Failed to invoke cron job"}), 500
