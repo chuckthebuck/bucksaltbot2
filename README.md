@@ -1,276 +1,192 @@
- Buckbot
-
-Buckbot is a distributed rollback orchestration system for Wikimedia projects, designed to safely and efficiently process large-scale rollback and cleanup operations.
-
-It is built to handle burst workloads (including tens of thousands of edits) while maintaining control, observability, and reliability.
-
-
-##  Overview
-
-Buckbot is at its heart an attempt at improving a rollback script to clean up a malfunctioning bot the grew wildly out of hand. 
-
-
-##  Core Concepts
-
-### tasks
-
-a task is an action you need chuckbot to do, and are created by the rollback* APIs (the names start with rollback, such as "api/v1/rollback from diff", ) and take many different forms and inputs, with a focus on keeping calls from the web API lightweight, with as much processing being done by chuckbot as possible. Hence why there's 2 different ways to rollback massive amounts of user contribs with tiny api calls. 
-
----
-### Job Items
-the Job Item is the smallest unit of organisation within chuckbot. They are stored in a seprate table in mariaDB, and the rows unique within chuckbot, but the content's might not be (so the same page might be in the table many times.)
-
-Stored in `rollback_job_items`
-
-A **job item** represents a single rollback action:
-- One page
-- One user edit
-
- **Job items are what actually get executed.**
-A Job item's data populates the mediawiki rollback command. 
-
-
-
-### Jobs
-Jobs are orchestration units in chuckbot. A job groups many job items under shared metadata (requester, dry-run flag, batch_id), and workers execute the items, not the job row itself. Multiple jobs can make up a batch.
-Stored in `rollback_jobs`
-
-A **job** represents a logical request, such as:
-“Rollback all edits from a specific user or diff”.
-There are two classes of jobs: rollback and prep jobs. Prep jobs expand lightweight API input into rollback items, then create one or more rollback jobs for execution. Rollback jobs are chunked by `MAX_JOB_ITEMS` (default 500), queued independently, and can run in parallel depending on worker availability.
-Jobs in the same batch are not guaranteed to run sequentially.
-
-
-### Batches (`batch_id`)
-
-A **batch** groups multiple jobs into a single logical operation.
-
-This is necessary because large requests are split into multiple jobs.
-
-Used for:
-- Progress tracking
-- UI display
-- Notifications
-- Aggregated status
-every time you start a task, it's actions are put under one batch per request, so when you create a prep job, all rollback jobs created by it go under one batch. For a 100k edit task, that's 200 jobs of 500 items each. Batchs don't have a definied size limit as batches are just defined as all jobs with the same batch ID entry in the jobs table. 
----
-
-##  Lifecycle
-
-Buckbot uses a multi-phase lifecycle.
-
-### Job-level states
-
-- `resolving` – tasks have been transformed into prep jobs, and are being expanded into job items  
-- `queued` – a rollback job ready for execution  
-- `running` – actively processing inside celery 
-- `completed` – finished successfully  
-- `failed` – finished with errors  (a single failed job item results in a failed job, but doesn't cause the job to stop. chuckbot will keep going through a failed item.)
-- `canceled` – manually stopped  
-
-### Item-level states (execution truth)
-
-- `queued` – waiting to be claimed by a worker
-- `running` – claimed by a worker and currently executing
-- `completed` – rollback succeeded (or was already in desired state, e.g. `alreadyrolled`)
-- `failed` – rollback attempt failed
-- `canceled` – canceled before completion
-
-
-### Derived states (batch/UI)
-
-- `active`
-- `partial_success`
-- `completed`
-
- **Important:**
-`rollback_job_items` is the runtime execution source of truth.
-`rollback_jobs` and batch-level state are derived from item aggregates.
-
----
-
-## 🔍 Resolution Phase
-
-Some operations (especially `from-diff`) require a **resolution step**.
-
-Example:
-
-1. Input:
-   - `oldid` or diff URL
-
-2. Resolve:
-   - Identify the user
-   - Determine timestamp
-
-3. Expand:
-   - Find all affected edits
-
-4. Create:
-   - Many `rollback_job_items`
-
----
-
-### Example
-
-
-Input:
-oldid = 12345
-
-Expansion:
-→ 12,300 edits
-
-Chunking (default `MAX_JOB_ITEMS=500`):
-→ Job A (500 items)
-→ Job B (500 items)
-→ ...
-→ Job Y (300 items)
-
-All share:
-batch_id = 1773857907459
-
-
----
-
-## Chunking
-
-Large operations are split into multiple jobs using `MAX_JOB_ITEMS`.
-
-- Prevents oversized jobs
-- Enables parallel processing
-- Keeps execution stable
-
-All chunked jobs share the same `batch_id`.
-
-Notes:
-- Buckbot chunking is typically 500 items per rollback job.
-- Upstream MediaWiki/API limits (for example 5000 in some contexts) are separate constraints and are handled during request resolution, not by increasing rollback job chunk size.
-
----
-
-##  Execution Model
-
-Buckbot uses distributed workers to process `rollback_job_items`.
-
-Workers:
-
-- Read job metadata (`rollback_jobs`) to check cancel/dry-run context
-- Claim one item at a time from `rollback_job_items` where status is `queued`
-- Transition claimed item to `running`
-- Execute rollback action for that item
-- Transition item to `completed`, `failed`, or `canceled`
-- Derive final job status from item state counts
-
-Execution is:
-- Sequential per worker claim loop
-- Parallel across workers
-
----
-
-##  Rate Limiting
-
-Rate limiting is defined at the **job level by chuckbots router** and enforced during execution. job item ratelimiting is also enforced by pywikibot to prevent excessive strain on the servers. 
-
-- Config: `maxRollbacksPerMinute`
-- Implementation: controlled delays between actions
-
-This ensures:
-- API stability
-- Compliance with Wikimedia limits
-- Safe large-scale execution
-
----
-
-##  Permissions
-
-Buckbot uses a granular permission model.
-
-Controls include:
-
-- Access to high-risk features (e.g. `from-diff`)
-- Ability to create large batches
-- Maintainer/admin overrides
-
-Not all users can trigger all operations.
-
----
-
-##  tie-ins to WMF
-
-Buckbot integrates with Wikimedia workflows:
-
-- On-wiki status updates
-- Notifications for large jobs
-- Optional user notifications after rollback
-
----
-
-##  System Architecture
-
-Buckbot runs on Toolforge and consists of:
-
-### Web UI
--Gunicorn running a vue app for codex support. 
--Uses codex to create the UI, hence why we need to build node and python. 
-(yes, the entire reason we build node.js and have to call NPM is because codex doesn't have native HTML support. no idea why, but at least node.js is the one language that can be added onto another language buildpack in heroku.)
-
-### API Layer
-- Flask application
-- Handles authentication, validation, job creation and web routing 
-
-### Queue
-- Celery + Redis
-- Distributes tasks to workers
-
-### Workers
-- Celery workers (Toolforge jobs)
-- Execute rollback logic
-
-### Database
-- Toolforge MySQL
-- Stores jobs, items, and batch relationships
-
-### Execution
-- Pywikibot / MediaWiki API
-
----
-
-##  Example Request Payload (Input)
+# Chuck the Buckbot Framework
+
+Chuck the Buckbot Framework is the Toolforge webservice and job-control layer
+for Chuckbot modules. It started as rollback tooling, but the current goal is a
+small framework that can run multiple independently deployable bot modules
+without making every module carry its own Flask, Redis, SQL, OAuth, and
+Toolforge job-control code.
+
+## What Lives Here
+
+- The Flask webservice, OAuth login, navigation, and shared APIs.
+- Rollback, which remains the default built-in module.
+- Shared runtime state in ToolsDB and Redis.
+- Module registry, module permission checks, module job runs, and emergency
+  stop controls.
+- Toolforge Jobs YAML generation from registered module cron jobs.
+
+Module-specific business logic should live in the module package repo whenever
+possible. For example, `chuck_the_4awardhelper` owns its parser, reviewer,
+service code, Vue page, static build assets, and module documentation.
+
+## Module Contract
+
+Modules are version-pinned dependencies, not runtime-loaded plugins. The deploy
+pins known-good framework code plus known-good module package versions together.
+
+Python modules are installed by `requirements-modules.txt` and registered only
+when their module name appears in `enabled-modules.txt`:
+
+```txt
+# requirements-modules.txt
+chuck-the-4awardhelper @ git+https://github.com/chuckthebuck/module4awardhelper@<tag-or-commit>
+
+# enabled-modules.txt
+rollback
+four_award
+```
+
+The framework discovers and loads modules through:
+
+1. **Installed packages** — Modules expose an entry point in the
+   `chuck_buckbot.modules` group and are listed in `enabled-modules.txt`
+   (production model).
+2. **Development discovery** — A `module.toml` or `module.json` file discovered
+   under any subdirectory (local development model).
+
+The framework validates module names, Python entry points, cron jobs, declared
+rights, frontend asset references, and documentation references before loading.
+
+**Key constraints:**
+- Module names are lowercase `snake_case` (e.g., `four_award`).
+- Python handlers are dotted import paths (e.g., `package.service:run_job`).
+- Manifests can be TOML or JSON.
+- Frontend requires `ui = true` and packaged static assets.
+- Modules must declare either a UI or at least one cron job.
+
+**Manifest Example:**
+
+```toml
+name = "four_award"
+title = "Chuck the 4awardhelper"
+repo = "https://github.com/chuckthebuck/module4awardhelper"
+entry_point = "chuck_the_4awardhelper.service:run_four_award_sync"
+ui = true
+rights = ["manage", "view_jobs", "run_jobs", "edit_config"]
+
+[[jobs]]
+name = "four-award-sync"
+run = "every 24 hours"
+handler = "chuck_the_4awardhelper.service:run_four_award_sync"
+timeout_seconds = 600
+
+[frontend]
+script = "chuck_the_4awardhelper:static/four-award-app.js"
+styles = ["chuck_the_4awardhelper:static/style.css"]
+props_id = "four-award-props"
+mount_id = "app"
+docs = "chuck_the_4awardhelper:docs/four_award.md"
+```
+
+**Important fields:**
+- `name` — Lowercase snake_case identifier.
+- `entry_point` — Dotted import path to a function, not a filename.
+- `ui` — Boolean; if true, module must declare `[frontend]`.
+- `jobs` — List of cron jobs. Each job needs `name`, `run` (human-readable or
+  cron), and either `handler` (Python function) or `endpoint` (HTTP).
+- `run` — Accepts `every 24 hours`, `every 15 minutes`, `daily at 03:00`, etc.
+- `rights` — Module-defined right names; become atoms like
+  `module:four_award:view_jobs`.
+
+## Module UI & Documentation
+
+Framework Vue pages stay in this repo only for framework-owned screens (rollback,
+etc.). Module pages belong entirely in the module repo.
+
+If a module ships a separate npm/Vue client package, pin it in `package.json`
+with normal npm syntax and add the import path to
+`module-frontend-packages.json`. `npm run build` regenerates
+`client-src/moduleRegistry.generated.ts` before Vite builds. This is still
+build-time static import, not dynamic runtime loading.
 
 ```json
 {
-  "command": "rollback",
-  "targets": [
-    { "title": "File:Example.jpg", "user": "VandalUser" }
-  ],
-  "maxRollbacksPerMinute": 10,
-  "editSummary": "Reverting disruptive edits"
+  "dependencies": {
+    "@chuckbot/4award": "github:chuckthebuck/chuckbot-4award#v0.1.4"
+  }
 }
 ```
 
-This JSON is request input, not the runtime execution source.
-At runtime, Buckbot executes from database rows in `rollback_jobs` and `rollback_job_items`.
+**Module UI Loading:**
+1. Module declares `ui = true` in manifest.
+2. Module declares `[frontend]` with `script` and optional `styles` (resource
+   specs pointing to packaged static assets).
+3. Framework serves module UI at `/modules/<module>/ui`.
+4. Module UI receives JSON props in the DOM element named by `props_id`.
 
-## Why Buckbot
+**Provided props:**
+- `username`, `module`, `can_manage`, `can_run`, `can_view_jobs`, `can_edit_config`
 
-Buckbot is designed to be:
+**Module Documentation:**
+1. Module declares `docs` in `[frontend]` (resource spec to a .md file).
+2. Framework serves docs at `/modules/<module>/docs`.
+3. Docs are visible to users who can manage the module or view module jobs.
 
-Scalable – handles 10k–100k+ edits
-Controlled – no uncontrolled automation
-Fault-tolerant – item-level failure handling
-Observable – batch + job + item tracking
-Extensible – supports multiple workflows
-# Important
+Example manifest:
+```toml
+[frontend]
+script = "chuck_the_4awardhelper:static/four-award-app.js"
+styles = ["chuck_the_4awardhelper:static/style.css"]
+props_id = "four-award-props"
+mount_id = "app"
+docs = "chuck_the_4awardhelper:docs/four_award.md"
+```
 
-Buckbot executes exactly what is requested. If it gets a diff and it's rollbackable, it can and will rollback it. 
+## Permissions
 
-It:
+Permissions are modeled as users, groups, and rights, similar to MediaWiki:
 
-does not evaluate context
-does not make decisions
+- Maintainers can manage the framework.
+- Runtime groups grant framework rights such as `view_all` or `manage_modules`.
+- Module rights use atoms like `module:four_award:view_jobs`.
+- Modules declare their own right names; the framework decides how those rights
+  are granted.
 
-Human oversight is always required.
-See:
+`view_all` is treated as a broad job-viewing permission, including module job
+views. Emergency stop is intentionally separate from disabling a module:
+disable flips the enabled flag, while E-STOP actively cancels framework module
+runs and asks module-specific stop hooks to shut work down immediately.
 
-DEPLOYMENT_DOCS_INDEX.md
-DEPLOYMENT_SUMMARY.md
-FEATURES_GRANULAR_PERMISSIONS.md
+## Toolforge Model
+
+The webservice can update module registry rows and generate Jobs YAML, but
+Toolforge still runs jobs from `jobs.yaml` in the tool account. The intended
+flow is:
+
+1. Edit module cron settings in the web UI.
+2. Generate the new Jobs YAML from the framework.
+3. Put that generated YAML into the tool's `jobs.yaml`.
+4. Run `toolforge jobs load jobs.yaml`.
+
+Cron intervals should be human-readable in manifests and UI fields, for example
+`every 24 hours`, `every 15 minutes`, or `daily at 03:00`.
+
+## Local Development
+
+Install dependencies, then validate and test:
+
+```bash
+# Lint
+npm run lint
+python3 -m pylint router modules tests
+
+# Test
+python3 -m pytest -q
+npm run test
+
+# Build
+npm run build
+```
+
+**For module package development:**
+1. Build the module frontend in the module repo (e.g., `npm run build`).
+2. Include the generated static assets in the Python package.
+3. The framework imports and serves packaged assets; it does not import module
+   Vue source directly.
+4. Test the module with `pytest tests/test_module_name.py` in the module repo.
+
+## Documentation
+
+Start with [Deployment-docs/DEPLOYMENT_DOCS_INDEX.md](Deployment-docs/DEPLOYMENT_DOCS_INDEX.md).
+Module-specific docs should be packaged by the module and exposed through its
+manifest `frontend.docs` field.

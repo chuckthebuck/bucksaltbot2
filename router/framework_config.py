@@ -14,7 +14,7 @@ MWOAUTH_INDEX_URL = os.getenv(
 
 DOCS_URL = os.getenv(
     "BOT_DOCS_URL",
-    "https://wikitech.wikimedia.org/wiki/Tool:Buckbot",
+    "/docs",
 )
 
 UNAUTHORIZED_MESSAGE = os.getenv(

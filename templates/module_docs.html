@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<main class="module-docs">
+  <div class="report-header">
+    <div>
+      <h1>{{ module.title or module.name }} Documentation</h1>
+      <p class="help-text">Module-owned documentation packaged with {{ module.name }}.</p>
+    </div>
+    <a class="report-back" href="/modules/{{ module.name }}/ui">Back to module</a>
+  </div>
+  <pre class="report-output">{{ docs_text }}</pre>
+</main>
+
+{% endblock %}

@@ -8,7 +8,8 @@
   },
   "scripts": {
     "dev": "vite build --watch",
-    "build": "tsc && vite build",
+    "build": "npm run modules:frontend && tsc && vite build",
+    "modules:frontend": "node scripts/generate-module-frontend-registry.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint client-src --ext .ts,.vue",

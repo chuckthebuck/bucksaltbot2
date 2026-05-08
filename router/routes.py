@@ -1,10 +1,13 @@
 """Flask route handlers and route helper functions."""
 
 import logging
+import mimetypes
 import os
 import sys as _sys
 import secrets
 import time
+from importlib import resources
+from pathlib import Path
 
 import mwoauth
 import mwoauth.flask
@@ -13,6 +16,7 @@ import requests
 from flask import (
     Response,
     abort,
+    make_response,
     jsonify,
     redirect,
     render_template,
@@ -271,6 +275,61 @@ def _can_edit_module_config(username: str | None, module_name: str) -> bool:
             or _has_permission(username, "edit_module_config")
             or user_has_module_right(username, module_name, "edit_config")
         )
+    )
+
+
+def _module_resource_response(resource_spec: str):
+    spec = str(resource_spec or "").strip()
+    if spec.startswith(("http://", "https://", "/")):
+        return redirect(spec)
+    package, _, resource_path = spec.partition(":")
+    if not package or not resource_path:
+        abort(404)
+    try:
+        resource = resources.files(package).joinpath(resource_path)
+    except (ModuleNotFoundError, ValueError):
+        abort(404)
+    if not resource.is_file():
+        abort(404)
+    content_type = mimetypes.guess_type(resource_path)[0] or "application/octet-stream"
+    response = make_response(resource.read_bytes())
+    response.headers["Content-Type"] = content_type
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return response
+
+
+def _module_docs_text(resource_spec: str) -> str:
+    spec = str(resource_spec or "").strip()
+    if not spec or spec.startswith(("http://", "https://", "/")):
+        return ""
+    package, _, resource_path = spec.partition(":")
+    if not package or not resource_path:
+        return ""
+    try:
+        resource = resources.files(package).joinpath(resource_path)
+        if not resource.is_file():
+            return ""
+        return resource.read_text(encoding="utf-8")
+    except (ModuleNotFoundError, ValueError, OSError):
+        return ""
+
+
+def _framework_docs_text() -> str:
+    docs_path = Path(app.root_path) / "Deployment-docs" / "DEPLOYMENT_DOCS_INDEX.md"
+    try:
+        return docs_path.read_text(encoding="utf-8")
+    except OSError:
+        return "Framework documentation is not available in this build."
+
+
+def _module_asset_url(module_name: str, resource_spec: str) -> str:
+    spec = str(resource_spec or "").strip()
+    if spec.startswith(("http://", "https://", "/")):
+        return spec
+    return url_for(
+        "module_packaged_asset",
+        module_name=module_name,
+        asset_spec=spec,
     )
 
 
@@ -3025,6 +3084,17 @@ def logout():
     return redirect(url_for("index"))
 
 
+@app.route("/docs")
+def framework_docs_page():
+    username = session.get("username")
+    return render_template(
+        "docs.html",
+        type="documentation",
+        username=username,
+        docs_text=_framework_docs_text(),
+    )
+
+
 @app.route("/api/v1/modules", methods=["GET"])
 def module_registry_api():
     username = session.get("username")
@@ -3049,6 +3119,21 @@ def module_registry_api():
                 "title": definition.title or definition.name,
                 "enabled": bool(record.enabled),
                 "ui_enabled": bool(definition.ui_enabled),
+                "frontend": (
+                    definition.frontend.as_dict()
+                    if definition.frontend
+                    else None
+                ),
+                "ui_url": (
+                    url_for("module_ui_page", module_name=definition.name)
+                    if definition.frontend
+                    else None
+                ),
+                "docs_url": (
+                    url_for("module_docs_page", module_name=definition.name)
+                    if definition.frontend and definition.frontend.docs
+                    else None
+                ),
                 "cron_jobs": [job.as_dict() for job in definition.cron_jobs],
                 "jobs": [job.as_dict() for job in definition.cron_jobs],
                 "has_access": bool(has_access),
@@ -3085,7 +3170,96 @@ def module_registry_item_api(module_name: str):
 
     payload = record.as_dict()
     payload["has_access"] = True
+    payload["ui_url"] = (
+        url_for("module_ui_page", module_name=record.definition.name)
+        if record.definition.frontend
+        else None
+    )
+    payload["docs_url"] = (
+        url_for("module_docs_page", module_name=record.definition.name)
+        if record.definition.frontend and record.definition.frontend.docs
+        else None
+    )
     return jsonify(payload)
+
+
+@app.route("/module-assets/<module_name>/<path:asset_spec>")
+def module_packaged_asset(module_name: str, asset_spec: str):
+    username = session.get("username")
+    if not username:
+        abort(401)
+    record = get_module_definition(module_name)
+    if record is None or record.definition.frontend is None:
+        abort(404)
+    frontend = record.definition.frontend
+    allowed_specs = {frontend.script, *frontend.styles}
+    if asset_spec not in allowed_specs:
+        abort(404)
+    is_allowed = _can_manage_module(username, module_name) or _can_view_module_jobs(username, module_name)
+    if not user_has_module_access(module_name, username, is_maintainer=is_allowed):
+        abort(403)
+    return _module_resource_response(asset_spec)
+
+
+@app.route("/modules/<path:module_name>/ui")
+def module_ui_page(module_name: str):
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login", referrer=request.path))
+    record = get_module_definition(module_name)
+    if record is None or record.definition.frontend is None:
+        abort(404)
+    is_allowed = _can_manage_module(username, module_name) or _can_view_module_jobs(username, module_name)
+    if not user_has_module_access(module_name, username, is_maintainer=is_allowed):
+        abort(403)
+
+    frontend = record.definition.frontend
+    return render_template(
+        "module_ui.html",
+        type="module-ui",
+        username=username,
+        module=record.definition.as_dict(),
+        mount_id=frontend.mount_id,
+        props_id=frontend.props_id,
+        script_url=_module_asset_url(record.definition.name, frontend.script),
+        style_urls=[
+            _module_asset_url(record.definition.name, style)
+            for style in frontend.styles
+        ],
+        props={
+            "username": username,
+            "module": record.definition.as_dict(),
+            "can_manage": _can_manage_module(username, module_name),
+            "can_run": _can_run_module_jobs(username, module_name),
+            "can_view_jobs": _can_view_module_jobs(username, module_name),
+            "can_edit_config": _can_edit_module_config(username, module_name),
+        },
+    )
+
+
+@app.route("/modules/<path:module_name>/docs")
+def module_docs_page(module_name: str):
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("login", referrer=request.path))
+    record = get_module_definition(module_name)
+    if record is None or record.definition.frontend is None or not record.definition.frontend.docs:
+        abort(404)
+    if not (_can_manage_module(username, module_name) or _can_view_module_jobs(username, module_name)):
+        abort(403)
+    text = _module_docs_text(record.definition.frontend.docs)
+    if not text:
+        abort(404)
+    response = make_response(
+        render_template(
+            "module_docs.html",
+            type="module-docs",
+            username=username,
+            module=record.definition.as_dict(),
+            docs_text=text,
+        )
+    )
+    return response
 
 
 @app.route("/api/v1/modules/<path:module_name>/enabled", methods=["PUT"])
@@ -3169,7 +3343,11 @@ def module_config_get_api(module_name: str):
     if record is None:
         return jsonify({"detail": "Module not found"}), 404
 
-    is_admin = bool(_can_manage_modules(username) or _can_manage_module(username, module_name))
+    is_admin = bool(
+        _can_manage_modules(username)
+        or _can_manage_module(username, module_name)
+        or _can_view_module_jobs(username, module_name)
+    )
     if not user_has_module_access(module_name, username, is_maintainer=is_admin):
         return jsonify({"detail": "Forbidden"}), 403
 
@@ -3339,6 +3517,10 @@ def four_award_runs_page():
 
     if not _four_award_operator_allowed(username):
         abort(403)
+
+    record = get_module_definition("four_award")
+    if record is not None and record.definition.frontend is not None:
+        return redirect(url_for("module_ui_page", module_name="four_award"))
 
     return render_template(
         "four_award_runs.html",

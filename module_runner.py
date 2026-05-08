@@ -19,6 +19,7 @@ from router.module_registry import (
     get_module_config,
     get_module_definition,
     get_module_job_run,
+    load_enabled_module_names,
     list_module_job_runs,
     update_module_job_run,
 )
@@ -92,10 +93,11 @@ def _build_logger(name: str):
 
 
 def _bootstrap_local_registry() -> None:
+    enabled_module_names = load_enabled_module_names()
     modules_root = Path(__file__).resolve().parent / "modules"
     if modules_root.exists():
-        bootstrap_module_definitions(modules_root)
-    bootstrap_installed_module_definitions()
+        bootstrap_module_definitions(modules_root, enabled_names=enabled_module_names)
+    bootstrap_installed_module_definitions(enabled_names=enabled_module_names)
 
 
 def run_module_job(

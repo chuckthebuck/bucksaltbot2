@@ -1200,6 +1200,7 @@ def test_four_award_view_jobs_shows_runs_tab_without_module_management(client):
         patch("router.routes._user_permissions", return_value={"module:four_award:view_jobs"}),
         patch("router.routes.is_maintainer", return_value=False),
         patch("router.routes.is_admin_user", return_value=False),
+        patch("router.routes.get_module_definition", return_value=None),
     ):
         resp = client.get("/four-award")
 
@@ -1219,7 +1220,7 @@ def test_module_registry_install_api_installs_module_for_maintainer(client):
         {
             "name": "four_award",
             "repo": "https://github.com/example/four-award",
-            "entry_point": "handler.py",
+            "entry_point": "handler",
             "ui": True,
         }
     )

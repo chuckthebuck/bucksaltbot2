@@ -128,12 +128,17 @@ from pathlib import Path
 from router.module_registry import (  # noqa: E402
     bootstrap_installed_module_definitions,
     bootstrap_module_definitions,
+    load_enabled_module_names,
 )
 from router.module_runtime import register_enabled_modules  # noqa: E402
 
 if os.getenv("ENABLE_MODULE_LOADING", "0") == "1":
-    bootstrap_module_definitions(Path(__file__).resolve().parent / "modules")
-    bootstrap_installed_module_definitions()
+    enabled_module_names = load_enabled_module_names()
+    bootstrap_module_definitions(
+        Path(__file__).resolve().parent / "modules",
+        enabled_names=enabled_module_names,
+    )
+    bootstrap_installed_module_definitions(enabled_names=enabled_module_names)
     register_enabled_modules(flask_app)
 
 CORS(

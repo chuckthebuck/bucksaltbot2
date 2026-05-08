@@ -609,6 +609,12 @@ export interface ModuleItem {
   has_access: boolean;
   can_manage?: boolean;
   can_estop?: boolean;
+  can_view_jobs?: boolean;
+  can_run_jobs?: boolean;
+  can_edit_config?: boolean;
+  frontend?: ModuleFrontend | null;
+  ui_url?: string | null;
+  docs_url?: string | null;
   redis_namespace: string;
   oauth_consumer_mode: string;
   cron_jobs: Array<{
@@ -622,6 +628,14 @@ export interface ModuleItem {
     timeout_seconds: number;
     enabled: boolean;
   }>;
+}
+
+export interface ModuleFrontend {
+  script: string;
+  styles: string[];
+  props_id: string;
+  mount_id: string;
+  docs?: string | null;
 }
 
 export interface ModuleRunItem {
@@ -774,60 +788,6 @@ export async function fetchModuleJobs(
     jobs: Array.isArray(data.jobs) ? data.jobs : [],
     runs: Array.isArray(data.runs) ? data.runs : [],
   };
-}
-
-export async function fetchFourAwardRuns(): Promise<{
-  module: string;
-  jobs: ModuleItem["cron_jobs"];
-  runs: ModuleRunItem[];
-  can_run: boolean;
-}> {
-  const r = await fetch("/api/v1/four-award/runs");
-  const data = await r.json();
-  if (!r.ok) {
-    throw new Error(data?.detail || `Failed to fetch 4award runs: ${r.status}`);
-  }
-  return {
-    module: data.module || "four_award",
-    jobs: Array.isArray(data.jobs) ? data.jobs : [],
-    runs: Array.isArray(data.runs) ? data.runs : [],
-    can_run: !!data.can_run,
-  };
-}
-
-export async function fetchFourAwardRun(
-  runId: number
-): Promise<{ run: ModuleRunItem }> {
-  const r = await fetch(`/api/v1/four-award/runs/${encodeURIComponent(runId)}`);
-  const data = await r.json();
-  if (!r.ok) {
-    throw new Error(data?.detail || `Failed to fetch 4award run: ${r.status}`);
-  }
-  return data;
-}
-
-export async function queueFourAwardHistoricalDiffTest(payload: {
-  diff: string;
-  job_name?: string;
-}): Promise<{
-  module: string;
-  job: string;
-  run_id: number;
-  status: string;
-  detail?: string;
-}> {
-  const r = await fetch("/api/v1/four-award/test-runs", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await r.json();
-  if (!r.ok) {
-    throw new Error(data?.detail || `Failed to queue 4award test: ${r.status}`);
-  }
-  return data;
 }
 
 export async function fetchModuleConfig(

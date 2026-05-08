@@ -39,6 +39,13 @@ This document guides you through preparing Chuck the Buckbot Framework for produ
 
 ### 3. Bundled Modules
 
+- [ ] **Pinned external modules**:
+  - [ ] Pin Python module package refs in `requirements-modules.txt`
+  - [ ] List enabled module manifest names in `enabled-modules.txt`
+  - [ ] If a module has an npm client package, pin it in `package.json`
+  - [ ] If using npm client imports, list them in `module-frontend-packages.json`
+  - [ ] Run `npm run modules:frontend` before build if checking generated output
+
 - [ ] **Rollback module** (`modules/rollback/`):
   - [x] Manifest exists and is valid
   - [x] Blueprint entry point is correctly specified
@@ -133,6 +140,8 @@ export CELERY_RESULT_BACKEND=redis://broker:6379/9
 2. **Install/upgrade dependencies**:
    ```bash
    pip install -r requirements.txt
+   npm install
+   npm run modules:frontend
    ```
 
 3. **Start services**:

@@ -10,9 +10,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from importlib import metadata
 import json
+import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 import requests
 
 from toolsdb import get_conn
@@ -26,6 +27,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
 
 MODULE_MANIFEST_FILENAMES = ("module.toml", "module.json")
 MODULE_ENTRY_POINT_GROUP = "chuck_buckbot.modules"
+ENABLED_MODULES_FILENAME = "enabled-modules.txt"
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,26 @@ class ModuleCronJob:
 
 
 @dataclass(frozen=True)
+class ModuleFrontend:
+    """Packaged browser assets for a module-owned UI."""
+
+    script: str
+    styles: tuple[str, ...] = ()
+    props_id: str = "module-ui-props"
+    mount_id: str = "app"
+    docs: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "script": self.script,
+            "styles": list(self.styles),
+            "props_id": self.props_id,
+            "mount_id": self.mount_id,
+            "docs": self.docs,
+        }
+
+
+@dataclass(frozen=True)
 class ModuleDefinition:
     """Validated module manifest used by the framework registry."""
 
@@ -62,6 +84,7 @@ class ModuleDefinition:
     redis_namespace: str | None = None
     title: str | None = None
     rights: tuple[str, ...] = ()
+    frontend: ModuleFrontend | None = None
 
     @property
     def is_cron_only(self) -> bool:
@@ -82,6 +105,7 @@ class ModuleDefinition:
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["cron_jobs"] = [job.as_dict() for job in self.cron_jobs]
+        payload["frontend"] = self.frontend.as_dict() if self.frontend else None
         return payload
 
 
@@ -101,6 +125,56 @@ class ModuleRecord:
 def _default_redis_namespace(name: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "_", name.strip().lower())
     return normalized.strip("_") or "module"
+
+
+def _normalize_module_name(raw_value: str) -> str:
+    normalized = str(raw_value or "").strip().lower().replace("-", "_")
+    normalized = re.sub(r"[^a-z0-9_]+", "_", normalized)
+    return normalized.strip("_")
+
+
+def _validate_module_name(name: str) -> str:
+    normalized = _normalize_module_name(name)
+    if not normalized:
+        raise ValueError("module manifest requires a name")
+    if normalized != name:
+        raise ValueError("module name must be lowercase snake_case")
+    if not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", normalized):
+        raise ValueError("module name must start with a letter and contain only lowercase letters, numbers, and underscores")
+    return normalized
+
+
+def _validate_import_path(value: str, *, field_name: str) -> str:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        raise ValueError(f"module manifest requires {field_name}")
+    if cleaned.endswith(".py"):
+        raise ValueError(f"{field_name} must start with a Python dotted import path")
+    module_part, _, attr_part = cleaned.partition(":")
+    identifier = r"[A-Za-z_][A-Za-z0-9_]*"
+    dotted = rf"{identifier}(?:\.{identifier})*"
+    if not re.fullmatch(dotted, module_part):
+        raise ValueError(f"{field_name} must start with a Python dotted import path")
+    if attr_part and not re.fullmatch(dotted, attr_part):
+        raise ValueError(f"{field_name} attribute path is invalid")
+    return cleaned
+
+
+def _validate_resource_spec(value: Any, *, field_name: str, required: bool = False) -> str | None:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        if required:
+            raise ValueError(f"{field_name} is required")
+        return None
+    if cleaned.startswith(("/", "http://", "https://")):
+        return cleaned
+    package, sep, resource_path = cleaned.partition(":")
+    if not sep:
+        raise ValueError(f"{field_name} must be a URL, absolute path, or package:path resource")
+    _validate_import_path(package, field_name=field_name)
+    if not resource_path or resource_path.startswith("/") or ".." in Path(resource_path).parts:
+        raise ValueError(f"{field_name} package resource path is invalid")
+    return cleaned
 
 
 def _load_manifest_text(path: Path) -> dict[str, Any]:
@@ -183,10 +257,18 @@ def _parse_cron_jobs(raw_jobs: Any) -> tuple[ModuleCronJob, ...]:
 
         if not name:
             raise ValueError(f"cron job {index} requires a name")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", name):
+            raise ValueError(
+                f"cron job {index} name must contain only lowercase letters, numbers, hyphens, and underscores"
+            )
         if not schedule:
             raise ValueError(f"cron job {index} requires a schedule or run")
         if not endpoint and not handler:
             raise ValueError(f"cron job {index} requires an endpoint or handler")
+        if handler:
+            _validate_import_path(handler, field_name=f"cron job {index} handler")
+        if endpoint and not endpoint.startswith(("/", "http://", "https://")):
+            raise ValueError(f"cron job {index} endpoint must be a path or URL")
         if execution_mode not in {"http", "handler", "k8s_job"}:
             raise ValueError(
                 f"cron job {index} execution_mode must be http, handler, or k8s_job"
@@ -244,11 +326,56 @@ def _parse_module_rights(raw_rights: Any) -> tuple[str, ...]:
         right = str(raw_right or "").strip().lower().replace(" ", "_").replace("-", "_")
         if not right:
             raise ValueError(f"right {index} must be a non-empty string")
-        if ":" in right:
-            raise ValueError(f"right {index} must not contain ':'")
+        if not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", right):
+            raise ValueError(
+                f"right {index} must be lowercase snake_case and must not contain ':'"
+            )
         rights.append(right)
 
     return tuple(sorted(set(rights)))
+
+
+def _parse_frontend(raw_frontend: Any) -> ModuleFrontend | None:
+    if raw_frontend in (None, ""):
+        return None
+    if not isinstance(raw_frontend, dict):
+        raise ValueError("frontend must be an object")
+
+    script = _validate_resource_spec(
+        raw_frontend.get("script") or raw_frontend.get("entry"),
+        field_name="frontend.script",
+        required=True,
+    )
+    styles_raw = raw_frontend.get("styles", raw_frontend.get("css", []))
+    if styles_raw in (None, ""):
+        styles_raw = []
+    if isinstance(styles_raw, str):
+        styles_raw = [styles_raw]
+    if not isinstance(styles_raw, list):
+        raise ValueError("frontend.styles must be a list of resource specs")
+    styles = tuple(
+        value
+        for value in (
+            _validate_resource_spec(style, field_name=f"frontend.styles[{index}]")
+            for index, style in enumerate(styles_raw, start=1)
+        )
+        if value
+    )
+
+    props_id = str(raw_frontend.get("props_id") or "module-ui-props").strip()
+    mount_id = str(raw_frontend.get("mount_id") or "app").strip()
+    for field_name, value in (("frontend.props_id", props_id), ("frontend.mount_id", mount_id)):
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", value):
+            raise ValueError(f"{field_name} must be a valid DOM id")
+
+    docs = _validate_resource_spec(raw_frontend.get("docs"), field_name="frontend.docs")
+    return ModuleFrontend(
+        script=script or "",
+        styles=styles,
+        props_id=props_id,
+        mount_id=mount_id,
+        docs=docs,
+    )
 
 
 def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
@@ -256,16 +383,17 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
     if not isinstance(raw, dict):
         raise ValueError("module manifest must be an object")
 
-    name = str(raw.get("name") or "").strip()
+    name = _validate_module_name(str(raw.get("name") or "").strip())
     repo_url = str(raw.get("repo") or raw.get("repo_url") or "").strip()
-    entry_point = str(raw.get("entry_point") or raw.get("entry") or "").strip()
+    entry_point = _validate_import_path(
+        raw.get("entry_point") or raw.get("entry"),
+        field_name="entry_point",
+    )
 
-    if not name:
-        raise ValueError("module manifest requires a name")
     if not repo_url:
         raise ValueError("module manifest requires a repo URL")
-    if not entry_point:
-        raise ValueError("module manifest requires an entry point")
+    if not repo_url.startswith(("https://", "http://", "git+https://", "ssh://", "git@")):
+        raise ValueError("repo URL must be an explicit git or HTTP(S) URL")
 
     ui_enabled = _coerce_bool(
         raw.get("ui", raw.get("ui_enabled", False)),
@@ -276,9 +404,12 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
     rights = _parse_module_rights(
         raw.get("rights", raw.get("module_rights", raw.get("capabilities")))
     )
+    frontend = _parse_frontend(raw.get("frontend", raw.get("ui_frontend")))
 
     if not ui_enabled and not cron_jobs:
         raise ValueError("module must declare either a UI or at least one cron job")
+    if frontend and not ui_enabled:
+        raise ValueError("frontend assets require ui=true")
 
     oauth_consumer_mode = str(raw.get("oauth_consumer_mode") or "default").strip().lower()
     if oauth_consumer_mode not in {"default", "module"}:
@@ -314,6 +445,7 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
         redis_namespace=redis_namespace,
         title=title,
         rights=rights,
+        frontend=frontend,
     )
 
 
@@ -386,6 +518,52 @@ def discover_installed_module_definitions() -> list[ModuleDefinition]:
         except Exception:
             continue
     return definitions
+
+
+def load_enabled_module_names(path: str | Path | None = None) -> set[str]:
+    """Return the explicitly enabled module names for this framework build.
+
+    Production deploys should keep this list tiny and boring. Module packages
+    are installed by ``requirements-modules.txt``; this file says which
+    installed package manifests the framework should register.
+    """
+    raw_names: list[str] = []
+    env_value = os.getenv("ENABLED_MODULES", "").strip()
+    if env_value:
+        raw_names.extend(env_value.split(","))
+
+    config_path = (
+        Path(path)
+        if path is not None
+        else Path(__file__).resolve().parent.parent / ENABLED_MODULES_FILENAME
+    )
+    try:
+        for raw_line in config_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.split("#", 1)[0].strip()
+            if line:
+                raw_names.append(line)
+    except OSError:
+        pass
+
+    names: set[str] = set()
+    for raw_name in raw_names:
+        name = _normalize_module_name(str(raw_name).strip())
+        if name:
+            names.add(name)
+    return names
+
+
+def _filter_enabled_definitions(
+    definitions: Iterable[ModuleDefinition],
+    enabled_names: set[str] | None,
+) -> list[ModuleDefinition]:
+    if not enabled_names:
+        return list(definitions)
+    return [
+        definition
+        for definition in definitions
+        if definition.name in enabled_names
+    ]
 
 
 def _try_raw_urls_for_repo(repo_url: str) -> list[str]:
@@ -487,13 +665,21 @@ def install_remote_module(repo_url: str, *, enabled_default: bool = True) -> Mod
     return definition
 
 
-def bootstrap_module_definitions(root: str | Path, *, enabled_default: bool = True) -> list[ModuleDefinition]:
+def bootstrap_module_definitions(
+    root: str | Path,
+    *,
+    enabled_default: bool = True,
+    enabled_names: set[str] | None = None,
+) -> list[ModuleDefinition]:
     """Discover local module manifests and persist them to the registry.
 
     This is intended for bundled modules that ship with the framework repo.
     External modules can still be installed through the admin APIs.
     """
-    definitions = discover_module_definitions(root)
+    definitions = _filter_enabled_definitions(
+        discover_module_definitions(root),
+        enabled_names,
+    )
     for definition in definitions:
         upsert_module_definition(definition, enabled=enabled_default)
     return definitions
@@ -502,9 +688,13 @@ def bootstrap_module_definitions(root: str | Path, *, enabled_default: bool = Tr
 def bootstrap_installed_module_definitions(
     *,
     enabled_default: bool = True,
+    enabled_names: set[str] | None = None,
 ) -> list[ModuleDefinition]:
     """Persist module manifests advertised by installed Python packages."""
-    definitions = discover_installed_module_definitions()
+    definitions = _filter_enabled_definitions(
+        discover_installed_module_definitions(),
+        enabled_names,
+    )
     for definition in definitions:
         upsert_module_definition(definition, enabled=enabled_default)
     return definitions
@@ -766,6 +956,7 @@ def update_module_cron_job(
         redis_namespace=record.definition.redis_namespace,
         title=record.definition.title,
         rights=record.definition.rights,
+        frontend=record.definition.frontend,
     )
 
     with get_conn() as conn:

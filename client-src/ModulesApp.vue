@@ -22,6 +22,18 @@ interface Module {
   has_access: boolean;
   can_manage?: boolean;
   can_estop?: boolean;
+  can_view_jobs?: boolean;
+  can_run_jobs?: boolean;
+  can_edit_config?: boolean;
+  frontend?: {
+    script: string;
+    styles: string[];
+    props_id: string;
+    mount_id: string;
+    docs?: string | null;
+  } | null;
+  ui_url?: string | null;
+  docs_url?: string | null;
   redis_namespace: string;
   oauth_consumer_mode: string;
   cron_jobs: Array<{
@@ -60,34 +72,6 @@ const moduleConfigText = ref("{}");
 const moduleConfigDraft = ref<Record<string, unknown>>({});
 const configLoadedFor = ref<string | null>(null);
 const savingConfig = ref(false);
-const selectedSitePreset = ref("custom");
-
-const sitePresets = [
-  {
-    value: "testwiki",
-    label: "Test Wikipedia",
-    config: {
-      wiki_code: "test",
-      wiki_family: "wikipedia",
-      wiki_api_url: "https://test.wikipedia.org/w/api.php",
-      dry_run: true,
-    },
-  },
-  {
-    value: "enwiki",
-    label: "English Wikipedia",
-    config: {
-      wiki_code: "en",
-      wiki_family: "wikipedia",
-      wiki_api_url: "https://en.wikipedia.org/w/api.php",
-    },
-  },
-  {
-    value: "custom",
-    label: "Custom site",
-    config: {},
-  },
-] as const;
 
 async function loadModules() {
   try {
@@ -233,7 +217,6 @@ async function loadSelectedModuleConfig(moduleName: string) {
       ...defaultModuleConfig(moduleName),
       ...config,
     };
-    selectedSitePreset.value = detectSitePreset(moduleConfigDraft.value);
     syncModuleConfigText();
     configLoadedFor.value = moduleName;
   } catch (err) {
@@ -264,7 +247,6 @@ async function saveSelectedModuleConfig(moduleName: string) {
       ...defaultModuleConfig(moduleName),
       ...config,
     };
-    selectedSitePreset.value = detectSitePreset(moduleConfigDraft.value);
     syncModuleConfigText();
     success.value = "Module config saved.";
   } catch (err) {
@@ -287,119 +269,31 @@ const canEstopSelectedModule = computed(
   () => canManageSelectedModule.value || !!selectedModuleData.value?.can_estop
 );
 
-const isFourAwardModule = computed(
-  () => selectedModuleData.value?.name === "four_award"
+const canViewSelectedModuleJobs = computed(
+  () => canManageSelectedModule.value || !!selectedModuleData.value?.can_view_jobs
+);
+
+const canEditSelectedModuleConfig = computed(
+  () => canManageSelectedModule.value || !!selectedModuleData.value?.can_edit_config
 );
 
 function selectModule(moduleName: string) {
   selectedModule.value = moduleName;
-  if (canManageModules.value) {
+  const module = modules.value.find((item) => item.name === moduleName);
+  if (canManageModules.value || module?.can_edit_config || module?.can_manage) {
     loadSelectedModuleConfig(moduleName);
+  }
+  if (canManageModules.value || module?.can_view_jobs || module?.can_manage) {
     loadSelectedModuleRuns(moduleName);
   }
 }
 
-function defaultModuleConfig(moduleName: string): Record<string, unknown> {
-  if (moduleName !== "four_award") {
-    return {};
-  }
-
-  return {
-    wiki_code: "en",
-    wiki_family: "wikipedia",
-    wiki_api_url: "https://en.wikipedia.org/w/api.php",
-    dry_run: true,
-    enabled: true,
-    max_nominations_per_run: 25,
-    four_page: "Wikipedia:Four Award",
-    records_page: "Wikipedia:Four Award/Records",
-    leaderboard_page: "Wikipedia:Four Award/Leaderboard",
-    dry_run_report_page: "User:Chuckbot/4awardhelper dry-run report",
-    publish_dry_run_report: false,
-    enable_replies: true,
-    enable_records: true,
-    enable_removal: true,
-    enable_talk_notices: true,
-    enable_article_history: true,
-    allow_automated_approval: false,
-  };
+function defaultModuleConfig(_moduleName: string): Record<string, unknown> {
+  return {};
 }
 
 function syncModuleConfigText() {
   moduleConfigText.value = JSON.stringify(moduleConfigDraft.value, null, 2);
-}
-
-function detectSitePreset(config: Record<string, unknown>): string {
-  const wikiCode = String(config.wiki_code ?? "");
-  const wikiFamily = String(config.wiki_family ?? "");
-  const apiUrl = String(config.wiki_api_url ?? "");
-  if (
-    wikiCode === "test" &&
-    wikiFamily === "wikipedia" &&
-    apiUrl === "https://test.wikipedia.org/w/api.php"
-  ) {
-    return "testwiki";
-  }
-  if (
-    wikiCode === "en" &&
-    wikiFamily === "wikipedia" &&
-    apiUrl === "https://en.wikipedia.org/w/api.php"
-  ) {
-    return "enwiki";
-  }
-  return "custom";
-}
-
-function applySitePreset(presetValue: string) {
-  selectedSitePreset.value = presetValue;
-  const preset = sitePresets.find((item) => item.value === presetValue);
-  if (!preset || preset.value === "custom") {
-    return;
-  }
-
-  moduleConfigDraft.value = {
-    ...moduleConfigDraft.value,
-    ...preset.config,
-  };
-  syncModuleConfigText();
-}
-
-function setConfigValue(key: string, value: unknown) {
-  moduleConfigDraft.value = {
-    ...moduleConfigDraft.value,
-    [key]: value,
-  };
-  selectedSitePreset.value = detectSitePreset(moduleConfigDraft.value);
-  syncModuleConfigText();
-}
-
-function getStringConfig(key: string): string {
-  return String(moduleConfigDraft.value[key] ?? "");
-}
-
-function getBooleanConfig(key: string, fallback = false): boolean {
-  const value = moduleConfigDraft.value[key];
-  return typeof value === "boolean" ? value : fallback;
-}
-
-function getNumberConfig(key: string, fallback: number): number {
-  const value = Number(moduleConfigDraft.value[key] ?? fallback);
-  return Number.isFinite(value) ? value : fallback;
-}
-
-function readInputValue(event: Event): string {
-  const target = event.target as HTMLInputElement | HTMLSelectElement | null;
-  return target?.value ?? "";
-}
-
-function readCheckboxValue(event: Event): boolean {
-  const target = event.target as HTMLInputElement | null;
-  return Boolean(target?.checked);
-}
-
-function readNumberValue(event: Event, fallback: number): number {
-  const value = Number(readInputValue(event));
-  return Number.isFinite(value) ? value : fallback;
 }
 
 function dryRunEditCount(run: ModuleRunItem): number {
@@ -429,7 +323,8 @@ onMounted(() => {
 
     <div v-if="!canManageModules" class="cdx-message cdx-message--warning">
       <div class="cdx-message__content">
-        You are not a maintainer and cannot manage modules.
+        You have limited module access. Management controls are only shown for
+        modules where you have the matching right.
       </div>
     </div>
 
@@ -544,6 +439,23 @@ onMounted(() => {
             <span class="label">OAuth Consumer Mode:</span>
             <span class="value">{{ selectedModuleData.oauth_consumer_mode }}</span>
           </div>
+          <div
+            v-if="selectedModuleData.ui_url || selectedModuleData.docs_url"
+            class="info-row"
+          >
+            <span class="label">Module Links:</span>
+            <span class="value module-links">
+              <a v-if="selectedModuleData.ui_url" :href="selectedModuleData.ui_url">
+                Open module UI
+              </a>
+              <a
+                v-if="selectedModuleData.docs_url"
+                :href="selectedModuleData.docs_url"
+              >
+                Documentation
+              </a>
+            </span>
+          </div>
         </div>
 
         <div v-if="selectedModuleData.cron_jobs.length > 0" class="cron-jobs">
@@ -624,210 +536,14 @@ onMounted(() => {
           </div>
         </div>
 
-        <section v-if="canManageModules" class="module-config">
+        <section v-if="canEditSelectedModuleConfig" class="module-config">
           <h3>Module Config</h3>
           <p class="help-text">
-            Non-secret module settings. Use the structured fields for common
-            options, then save the generated config.
+            Non-secret module settings stored by the framework. Module-specific
+            menus live in the module UI when the module provides one.
           </p>
 
-          <div v-if="isFourAwardModule" class="structured-config">
-            <div class="config-grid">
-              <label class="config-field">
-                <span>Site preset</span>
-                <select
-                  :value="selectedSitePreset"
-                  @change="applySitePreset(readInputValue($event))"
-                >
-                  <option
-                    v-for="preset in sitePresets"
-                    :key="preset.value"
-                    :value="preset.value"
-                  >
-                    {{ preset.label }}
-                  </option>
-                </select>
-              </label>
-
-              <label class="config-field">
-                <span>Wiki code</span>
-                <input
-                  :value="getStringConfig('wiki_code')"
-                  placeholder="test"
-                  type="text"
-                  @input="setConfigValue('wiki_code', readInputValue($event))"
-                />
-              </label>
-
-              <label class="config-field">
-                <span>Wiki family</span>
-                <input
-                  :value="getStringConfig('wiki_family')"
-                  placeholder="wikipedia"
-                  type="text"
-                  @input="setConfigValue('wiki_family', readInputValue($event))"
-                />
-              </label>
-
-              <label class="config-field wide">
-                <span>API URL</span>
-                <input
-                  :value="getStringConfig('wiki_api_url')"
-                  placeholder="https://test.wikipedia.org/w/api.php"
-                  type="url"
-                  @input="setConfigValue('wiki_api_url', readInputValue($event))"
-                />
-              </label>
-
-              <label class="config-field wide">
-                <span>Four Award page</span>
-                <input
-                  :value="getStringConfig('four_page')"
-                  placeholder="Wikipedia:Four Award"
-                  type="text"
-                  @input="setConfigValue('four_page', readInputValue($event))"
-                />
-              </label>
-
-              <label class="config-field wide">
-                <span>Records page</span>
-                <input
-                  :value="getStringConfig('records_page')"
-                  placeholder="Wikipedia:Four Award/Records"
-                  type="text"
-                  @input="setConfigValue('records_page', readInputValue($event))"
-                />
-              </label>
-
-              <label class="config-field wide">
-                <span>Leaderboard page</span>
-                <input
-                  :value="getStringConfig('leaderboard_page')"
-                  placeholder="Wikipedia:Four Award/Leaderboard"
-                  type="text"
-                  @input="setConfigValue('leaderboard_page', readInputValue($event))"
-                />
-              </label>
-
-              <label class="config-field wide">
-                <span>Dry-run report page</span>
-                <input
-                  :value="getStringConfig('dry_run_report_page')"
-                  placeholder="User:Chuckbot/4awardhelper dry-run report"
-                  type="text"
-                  @input="
-                    setConfigValue('dry_run_report_page', readInputValue($event))
-                  "
-                />
-              </label>
-
-              <label class="config-field">
-                <span>Max nominations per run</span>
-                <input
-                  :value="getNumberConfig('max_nominations_per_run', 25)"
-                  min="1"
-                  type="number"
-                  @input="
-                    setConfigValue(
-                      'max_nominations_per_run',
-                      readNumberValue($event, 25)
-                    )
-                  "
-                />
-              </label>
-            </div>
-
-            <div class="config-toggles">
-              <label>
-                <input
-                  :checked="getBooleanConfig('enabled', true)"
-                  type="checkbox"
-                  @change="setConfigValue('enabled', readCheckboxValue($event))"
-                />
-                Module run enabled
-              </label>
-              <label>
-                <input
-                  :checked="getBooleanConfig('dry_run', true)"
-                  type="checkbox"
-                  @change="setConfigValue('dry_run', readCheckboxValue($event))"
-                />
-                Dry run
-              </label>
-              <label>
-                <input
-                  :checked="getBooleanConfig('publish_dry_run_report', false)"
-                  type="checkbox"
-                  @change="
-                    setConfigValue('publish_dry_run_report', readCheckboxValue($event))
-                  "
-                />
-                Publish dry-run report to userspace
-              </label>
-              <label>
-                <input
-                  :checked="getBooleanConfig('enable_replies', true)"
-                  type="checkbox"
-                  @change="setConfigValue('enable_replies', readCheckboxValue($event))"
-                />
-                Replies
-              </label>
-              <label>
-                <input
-                  :checked="getBooleanConfig('enable_records', true)"
-                  type="checkbox"
-                  @change="setConfigValue('enable_records', readCheckboxValue($event))"
-                />
-                Records
-              </label>
-              <label>
-                <input
-                  :checked="getBooleanConfig('enable_removal', true)"
-                  type="checkbox"
-                  @change="setConfigValue('enable_removal', readCheckboxValue($event))"
-                />
-                Removal cleanup
-              </label>
-              <label>
-                <input
-                  :checked="getBooleanConfig('enable_talk_notices', true)"
-                  type="checkbox"
-                  @change="
-                    setConfigValue('enable_talk_notices', readCheckboxValue($event))
-                  "
-                />
-                Talk notices
-              </label>
-              <label>
-                <input
-                  :checked="getBooleanConfig('enable_article_history', true)"
-                  type="checkbox"
-                  @change="
-                    setConfigValue(
-                      'enable_article_history',
-                      readCheckboxValue($event)
-                    )
-                  "
-                />
-                Article history
-              </label>
-              <label>
-                <input
-                  :checked="getBooleanConfig('allow_automated_approval', false)"
-                  type="checkbox"
-                  @change="
-                    setConfigValue(
-                      'allow_automated_approval',
-                      readCheckboxValue($event)
-                    )
-                  "
-                />
-                Automated approval
-              </label>
-            </div>
-          </div>
-
-          <details class="advanced-config" :open="!isFourAwardModule">
+          <details class="advanced-config" open>
             <summary>Advanced JSON</summary>
             <textarea
               v-model="moduleConfigText"
@@ -881,7 +597,7 @@ onMounted(() => {
           </div>
         </section>
 
-        <section v-if="canManageModules" class="module-runs">
+        <section v-if="canViewSelectedModuleJobs" class="module-runs">
           <h3>Recent Runs</h3>
           <p class="help-text">
             Dry-run runs include the proposed edit count and, when configured, a
@@ -1109,6 +825,12 @@ h3 {
       font-size: 0.9em;
     }
   }
+}
+
+.module-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .cron-table-scroll {

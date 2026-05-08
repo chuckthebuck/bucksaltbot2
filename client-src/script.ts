@@ -11,7 +11,9 @@ import ConfigApp from "./ConfigApp.vue";
 import RequestReviewApp from "./RequestReviewApp.vue";
 import ModulesApp from "./ModulesApp.vue";
 import JobsYamlApp from "./JobsYamlApp.vue";
-import FourAwardApp from "./FourAwardApp.vue";
+import moduleFrontends from "./moduleRegistry.generated";
+
+void moduleFrontends;
 
 if (document.getElementById("batch-props")) {
   createApp(BatchApp).mount("#app");
@@ -29,8 +31,6 @@ if (document.getElementById("batch-props")) {
   createApp(ModulesApp).mount("#modules-container");
 } else if (document.getElementById("jobs-yaml-props")) {
   createApp(JobsYamlApp).mount("#app");
-} else if (document.getElementById("four-award-props")) {
-  createApp(FourAwardApp).mount("#app");
 } else if (document.getElementById("rollback-queue-props")) {
   createApp(App).mount("#app");
 }

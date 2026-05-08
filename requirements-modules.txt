@@ -4,4 +4,5 @@
 # without publishing anything to PyPI or npm. Pin to a tag or commit for
 # production deploys.
 #
+# The framework registers only names listed in enabled-modules.txt.
 chuck-the-4awardhelper @ git+https://github.com/chuckthebuck/module4awardhelper@main
