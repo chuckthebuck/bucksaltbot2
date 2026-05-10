@@ -18,6 +18,9 @@ def _db_user() -> str:
 
 
 def _db_name() -> str:
+    configured = config.get("database")
+    if configured:
+        return configured
     return f"{_db_user()}__match_and_split"
 
 
@@ -34,7 +37,8 @@ def init_db():
     conn = _connect()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {_db_name()}")
+            if not config.get("database"):
+                cursor.execute(f"CREATE DATABASE IF NOT EXISTS {_db_name()}")
             cursor.execute(f"USE {_db_name()}")
 
             cursor.execute(

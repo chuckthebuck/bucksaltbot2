@@ -21,15 +21,16 @@ service code, Vue page, static build assets, and module documentation.
 
 ## Module Contract
 
-Modules are version-pinned dependencies, not runtime-loaded plugins. The deploy
-pins known-good framework code plus known-good module package versions together.
+Modules are vendored package snapshots, not runtime-loaded plugins. The deploy
+pins known-good framework code plus known-good module code together.
 
-Python modules are installed by `requirements-modules.txt` and registered only
-when their module name appears in `enabled-modules.txt`:
+Python modules live under `vendor/modules/<module_name>/`, are installed by
+local paths in `requirements-modules.txt`, and are registered only when their
+module name appears in `enabled-modules.txt`:
 
 ```txt
 # requirements-modules.txt
-chuck-the-4awardhelper @ git+https://github.com/chuckthebuck/module4awardhelper@<tag-or-commit>
+./vendor/modules/four_award
 
 # enabled-modules.txt
 rollback
@@ -38,7 +39,7 @@ four_award
 
 The framework discovers and loads modules through:
 
-1. **Installed packages** — Modules expose an entry point in the
+1. **Vendored packages** — Modules expose an entry point in the
    `chuck_buckbot.modules` group and are listed in `enabled-modules.txt`
    (production model).
 2. **Development discovery** — A `module.toml` or `module.json` file discovered

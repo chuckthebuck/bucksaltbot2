@@ -12,6 +12,10 @@ packages.
   module package, declare cron jobs, expose rights, and use framework services.
 - [MODULE_DEPLOYMENT_PREP.md](MODULE_DEPLOYMENT_PREP.md) — Toolforge-oriented
   deployment prep for packaged modules.
+- [LOCAL_CANARY.md](LOCAL_CANARY.md) — Local install, module install, and canary
+  build scripts to run before pushing to Toolforge.
+- [VERSIONING.md](VERSIONING.md) — Framework, module, vendored snapshot, and
+  deploy-bundle versioning rules.
 - [ACCESS_CONTROL.md](ACCESS_CONTROL.md) — Runtime groups, auto grants, and
   MediaWiki-style rights handling.
 - [FEATURES_GRANULAR_PERMISSIONS.md](FEATURES_GRANULAR_PERMISSIONS.md) —

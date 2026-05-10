@@ -14,13 +14,15 @@ module repo changes independently
 deploy pins known-good versions together
 ```
 
-Do not copy module code into framework subdirectories for production. Install
-module repos as pinned dependencies, then register their manifests during
+Do not hand-copy module code into framework subdirectories for production.
+Vendor module repos as subtree snapshots under `vendor/modules/<module_name>/`,
+install those local paths during build, then register their manifests during
 deploy/startup.
 
 Framework files that matter:
 
-- `requirements-modules.txt` pins Python module packages.
+- `vendor/modules/<module_name>/` contains vendored module snapshots.
+- `requirements-modules.txt` installs local vendored module package paths.
 - `enabled-modules.txt` lists module names to register.
 - `module-frontend-packages.json` lists optional static frontend package imports
   for the Node/Vite build.
@@ -56,11 +58,11 @@ four_award = "chuck_the_4awardhelper.manifest:module_manifest"
 The entry point can return a manifest dictionary, a path to a manifest file, or
 a `ModuleDefinition`.
 
-Install the module into the framework with a direct Git dependency:
+Install the vendored module into the framework with a local path:
 
 ```txt
 # requirements-modules.txt
-chuck-the-4awardhelper @ git+https://github.com/chuckthebuck/module4awardhelper@v0.1.4
+./vendor/modules/four_award
 ```
 
 Enable it by module manifest name:
@@ -71,7 +73,8 @@ four_award
 ```
 
 `requirements.txt` already includes `-r requirements-modules.txt`, so Toolforge
-builds install the pinned Python module package with the framework.
+builds install the vendored Python module package with the framework. Toolforge
+does not fetch module repos during build.
 
 ## Manifest
 

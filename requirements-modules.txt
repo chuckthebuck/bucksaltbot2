@@ -1,8 +1,8 @@
 # Optional Chuck the Buckbot Framework modules.
 #
-# Use direct Git dependencies so modules can stay in their own repositories
-# without publishing anything to PyPI or npm. Pin to a tag or commit for
-# production deploys.
+# Modules are vendored into the framework deploy repo under vendor/modules
+# as git subtree snapshots. Toolforge buildservice installs these local paths;
+# it does not fetch module repos during deploy.
 #
 # The framework registers only names listed in enabled-modules.txt.
-chuck-the-4awardhelper @ git+https://github.com/chuckthebuck/module4awardhelper@main
+./vendor/modules/four_award

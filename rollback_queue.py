@@ -224,6 +224,9 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
 
 def _bot_site() -> pywikibot.Site:
     """Create and authenticate a Pywikibot Site using OAuth env vars."""
+    if os.environ.get("CHUCKBOT_LOCAL_SAFE_MODE"):
+        raise RuntimeError("Local safe mode blocks authenticated wiki editing")
+
     ensure_pywikibot_env(strict=True)
 
     consumer_token = os.environ.get("CONSUMER_TOKEN")

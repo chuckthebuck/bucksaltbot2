@@ -1,13 +1,15 @@
 services:
   redis:
     image: redis:latest
-    container_name: redis
+    container_name: chuckbot-redis
+    ports:
+      - "6379:6379"
   mariadb:
     image: mariadb:latest
-    container_name: mariadb
+    container_name: chuckbot-mariadb
     environment:
       MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: db
+      MYSQL_DATABASE: chuckbot_local
       MYSQL_USER: user
       MYSQL_PASSWORD: password
     volumes:
@@ -19,7 +21,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.celery
-    container_name: celery
+    container_name: chuckbot-celery
     volumes:
       - .:/app
       - ./logs:/app/logs
@@ -27,7 +29,18 @@ services:
       - redis
       - mariadb
     environment:
-      DOCKER: TRUE
+      CHUCKBOT_LOCAL_SAFE_MODE: "1"
+      ENABLE_MODULE_LOADING: "1"
+      LIVE_TEST_DISABLE_STATUS_UPDATES: "1"
+      TOOL_REDIS_URI: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/9
+      CELERY_RESULT_BACKEND: redis://redis:6379/9
+      TOOL_TOOLSDB_HOST: mariadb
+      TOOL_TOOLSDB_USER: user
+      TOOL_TOOLSDB_PASSWORD: password
+      TOOL_TOOLSDB_DATABASE: chuckbot_local
+      TOOL_DATA_DIR: /app/data
+      PYWIKIBOT_DIR: /app/data/pywikibot
     links:
       - redis
       - mariadb
@@ -35,9 +48,24 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.web
-    container_name: web
+    container_name: chuckbot-web
     environment:
-      DOCKER: TRUE
+      CHUCKBOT_LOCAL_SAFE_MODE: "1"
+      ENABLE_MODULE_LOADING: "1"
+      FLASK_DEBUG: "1"
+      LIVE_TEST_DISABLE_STATUS_UPDATES: "1"
+      PORT: "8000"
+      TOOL_REDIS_URI: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/9
+      CELERY_RESULT_BACKEND: redis://redis:6379/9
+      TOOL_TOOLSDB_HOST: mariadb
+      TOOL_TOOLSDB_USER: user
+      TOOL_TOOLSDB_PASSWORD: password
+      TOOL_TOOLSDB_DATABASE: chuckbot_local
+      TOOL_DATA_DIR: /app/data
+      PYWIKIBOT_DIR: /app/data/pywikibot
+      BOT_ADMIN_ACCOUNTS: chuckbot
+      SECRET_KEY: docker-dev-insecure-secret
     volumes:
       - .:/app
       - ./logs:/app/logs

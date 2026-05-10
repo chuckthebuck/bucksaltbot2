@@ -1,0 +1,51 @@
+{
+  "expected_result": {
+    "approved": 1,
+    "failed": 0,
+    "manual": 0
+  },
+  "settings": {
+    "allow_automated_approval": true
+  },
+  "pages": {
+    "Wikipedia:Four Award": {
+      "before_revid": 0,
+      "expected_revid": 0
+    },
+    "Wikipedia:Four Award/Records": {
+      "before_revid": 0,
+      "expected_revid": 0
+    },
+    "Talk:Example article": {
+      "before_revid": 0,
+      "expected_revid": 0
+    },
+    "User talk:Example": {
+      "before_revid": 0,
+      "expected_revid": 0
+    }
+  },
+  "existing_pages": [
+    "Example article"
+  ],
+  "page_creation": {
+    "Example article": {
+      "user": "Example",
+      "date": "2020-01-01"
+    }
+  },
+  "revision_users": {
+    "Example article": [
+      "Example"
+    ],
+    "Template:Did you know nominations/Example article": [
+      "Example"
+    ],
+    "Talk:Example article/GA1": [
+      "Example"
+    ],
+    "Wikipedia:Featured article candidates/Example article/archive1": [
+      "Example"
+    ]
+  }
+}

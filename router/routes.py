@@ -506,6 +506,10 @@ def _parse_bool(value, default=False):
     return default
 
 
+def _local_safe_mode_enabled() -> bool:
+    return _parse_bool(os.environ.get("CHUCKBOT_LOCAL_SAFE_MODE"), default=False)
+
+
 def _normalize_request_type(raw_value) -> str:
     value = str(raw_value or "").strip().lower()
     if value in _ALLOWED_REQUEST_TYPES:
@@ -933,6 +937,8 @@ def rollback_from_diff_api():
             return jsonify({"detail": "limit must be <= 10000"}), 400
 
     dry_run = _parse_bool(dry_run_raw, default=False)
+    if _local_safe_mode_enabled():
+        dry_run = True
 
     _dry_run_only = (
         "rollback_diff_dry_run_only" in perms or "from_diff_dry_run_only" in perms
@@ -1104,6 +1110,8 @@ def rollback_from_account_api():
         return jsonify({"detail": "target_user is too long"}), 400
 
     dry_run = _parse_bool(dry_run_raw, default=False)
+    if _local_safe_mode_enabled():
+        dry_run = True
 
     _dry_run_only = (
         "rollback_diff_dry_run_only" in perms or "from_diff_dry_run_only" in perms
@@ -2003,6 +2011,8 @@ def create_rollback_job():
     requested_by = payload.get("requested_by") or actor
     items = payload.get("items") or payload.get("files") or []
     dry_run = _parse_bool(payload.get("dry_run", False), default=False)
+    if _local_safe_mode_enabled():
+        dry_run = True
     request_type = _normalize_request_type(payload.get("request_type"))
 
     if request_type == _REQUEST_TYPE_BATCH and "rollback_batch" not in perms:
@@ -2513,6 +2523,9 @@ def run_dry_run_job_live(job_id: int):
     if actor is None:
         return jsonify({"detail": "Not authenticated"}), 401
 
+    if _local_safe_mode_enabled():
+        return jsonify({"detail": "Local safe mode blocks live execution"}), 403
+
     queue_status = "queued"
 
     with get_conn() as conn:
@@ -3021,6 +3034,19 @@ def login():
         return redirect(url_for("index"))
 
     return redirect(redirect_loc)
+
+
+@app.route("/dev-login")
+def dev_login():
+    if not _local_safe_mode_enabled():
+        abort(404)
+
+    username = request.args.get("user", "chuckbot").strip() or "chuckbot"
+    session["username"] = username
+    session["authorized"] = True
+    session["is_maintainer"] = True
+    session["is_admin"] = True
+    return redirect(request.args.get("next") or url_for("index"))
 
 
 @app.route("/mas-oauth-callback")

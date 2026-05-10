@@ -39,8 +39,9 @@ This document guides you through preparing Chuck the Buckbot Framework for produ
 
 ### 3. Bundled Modules
 
-- [ ] **Pinned external modules**:
-  - [ ] Pin Python module package refs in `requirements-modules.txt`
+- [ ] **Vendored external modules**:
+  - [ ] Update module subtree snapshots under `vendor/modules/<module_name>/`
+  - [ ] Install local module paths in `requirements-modules.txt`
   - [ ] List enabled module manifest names in `enabled-modules.txt`
   - [ ] If a module has an npm client package, pin it in `package.json`
   - [ ] If using npm client imports, list them in `module-frontend-packages.json`
@@ -53,13 +54,12 @@ This document guides you through preparing Chuck the Buckbot Framework for produ
   - [x] Provides UI and redirects to legacy routes
   - [ ] Test locally: `curl http://localhost:5000/rollback/`
 
-- [ ] **Chuck the 4awardhelper module manifest** (`modules/four_award/module.toml`):
-  - [x] Manifest exists and is valid
-  - [x] Uses `run = "every 15 minutes"` instead of raw cron
+- [ ] **Chuck the 4awardhelper module snapshot** (`vendor/modules/four_award/`):
+  - [x] Package manifest exists and is valid
+  - [x] Provides `chuck_buckbot.modules` entry point
   - [x] Runs through `python3 -m module_runner`
-  - [ ] Package `module4awardhelper` as `chuck_the_4awardhelper`
-  - [ ] Add the package as a direct Git dependency in `requirements-modules.txt`
-  - [ ] Confirm `module4awardhelper` imports cleanly before deploy
+  - [x] Installs from `./vendor/modules/four_award`
+  - [ ] Confirm `chuck_the_4awardhelper` imports cleanly before deploy
 
 ### 4. Testing
 

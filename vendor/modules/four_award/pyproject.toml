@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chuck-the-4awardhelper"
+version = "0.1.2"
+description = "Chuck the 4awardhelper module for Chuck the Buckbot Framework"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools]
+packages = ["chuck_the_4awardhelper"]
+include-package-data = true
+
+[tool.setuptools.package-dir]
+chuck_the_4awardhelper = "modules/four_award"
+
+[tool.setuptools.package-data]
+chuck_the_4awardhelper = [
+  "static/*.js",
+  "static/*.css",
+  "docs/*.md",
+]
+
+[project.entry-points."chuck_buckbot.modules"]
+four_award = "chuck_the_4awardhelper.manifest:module_manifest"

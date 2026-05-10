@@ -28,6 +28,8 @@ assets_compiled
 
 # For my project
 env/
+.venv/
+.venv-*/
 apicache/
 __pycache__/
 *.djvu

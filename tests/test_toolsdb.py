@@ -89,3 +89,40 @@ def test_get_conn_passes_database_name():
     # The last Connection() call (from get_conn itself) must carry 'database'.
     last_call_kwargs = MockConn.call_args_list[-1].kwargs
     assert last_call_kwargs.get("database") == "testuser__match_and_split"
+
+
+def test_configured_database_skips_create_database():
+    """Local Docker can use an existing database without Toolforge naming."""
+    mock_conn, mock_cursor = _make_mock_conn()
+    with patch("pymysql.connections.Connection", return_value=mock_conn):
+        import toolsdb
+
+        original_config = dict(toolsdb.config)
+        try:
+            toolsdb.config["database"] = "chuckbot_local"
+            toolsdb.init_db()
+        finally:
+            toolsdb.config.clear()
+            toolsdb.config.update(original_config)
+
+    executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
+    assert "CREATE DATABASE" not in executed
+    assert "USE chuckbot_local" in executed
+
+
+def test_get_conn_uses_configured_database_name():
+    """Local Docker DB name override is passed to pymysql connections."""
+    mock_conn, _mock_cursor = _make_mock_conn()
+    with patch("pymysql.connections.Connection", return_value=mock_conn) as MockConn:
+        import toolsdb
+
+        original_config = dict(toolsdb.config)
+        try:
+            toolsdb.config["database"] = "chuckbot_local"
+            toolsdb.get_conn()
+        finally:
+            toolsdb.config.clear()
+            toolsdb.config.update(original_config)
+
+    last_call_kwargs = MockConn.call_args_list[-1].kwargs
+    assert last_call_kwargs.get("database") == "chuckbot_local"

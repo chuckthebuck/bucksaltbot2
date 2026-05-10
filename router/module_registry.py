@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from importlib import metadata
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -28,6 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
 MODULE_MANIFEST_FILENAMES = ("module.toml", "module.json")
 MODULE_ENTRY_POINT_GROUP = "chuck_buckbot.modules"
 ENABLED_MODULES_FILENAME = "enabled-modules.txt"
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -509,6 +511,7 @@ def discover_installed_module_definitions() -> list[ModuleDefinition]:
         else:  # pragma: no cover - compatibility with old importlib.metadata
             selected = entry_points.get(MODULE_ENTRY_POINT_GROUP, [])
     except Exception:
+        LOGGER.exception("Failed to read Python package entry points")
         return []
 
     definitions: list[ModuleDefinition] = []
@@ -516,8 +519,52 @@ def discover_installed_module_definitions() -> list[ModuleDefinition]:
         try:
             definitions.append(_definition_from_package_entry_point(entry_point))
         except Exception:
+            LOGGER.exception(
+                "Failed to load module entry point %s from %s",
+                getattr(entry_point, "name", "<unknown>"),
+                getattr(entry_point, "value", "<unknown>"),
+            )
             continue
     return definitions
+
+
+def inspect_installed_module_entry_points() -> list[dict[str, Any]]:
+    """Return diagnostic info for installed module package entry points."""
+    try:
+        entry_points = metadata.entry_points()
+        if hasattr(entry_points, "select"):
+            selected = list(entry_points.select(group=MODULE_ENTRY_POINT_GROUP))
+        else:  # pragma: no cover - compatibility with old importlib.metadata
+            selected = list(entry_points.get(MODULE_ENTRY_POINT_GROUP, []))
+    except Exception as exc:
+        return [
+            {
+                "ok": False,
+                "name": None,
+                "value": None,
+                "definition": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        ]
+
+    diagnostics: list[dict[str, Any]] = []
+    for entry_point in selected:
+        item: dict[str, Any] = {
+            "ok": False,
+            "name": getattr(entry_point, "name", None),
+            "value": getattr(entry_point, "value", None),
+            "definition": None,
+            "error": None,
+        }
+        try:
+            definition = _definition_from_package_entry_point(entry_point)
+        except Exception as exc:
+            item["error"] = f"{type(exc).__name__}: {exc}"
+        else:
+            item["ok"] = True
+            item["definition"] = definition.as_dict()
+        diagnostics.append(item)
+    return diagnostics
 
 
 def load_enabled_module_names(path: str | Path | None = None) -> set[str]:
@@ -1175,6 +1222,7 @@ def list_module_job_runs(
     *,
     job_name: str | None = None,
     limit: int = 50,
+    non_blank: bool = False,
 ) -> list[dict[str, Any]]:
     """Return recent tracked runs for managed module jobs."""
     conditions = []
@@ -1195,14 +1243,16 @@ def list_module_job_runs(
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY id DESC LIMIT %s"
-    params.append(max(1, min(int(limit), 200)))
+    requested_limit = max(1, min(int(limit), 200))
+    fetch_limit = min(1000, max(requested_limit, requested_limit * 10)) if non_blank else requested_limit
+    params.append(fetch_limit)
 
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(query, tuple(params))
             rows = cursor.fetchall()
 
-    return [
+    runs = [
         {
             "id": int(row[0]),
             "module_name": row[1],
@@ -1221,6 +1271,26 @@ def list_module_job_runs(
         }
         for row in rows
     ]
+    if non_blank:
+        runs = [run for run in runs if _module_run_is_non_blank(run)]
+    return runs[:requested_limit]
+
+
+def _module_run_is_non_blank(run: dict[str, Any]) -> bool:
+    result = run.get("result")
+    if not isinstance(result, dict) or not result:
+        return run.get("status") not in {"completed", "succeeded"}
+    if result.get("has_nominations") is True:
+        return True
+    try:
+        if int(result.get("nomination_count") or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    edits = result.get("dry_run_edits")
+    if isinstance(edits, list) and edits:
+        return True
+    return result.get("run_kind") != "empty" and result.get("has_nominations") is not False
 
 
 def request_module_job_run_cancel(run_id: int) -> None:

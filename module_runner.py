@@ -153,6 +153,9 @@ def run_module_job(
         config_overrides = payload.get("config_overrides")
         if isinstance(config_overrides, dict):
             config_values.update(config_overrides)
+        if os.getenv("CHUCKBOT_LOCAL_SAFE_MODE"):
+            config_values["dry_run"] = True
+            config_values["publish_dry_run_report"] = False
         ctx = ModuleRunContext(
             module_name=module_name,
             job_name=job_name,

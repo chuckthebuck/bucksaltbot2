@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+import logging
 import requests
 
 try:
@@ -134,12 +135,24 @@ from router.module_runtime import register_enabled_modules  # noqa: E402
 
 if os.getenv("ENABLE_MODULE_LOADING", "0") == "1":
     enabled_module_names = load_enabled_module_names()
-    bootstrap_module_definitions(
+    logging.getLogger(__name__).warning(
+        "Module loading enabled; enabled modules: %s",
+        ", ".join(sorted(enabled_module_names)) or "(all discovered)",
+    )
+    local_definitions = bootstrap_module_definitions(
         Path(__file__).resolve().parent / "modules",
         enabled_names=enabled_module_names,
     )
-    bootstrap_installed_module_definitions(enabled_names=enabled_module_names)
-    register_enabled_modules(flask_app)
+    installed_definitions = bootstrap_installed_module_definitions(
+        enabled_names=enabled_module_names
+    )
+    registered_blueprints = register_enabled_modules(flask_app)
+    logging.getLogger(__name__).warning(
+        "Module bootstrap complete; local=%s installed=%s blueprints=%s",
+        [definition.name for definition in local_definitions],
+        [definition.name for definition in installed_definitions],
+        registered_blueprints,
+    )
 
 CORS(
     flask_app,
