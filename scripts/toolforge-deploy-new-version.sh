@@ -35,7 +35,7 @@ echo "Starting Toolforge build..."
 toolforge build start "$REPO_URL" --ref "$BRANCH" "${build_args[@]}"
 
 echo "Restarting webservice..."
-toolforge webservice restart
+toolforge webservice buildservice restart
 
 echo "Reloading jobs..."
 toolforge jobs load jobs.yaml
