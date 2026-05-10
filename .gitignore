@@ -7,8 +7,10 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+package-lock.json
 dist
 dist-ssr
+static/dist/
 *.local
 
 # Editor directories and files
@@ -26,6 +28,8 @@ assets_compiled
 
 # For my project
 env/
+.venv/
+.venv-*/
 apicache/
 __pycache__/
 *.djvu

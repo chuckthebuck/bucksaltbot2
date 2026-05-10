@@ -1,11 +1,65 @@
 {% extends 'base.html' %}
 {% block content %}
     {% if not username %}
+        <section class="landing-panel">
+            <h1>Chuck the Buckbot Framework</h1>
+            <p>Shared control plane for Buckbot modules, rollback jobs, and Toolforge scheduled work.</p>
+        </section>
         <h2>Wikimedia Login</h2>
         <p>This tool accepts rollback jobs submitted by the Commons userscript and processes them through a queue.</p>
         <a class="cdx-button cdx-button--fake-button cdx-button--fake-button--enabled cdx-button--action-progressive" href="/login">Login with Wikimedia to continue</a>
     {% else %}
-        <h2>Welcome, {{ username }}</h2>
-        <p>The old match/split functionality has been removed from this deployment. Use the <a href="/rollback-queue">rollback queue interface</a> to monitor rollback jobs.</p>
+        <section class="landing-panel">
+            <h1>Chuck the Buckbot Framework</h1>
+            <p>Welcome, {{ username }}. Use the rollback queue, module manager, and Toolforge jobs controls from the tabs above.</p>
+        </section>
+
+        {% if can_manage_modules %}
+        <section class="module-estop-panel" aria-labelledby="module-estop-heading">
+            <div class="module-estop-header">
+                <div>
+                    <h2 id="module-estop-heading">Module Emergency Stops</h2>
+                    <p>Emergency stops disable the module, cancel active framework runs, and try to delete the matching Toolforge job/pods immediately.</p>
+                </div>
+                <form method="post" action="/modules/estop-all">
+                    <button class="module-estop-button module-estop-button--all" type="submit">
+                        E-STOP ALL MODULES
+                    </button>
+                </form>
+            </div>
+
+            {% if modules %}
+            <div class="module-estop-grid">
+                {% for module in modules %}
+                <article class="module-estop-card{% if not module.enabled %} is-disabled{% endif %}">
+                    <div>
+                        <h3>{{ module.title }}</h3>
+                        <p>
+                            <strong>Status:</strong>
+                            {% if module.enabled %}
+                                <span class="module-estop-status is-enabled">Enabled</span>
+                            {% else %}
+                                <span class="module-estop-status is-disabled">Disabled</span>
+                            {% endif %}
+                        </p>
+                        <p><strong>Jobs:</strong> {{ module.jobs }}</p>
+                    </div>
+                    <form method="post" action="/modules/estop/{{ module.name }}">
+                        <button
+                            class="module-estop-button"
+                            type="submit"
+                            {% if not module.enabled %}disabled{% endif %}
+                        >
+                            E-STOP {{ module.title }}
+                        </button>
+                    </form>
+                </article>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p>No modules are registered.</p>
+            {% endif %}
+        </section>
+        {% endif %}
     {% endif %}
 {% endblock %}

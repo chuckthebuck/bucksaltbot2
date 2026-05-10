@@ -1,0 +1,8 @@
+name = "rollback"
+repo = "https://github.com/chuckthebuck/bucksaltbot2"
+entry_point = "modules.rollback.blueprint"
+ui = true
+buildpacks = ["heroku/python"]
+redis_namespace = "rollback"
+title = "Chuck the Rollback"
+rights = ["manage", "run_jobs", "edit_config", "estop"]

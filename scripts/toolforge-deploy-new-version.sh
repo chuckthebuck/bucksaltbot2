@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_DIR="$HOME"
 REPO_URL="https://github.com/chuckthebuck/bucksaltbot2"
-BRANCH="main"
+BRANCH="${BRANCH:-main}"
 BUILDPACK_CHANNEL="${BUILDPACK_CHANNEL:-latest}"
 
 build_args=()
@@ -35,7 +35,7 @@ echo "Starting Toolforge build..."
 toolforge build start "$REPO_URL" --ref "$BRANCH" "${build_args[@]}"
 
 echo "Restarting webservice..."
-toolforge webservice restart
+toolforge webservice buildservice restart
 
 echo "Reloading jobs..."
 toolforge jobs load jobs.yaml

@@ -2,18 +2,24 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt install -y lsb-release;
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl lsb-release \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install nodejs, npm
 RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
-RUN apt install -y --no-install-recommends nodejs npm;
+RUN apt-get install -y --no-install-recommends nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY package.json package.json
+COPY package.json package-lock.json ./
 RUN npm install
 
-COPY requirements.txt requirements.txt
+COPY requirements.txt requirements-modules.txt ./
+COPY vendor ./vendor
 RUN pip install -r requirements.txt
 
-COPY ./scripts /app/scripts
+COPY . .
+RUN npm run modules:frontend && npm run build
+
 
 CMD ["/app/scripts/run_dev_env.sh"]

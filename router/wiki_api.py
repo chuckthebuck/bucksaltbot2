@@ -28,12 +28,17 @@ def _extract_oldid(diff_value):
         return int(raw)
 
     parsed = urlparse(raw)
-    oldid = parse_qs(parsed.query).get("oldid", [None])[0]
+    query = parse_qs(parsed.query)
+    diff = query.get("diff", [None])[0]
+    oldid = query.get("oldid", [None])[0]
+
+    if diff and str(diff).strip().isdigit():
+        return int(str(diff).strip())
 
     if oldid and str(oldid).strip().isdigit():
         return int(str(oldid).strip())
 
-    raise ValueError("diff must be a revision id or URL containing oldid")
+    raise ValueError("diff must be a revision id or URL containing numeric diff/oldid")
 
 
 def _normalize_target_user_input(raw_value):

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 echo "Starting development environment"
-sleep 10
+mkdir -p "${TOOL_DATA_DIR:-./data}/logs" "${PYWIKIBOT_DIR:-./data/pywikibot}"
+
 npm run dev &
-gunicorn -w 4 -b 0.0.0.0 router:app --timeout 600 --access-logfile - --reload --reload-extra-file ./assets_compiled/ --reload-extra-file ./templates/ &
+gunicorn -w 2 -b "0.0.0.0:${PORT:-8000}" app:flask_app --timeout 600 --access-logfile - --reload --reload-extra-file ./templates/ &
 wait

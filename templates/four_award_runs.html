@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Chuck the 4awardhelper Runs</h2>
+<p>Review dry-run output and queue historical-diff tests without publishing to userspace.</p>
+
+<div id="app"></div>
+
+<script id="four-award-props" type="application/json">
+{{ {
+  "username": username,
+  "can_run": can_run_four_award
+}|tojson }}
+</script>
+
+{% endblock %}

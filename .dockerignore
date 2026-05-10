@@ -1,0 +1,14 @@
+.git
+.venv
+.venv-*
+node_modules
+static/dist
+data/mariadb
+logs
+*.log
+.env
+.DS_Store
+__pycache__
+*.pyc
+dist
+dist-ssr

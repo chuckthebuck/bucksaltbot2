@@ -1,0 +1,1 @@
+"""Bundled rollback example module."""

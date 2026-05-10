@@ -1,0 +1,156 @@
+{% extends 'base.html' %}
+{% block content %}
+<main class="module-run-report">
+  <div class="report-header">
+    <div>
+      <h1>{{ run.module_name }} run #{{ run.id }}</h1>
+      <p class="help-text">
+        {{ run.job_name }} · {{ run.status }}{% if run.finished_at %} · finished {{ run.finished_at }}{% endif %}
+      </p>
+    </div>
+    <a class="report-back" href="/goto?tab=modules">Back to modules</a>
+  </div>
+
+  {% if run.error %}
+    <div class="cdx-message cdx-message--error">
+      <div class="cdx-message__content">{{ run.error }}</div>
+    </div>
+  {% endif %}
+
+  <section class="report-section">
+    <h2>Review Results</h2>
+    <table class="report-table">
+      <thead>
+        <tr>
+          <th>Approved</th>
+          <th>Failed</th>
+          <th>Manual</th>
+          <th>Proposed Edits</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>{{ result.approved or 0 }}</td>
+          <td>{{ result.failed or 0 }}</td>
+          <td>{{ result.manual or 0 }}</td>
+          <td>{{ dry_run_edits|length }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="report-section">
+    <h2>Proposed Edits</h2>
+    {% if dry_run_edits %}
+      <table class="report-table proposed-edits">
+        <thead>
+          <tr>
+            <th>Page</th>
+            <th>Summary</th>
+            <th>Size Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for edit in dry_run_edits %}
+            <tr>
+              <td>{{ edit.title }}</td>
+              <td>{{ edit.summary }}</td>
+              <td>{{ "%+d"|format(edit.delta_chars or 0) }} chars</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="help-text">No proposed edits were recorded for this run.</p>
+    {% endif %}
+  </section>
+
+  {% if report_wikitext %}
+    <section class="report-section">
+      <h2>Output Table</h2>
+      <pre class="report-output">{{ report_wikitext }}</pre>
+    </section>
+  {% endif %}
+
+  {% if dry_run_edits %}
+    <section class="report-section">
+      <h2>Diff Previews</h2>
+      {% for edit in dry_run_edits %}
+        <details class="diff-preview">
+          <summary>{{ edit.title }}</summary>
+          <pre>{{ edit.diff or "No text diff was captured." }}</pre>
+        </details>
+      {% endfor %}
+    </section>
+  {% endif %}
+</main>
+
+<style>
+.module-run-report {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.report-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 2px solid #d9e9ff;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+}
+
+.report-back {
+  color: #315fa8;
+  font-weight: 600;
+}
+
+.report-section {
+  margin-top: 24px;
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.report-table th,
+.report-table td {
+  padding: 10px;
+  border-bottom: 1px solid #eaecf0;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.report-table th {
+  background: #f6f9ff;
+  border-bottom: 2px solid #c7d5ef;
+  font-weight: 600;
+}
+
+.report-output,
+.diff-preview pre {
+  overflow-x: auto;
+  white-space: pre-wrap;
+  background: #f6f9ff;
+  border: 1px solid #c7d5ef;
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.diff-preview {
+  margin-bottom: 12px;
+}
+
+.diff-preview summary {
+  color: #315fa8;
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+</style>
+{% endblock %}

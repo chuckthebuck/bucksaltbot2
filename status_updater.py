@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from datetime import datetime, timezone
+import json
 from types import SimpleNamespace
 from typing import Any
 from pywikibot_env import ensure_pywikibot_env
@@ -63,6 +65,8 @@ STATUS_SUBPAGES = {
 # ── Redis key settings ────────────────────────────────────────────────────────
 
 _NOTIFIED_BATCH_TTL = 7 * 24 * 3600  # 7 days
+_STATUS_LAST_UPDATE_KEY = "rollback:status:last_update"
+_STATUS_LAST_PAYLOAD_KEY = "rollback:status:last_payload"
 
 
 # ── Pywikibot OAuth configuration ─────────────────────────────────────────
@@ -105,6 +109,54 @@ def _save_status_subpage(site: Any, key: str, text: str) -> None:
     page = pywikibot.Page(site, STATUS_SUBPAGES[key])
     page.text = text
     page.save(summary="Updating Chuckbot status", minor=True, bot=True)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _status_update_min_interval_seconds() -> int:
+    return max(0, _env_int("STATUS_UPDATE_MIN_INTERVAL_SECONDS", 0))
+
+
+def _redis_text(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
+
+
+def _status_payload_fingerprint(fields: dict[str, str]) -> str:
+    """Fingerprint the meaningful status state, excluding the update timestamp."""
+    payload = {key: value for key, value in fields.items() if key != "updated"}
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _should_skip_status_update(fields: dict[str, str]) -> bool:
+    min_interval = _status_update_min_interval_seconds()
+    if min_interval <= 0:
+        return False
+
+    try:
+        fingerprint = _status_payload_fingerprint(fields)
+        last_fingerprint = _redis_text(_redis.get(_STATUS_LAST_PAYLOAD_KEY))
+        last_update = float(_redis_text(_redis.get(_STATUS_LAST_UPDATE_KEY)) or "0")
+    except Exception:  # noqa: BLE001
+        return False
+
+    return bool(
+        fingerprint == last_fingerprint and (time.time() - last_update) < min_interval
+    )
+
+
+def _mark_status_update(fields: dict[str, str]) -> None:
+    try:
+        _redis.set(_STATUS_LAST_PAYLOAD_KEY, _status_payload_fingerprint(fields))
+        _redis.set(_STATUS_LAST_UPDATE_KEY, str(time.time()))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -218,8 +270,13 @@ def update_wiki_status(
             fields["current_job"] = current_job or "None"
             fields["last_job"] = last_job or "None"
 
+        if _should_skip_status_update(fields):
+            _log_status_debug("status update skipped by STATUS_UPDATE_MIN_INTERVAL_SECONDS")
+            return
+
         for key, value in fields.items():
             _save_status_subpage(active_site, key, value)
+        _mark_status_update(fields)
     except Exception as exc:  # noqa: BLE001
         _log_status_debug(f"update_wiki_status failed: {exc!r}")
 
@@ -227,9 +284,9 @@ def update_wiki_status(
 def run_status_cron_update() -> None:
     """Refresh the status template from cron with a lightweight heartbeat."""
     update_wiki_status(
-        editing="Idle",
-        web="Online",
-        details="Daily cron heartbeat",
+        editing=os.environ.get("STATUS_CRON_EDITING", "Idle"),
+        web=os.environ.get("STATUS_CRON_WEB", "Online"),
+        details=os.environ.get("STATUS_CRON_DETAILS", "Daily cron heartbeat"),
         include_job_fields=False,
     )
 

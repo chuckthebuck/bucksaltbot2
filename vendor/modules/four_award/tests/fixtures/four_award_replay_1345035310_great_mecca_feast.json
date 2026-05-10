@@ -1,0 +1,91 @@
+{
+  "expected_result": {
+    "approved": 2,
+    "failed": 0,
+    "manual": 0
+  },
+  "settings": {
+    "allow_automated_approval": true,
+    "award_date": "2026-03-31",
+    "max_nominations_per_run": 2
+  },
+  "pages": {
+    "Wikipedia:Four Award": {
+      "before_revid": 1345035310
+    },
+    "Wikipedia:Four Award/Records": {
+      "before_revid": 1344709184,
+      "expected_revid": 1346457952
+    },
+    "Talk:The Great Mecca Feast": {
+      "before_text": "{{Article history\n|action1=DYK\n|action1date={{dts|2024|06|07}}\n|action1link=[[The Great Mecca Feast]]\n|action2=GAN\n|action2date={{dts|2024|12|1}}\n|action2link=[[Talk:The Great Mecca Feast/GA1]]\n|action3=FAC\n|action3date={{dts|2026|3|21}}\n|action3result=promoted\n|action3link=[[Wikipedia:Featured article candidates/The Great Mecca Feast/archive1]]\n|currentstatus=FA\n}}\n"
+    },
+    "User talk:Crisco 1492": {
+      "before_text": ""
+    },
+    "Talk:Manhattan Project feed materials program": {
+      "before_text": "{{Article history\n|action1=DYK\n|action1date={{dts|2025|04|22}}\n|action1link=[[Template:Did you know nominations/Manhattan Project feed materials program]]\n|action2=GAN\n|action2date={{dts|2025|6|19}}\n|action2link=[[Talk:Manhattan Project feed materials program/GA1]]\n|action3=FAC\n|action3date={{dts|2026|3|23}}\n|action3result=promoted\n|action3link=[[Wikipedia:Featured article candidates/Manhattan Project feed materials program/archive1]]\n|currentstatus=FA\n}}\n"
+    },
+    "User talk:Hawkeye7": {
+      "before_text": ""
+    },
+    "The Great Mecca Feast": {
+      "before_text": ""
+    },
+    "Talk:The Great Mecca Feast/GA1": {
+      "before_text": "[[User:Crisco 1492|Crisco 1492]]"
+    },
+    "Wikipedia:Featured article candidates/The Great Mecca Feast/archive1": {
+      "before_text": "[[User:Crisco 1492|Crisco 1492]]"
+    },
+    "Template:Did you know nominations/Manhattan Project feed materials program": {
+      "before_text": "[[User:Hawkeye7|Hawkeye7]]"
+    },
+    "Talk:Manhattan Project feed materials program/GA1": {
+      "before_text": "[[User:Hawkeye7|Hawkeye7]]"
+    },
+    "Wikipedia:Featured article candidates/Manhattan Project feed materials program/archive1": {
+      "before_text": "[[User:Hawkeye7|Hawkeye7]]"
+    }
+  },
+  "existing_pages": [
+    "The Great Mecca Feast",
+    "Manhattan Project feed materials program"
+  ],
+  "page_creation": {
+    "The Great Mecca Feast": {
+      "user": "Crisco 1492",
+      "date": "2024-05-04"
+    },
+    "Manhattan Project feed materials program": {
+      "user": "Hawkeye7",
+      "date": "2025-02-13"
+    }
+  },
+  "revision_users": {
+    "The Great Mecca Feast": [
+      "Crisco 1492"
+    ],
+    "Talk:The Great Mecca Feast/GA1": [
+      "Crisco 1492"
+    ],
+    "Wikipedia:Featured article candidates/The Great Mecca Feast/archive1": [
+      "Crisco 1492"
+    ],
+    "Manhattan Project feed materials program": [
+      "Hawkeye7"
+    ],
+    "Template:Did you know nominations/Manhattan Project feed materials program": [
+      "Hawkeye7"
+    ],
+    "Talk:Manhattan Project feed materials program/GA1": [
+      "Hawkeye7"
+    ],
+    "Wikipedia:Featured article candidates/Manhattan Project feed materials program/archive1": [
+      "Hawkeye7"
+    ]
+  },
+  "compare_pages": [
+    "Wikipedia:Four Award/Records"
+  ]
+}

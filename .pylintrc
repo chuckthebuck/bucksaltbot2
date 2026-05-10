@@ -1,0 +1,42 @@
+[MASTER]
+ignore-patterns=user-config\.py
+ignored-modules=
+    celery,
+    flask,
+    flask_cors,
+    mwoauth,
+    mwoauth.flask,
+    pymysql,
+    pywikibot,
+    pytest,
+    redis,
+    requests
+
+[FORMAT]
+max-line-length=120
+
+[MESSAGES CONTROL]
+# Keep pylint focused on defects we can act on.  The router package currently
+# exposes a compatibility facade for old ``import router`` callers, so static
+# cyclic-import reports are expected until that facade is retired.
+disable=
+    cyclic-import,
+    duplicate-code,
+    import-error,
+    import-outside-toplevel,
+    invalid-name,
+    line-too-long,
+    missing-class-docstring,
+    missing-function-docstring,
+    missing-module-docstring,
+    protected-access,
+    too-few-public-methods,
+    too-many-arguments,
+    too-many-branches,
+    too-many-lines,
+    too-many-locals,
+    too-many-positional-arguments,
+    too-many-return-statements,
+    too-many-statements,
+    wrong-import-order,
+    wrong-import-position

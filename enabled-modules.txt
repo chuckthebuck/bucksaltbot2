@@ -1,0 +1,7 @@
+# Modules registered by this framework deploy.
+#
+# Keep this list as module names, not repo URLs. Python code is installed by
+# requirements-modules.txt; this file only chooses which installed manifests are
+# registered into the framework registry.
+rollback
+four_award

@@ -34,6 +34,18 @@ def test_init_db_creates_rollback_job_items_table():
     assert "rollback_job_items" in executed
 
 
+def test_init_db_creates_module_registry_and_cron_tables():
+    """init_db bootstraps the module registry and cron job tables."""
+    mock_conn, mock_cursor = _make_mock_conn()
+    with patch("pymysql.connections.Connection", return_value=mock_conn):
+        import toolsdb
+
+        toolsdb.init_db()
+    executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
+    assert "module_registry" in executed
+    assert "module_cron_jobs" in executed
+
+
 def test_init_db_sets_item_status_default_and_attempts_column():
     """init_db ensures queued default status and attempts tracking exist."""
     mock_conn, mock_cursor = _make_mock_conn()
@@ -77,3 +89,40 @@ def test_get_conn_passes_database_name():
     # The last Connection() call (from get_conn itself) must carry 'database'.
     last_call_kwargs = MockConn.call_args_list[-1].kwargs
     assert last_call_kwargs.get("database") == "testuser__match_and_split"
+
+
+def test_configured_database_skips_create_database():
+    """Local Docker can use an existing database without Toolforge naming."""
+    mock_conn, mock_cursor = _make_mock_conn()
+    with patch("pymysql.connections.Connection", return_value=mock_conn):
+        import toolsdb
+
+        original_config = dict(toolsdb.config)
+        try:
+            toolsdb.config["database"] = "chuckbot_local"
+            toolsdb.init_db()
+        finally:
+            toolsdb.config.clear()
+            toolsdb.config.update(original_config)
+
+    executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
+    assert "CREATE DATABASE" not in executed
+    assert "USE chuckbot_local" in executed
+
+
+def test_get_conn_uses_configured_database_name():
+    """Local Docker DB name override is passed to pymysql connections."""
+    mock_conn, _mock_cursor = _make_mock_conn()
+    with patch("pymysql.connections.Connection", return_value=mock_conn) as MockConn:
+        import toolsdb
+
+        original_config = dict(toolsdb.config)
+        try:
+            toolsdb.config["database"] = "chuckbot_local"
+            toolsdb.get_conn()
+        finally:
+            toolsdb.config.clear()
+            toolsdb.config.update(original_config)
+
+    last_call_kwargs = MockConn.call_args_list[-1].kwargs
+    assert last_call_kwargs.get("database") == "chuckbot_local"
