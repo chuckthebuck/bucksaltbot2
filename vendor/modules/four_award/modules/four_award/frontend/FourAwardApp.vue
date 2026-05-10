@@ -302,3 +302,161 @@ onMounted(() => {
     </section>
   </div>
 </template>
+
+<style>
+.four-award-page {
+  display: grid;
+  gap: 1.5rem;
+  max-width: 100%;
+}
+
+.four-award-page h3,
+.four-award-page h4 {
+  margin: 0;
+}
+
+.four-award-runner {
+  border: 1px solid #c8ccd1;
+  border-radius: 4px;
+  padding: 1rem;
+  background: #fff;
+}
+
+.top-message {
+  margin-bottom: 0;
+}
+
+.help-text {
+  color: #54595d;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.four-award-form {
+  display: grid;
+  grid-template-columns: minmax(12rem, 18rem) minmax(18rem, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.four-award-form label {
+  display: grid;
+  gap: 0.25rem;
+  font-weight: 700;
+}
+
+.four-award-form select,
+.four-award-form input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid #72777d;
+  border-radius: 2px;
+  padding: 4px 8px;
+  font: inherit;
+}
+
+.four-award-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(20rem, 32rem);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.four-award-runs-header,
+.four-award-output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.four-award-filter {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  color: #54595d;
+}
+
+.four-award-runs {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #c8ccd1;
+}
+
+.four-award-runs th,
+.four-award-runs td {
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid #eaecf0;
+  text-align: left;
+  vertical-align: top;
+}
+
+.four-award-runs th {
+  background: #f8f9fa;
+  font-weight: 700;
+}
+
+.four-award-runs tbody tr {
+  cursor: pointer;
+}
+
+.four-award-runs tbody tr:hover,
+.four-award-runs tbody tr.selected {
+  background: #eef3ff;
+}
+
+.four-award-output {
+  border: 1px solid #c8ccd1;
+  border-radius: 4px;
+  padding: 1rem;
+  background: #fff;
+}
+
+.four-award-summary {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.35rem 0.75rem;
+  margin: 1rem 0;
+}
+
+.four-award-summary dt {
+  color: #54595d;
+  font-weight: 700;
+}
+
+.four-award-summary dd {
+  margin: 0;
+}
+
+.four-award-edit {
+  border: 1px solid #eaecf0;
+  border-radius: 4px;
+  margin: 0.5rem 0;
+  padding: 0.5rem;
+}
+
+.four-award-edit summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.four-award-edit pre,
+.four-award-report {
+  max-height: 22rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f8f9fa;
+  border: 1px solid #eaecf0;
+  border-radius: 4px;
+  padding: 0.75rem;
+}
+
+@media (max-width: 900px) {
+  .four-award-form,
+  .four-award-layout {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

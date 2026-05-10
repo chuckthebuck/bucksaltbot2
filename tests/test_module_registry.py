@@ -122,7 +122,7 @@ def test_parse_module_definition_accepts_packaged_frontend_metadata():
                 "script": "chuck_the_4awardhelper:static/four-award-app.js",
                 "styles": ["chuck_the_4awardhelper:static/style.css"],
                 "props_id": "four-award-props",
-                "mount_id": "app",
+                "mount_id": "four-award-app",
                 "docs": "chuck_the_4awardhelper:docs/four_award.md",
             },
         }
