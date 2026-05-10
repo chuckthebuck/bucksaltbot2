@@ -268,30 +268,6 @@ def test_upsert_module_definition_persists_cron_jobs_and_registry_rows():
     assert "module_cron_jobs" in executed
 
 
-def test_install_remote_module_fetches_manifest_and_persists_definition():
-    import router.module_registry as registry
-
-    manifest = {
-        "name": "four_award",
-        "entry_point": "handler",
-        "ui": True,
-    }
-
-    expected = registry.parse_module_definition({**manifest, "repo": "https://github.com/example/four-award"})
-
-    with (
-        patch("router.module_registry.fetch_remote_manifest", return_value=manifest),
-        patch("router.module_registry.upsert_module_definition") as mock_upsert,
-    ):
-        result = registry.install_remote_module(
-            "https://github.com/example/four-award",
-            enabled_default=False,
-        )
-
-    assert result == expected
-    mock_upsert.assert_called_once_with(expected, enabled=False)
-
-
 def test_discover_installed_module_definitions_from_entry_points():
     import router.module_registry as registry
 

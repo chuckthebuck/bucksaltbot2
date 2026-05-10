@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from werkzeug.exceptions import NotFound
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -39,6 +40,22 @@ def flask_app():
 @pytest.fixture()
 def client(flask_app):
     return flask_app.test_client()
+
+
+def test_module_resource_response_rejects_external_urls(flask_app):
+    import router.routes as routes
+
+    with flask_app.test_request_context():
+        with pytest.raises(NotFound):
+            routes._module_resource_response("https://example.invalid/module.js")
+
+
+def test_local_redirect_target_rejects_external_urls():
+    import router.routes as routes
+
+    assert routes._local_redirect_target("/modules/four_award/ui") == "/modules/four_award/ui"
+    assert routes._local_redirect_target("https://example.invalid", fallback="/") == "/"
+    assert routes._local_redirect_target("//example.invalid", fallback="/") == "/"
 
 
 # ── POST /api/v1/rollback/jobs ────────────────────────────────────────────────
@@ -1212,36 +1229,18 @@ def test_four_award_view_jobs_shows_runs_tab_without_module_management(client):
     assert "Jobs YAML" not in html
 
 
-def test_module_registry_install_api_installs_module_for_maintainer(client):
-    import router.module_registry as registry
-
+def test_module_registry_install_api_rejects_remote_modules(client):
     _set_session(client, "maintainer")
-    definition = registry.parse_module_definition(
-        {
-            "name": "four_award",
-            "repo": "https://github.com/example/four-award",
-            "entry_point": "handler",
-            "ui": True,
-        }
-    )
 
-    with (
-        patch("router.routes.is_maintainer", return_value=True),
-        patch("router.routes.install_remote_module", return_value=definition) as mock_install,
-    ):
+    with patch("router.routes.is_maintainer", return_value=True):
         resp = client.post(
             "/api/v1/modules/install",
             json={"repo": "https://github.com/example/four-award", "enabled": False},
         )
 
-    assert resp.status_code == 200
+    assert resp.status_code == 410
     data = resp.get_json()
-    assert data["module"] == "four_award"
-    assert data["installed"] is True
-    assert data["definition"]["name"] == "four_award"
-    mock_install.assert_called_once_with(
-        "https://github.com/example/four-award", enabled_default=False
-    )
+    assert "Remote module installation is disabled" in data["detail"]
 
 
 def test_cancel_job_marks_job_and_items_canceled(client):

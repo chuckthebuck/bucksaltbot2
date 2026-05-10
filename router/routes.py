@@ -83,7 +83,6 @@ from router.module_registry import (
     upsert_module_config,
     upsert_module_access,
     user_has_module_access,
-    install_remote_module,
 )
 from router.framework_config import (
     DOCS_URL,
@@ -109,6 +108,13 @@ def is_maintainer(u):
 def is_bot_admin(u):
     _router = _r()
     return _router.is_bot_admin(u) if _router else False
+
+
+def _local_redirect_target(value: str | None, *, fallback: str = "/") -> str:
+    target = str(value or "").strip()
+    if target.startswith("/") and not target.startswith("//"):
+        return target
+    return fallback
 
 
 def is_admin_user(u):
@@ -281,7 +287,7 @@ def _can_edit_module_config(username: str | None, module_name: str) -> bool:
 def _module_resource_response(resource_spec: str):
     spec = str(resource_spec or "").strip()
     if spec.startswith(("http://", "https://", "/")):
-        return redirect(spec)
+        abort(404)
     package, _, resource_path = spec.partition(":")
     if not package or not resource_path:
         abort(404)
@@ -1518,11 +1524,11 @@ def rollback_request_preview_api(job_id: int):
             endpoint,
             full_from_diff=full_from_diff,
         )
-    except ValueError as exc:
-        return jsonify({"detail": str(exc)}), 400
-    except Exception as exc:  # noqa: BLE001
+    except ValueError:
+        return jsonify({"detail": "Invalid request preview parameters"}), 400
+    except Exception:  # noqa: BLE001
         app.logger.exception("Failed to compute request preview for job %s", job_id)
-        return jsonify({"detail": f"Failed to compute request preview: {exc}"}), 500
+        return jsonify({"detail": "Failed to compute request preview"}), 500
 
     return jsonify(
         {
@@ -3046,7 +3052,7 @@ def dev_login():
     session["authorized"] = True
     session["is_maintainer"] = True
     session["is_admin"] = True
-    return redirect(request.args.get("next") or url_for("index"))
+    return redirect(_local_redirect_target(request.args.get("next"), fallback=url_for("index")))
 
 
 @app.route("/mas-oauth-callback")
@@ -3410,22 +3416,14 @@ def module_registry_install_api():
     if not (_can_manage_modules(username)):
         return jsonify({"detail": "Forbidden"}), 403
 
-    payload = request.get_json(silent=True) or {}
-    repo = str(payload.get("repo") or payload.get("url") or "").strip()
-    enabled = _parse_bool(payload.get("enabled"), default=True)
-
-    if not repo:
-        return jsonify({"detail": "Missing required parameter: repo"}), 400
-
-    try:
-        definition = install_remote_module(repo, enabled_default=enabled)
-    except ValueError as exc:
-        return jsonify({"detail": str(exc)}), 400
-    except Exception:
-        logging.exception("Failed to install remote module %s", repo)
-        return jsonify({"detail": "Internal server error"}), 500
-
-    return jsonify({"module": definition.name, "installed": True, "definition": definition.as_dict()})
+    return jsonify(
+        {
+            "detail": (
+                "Remote module installation is disabled. Vendor module repos into "
+                "the framework repo and pin them in requirements-modules.txt."
+            )
+        }
+    ), 410
 
 
 @app.route("/api/v1/modules/<path:module_name>/jobs", methods=["GET"])
@@ -3614,12 +3612,12 @@ def four_award_test_run_api():
 
     try:
         oldid = _extract_oldid(diff)
-    except ValueError as exc:
-        return jsonify({"detail": str(exc)}), 400
+    except ValueError:
+        return jsonify({"detail": "Invalid revision id or diff URL"}), 400
     try:
         revision = _four_award_revision_text(oldid)
-    except ValueError as exc:
-        return jsonify({"detail": str(exc)}), 400
+    except ValueError:
+        return jsonify({"detail": "Could not load revision text"}), 400
 
     job_name = str(payload.get("job_name") or "").strip()
     available_jobs = {job.name: job for job in record.definition.cron_jobs}
@@ -3702,8 +3700,11 @@ def module_job_update_api(module_name: str, job_name: str):
         updated = update_module_cron_job(module_name, job_name, **kwargs)
     except ValueError as exc:
         detail = str(exc)
-        status = 404 if detail in {"Module not found", "Job not found"} else 400
-        return jsonify({"detail": detail}), status
+        if detail == "Module not found":
+            return jsonify({"detail": "Module not found"}), 404
+        if detail == "Job not found":
+            return jsonify({"detail": "Job not found"}), 404
+        return jsonify({"detail": "Invalid module job update"}), 400
 
     return jsonify(
         {
