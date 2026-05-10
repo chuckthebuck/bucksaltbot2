@@ -1,0 +1,2 @@
+[chuck_buckbot.modules]
+four_award = chuck_the_4awardhelper.manifest:module_manifest
