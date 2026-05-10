@@ -6,6 +6,7 @@ Use this before pushing a framework deploy commit to Toolforge.
 
 ```bash
 bash scripts/setup-local-env.sh
+bash scripts/check-secrets.sh canary
 bash scripts/install-framework.sh
 bash scripts/install-modules.sh
 ```

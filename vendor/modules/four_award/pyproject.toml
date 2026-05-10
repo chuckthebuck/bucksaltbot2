@@ -8,7 +8,11 @@ version = "0.1.2"
 description = "Chuck the 4awardhelper module for Chuck the Buckbot Framework"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+  "Flask>=3.1",
+  "pywikibot>=11.2",
+  "requests>=2.33",
+]
 
 [tool.setuptools]
 packages = ["chuck_the_4awardhelper"]

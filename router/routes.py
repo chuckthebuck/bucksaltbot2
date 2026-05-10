@@ -13,6 +13,7 @@ import mwoauth
 import mwoauth.flask
 import requests
 
+from http_config import http_headers
 from flask import (
     Response,
     abort,
@@ -3497,7 +3498,12 @@ def _four_award_revision_text(oldid: int) -> dict[str, str]:
         "formatversion": "2",
     }
     try:
-        response = requests.get(api_url, params=params, timeout=20)
+        response = requests.get(
+            api_url,
+            params=params,
+            headers=http_headers(),
+            timeout=20,
+        )
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as exc:

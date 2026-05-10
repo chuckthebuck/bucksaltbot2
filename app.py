@@ -13,6 +13,7 @@ from flask import Flask, session
 
 from blueprint import assets_blueprint
 from celery_init import celery_init_app
+from http_config import http_headers
 
 
 BOT_ADMIN_ACCOUNTS = {
@@ -42,7 +43,7 @@ def get_toolhub_maintainers():
             return _toolhub_maintainers_cache
 
         try:
-            r = requests.get(TOOLHUB_API, timeout=5)
+            r = requests.get(TOOLHUB_API, headers=http_headers(), timeout=5)
             r.raise_for_status()
             data = r.json()
 

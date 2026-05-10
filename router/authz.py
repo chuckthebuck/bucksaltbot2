@@ -8,6 +8,7 @@ import sys as _sys
 
 import requests
 
+from http_config import http_headers
 from app import BOT_ADMIN_ACCOUNTS, flask_app as app, is_maintainer  # noqa: F401
 from router.framework_config import (
     ALLOWED_GROUPS as FRAMEWORK_ALLOWED_GROUPS,
@@ -953,7 +954,7 @@ def get_user_groups(username, force_refresh: bool = False):
     }
 
     try:
-        resp = requests.get(url, params=params, timeout=10)
+        resp = requests.get(url, params=params, headers=http_headers(), timeout=10)
         resp.raise_for_status()
         data = resp.json()
         users = data.get("query", {}).get("users", [])
@@ -1004,7 +1005,12 @@ def get_project_userright_groups(project: str, force_refresh: bool = False) -> l
     }
 
     try:
-        resp = requests.get(_project_api_url(normalized_project), params=params, timeout=10)
+        resp = requests.get(
+            _project_api_url(normalized_project),
+            params=params,
+            headers=http_headers(),
+            timeout=10,
+        )
         resp.raise_for_status()
         data = resp.json()
         raw_groups = data.get("query", {}).get("usergroups", [])
@@ -1048,6 +1054,7 @@ def get_project_user_groups(
         resp = requests.get(
             _project_api_url(normalized_project),
             params=params,
+            headers=http_headers(),
             timeout=10,
         )
         resp.raise_for_status()
@@ -1082,7 +1089,12 @@ def get_user_global_groups(username, force_refresh: bool = False):
     }
 
     try:
-        resp = requests.get(WIKI_API_URL, params=params, timeout=10)
+        resp = requests.get(
+            WIKI_API_URL,
+            params=params,
+            headers=http_headers(),
+            timeout=10,
+        )
         resp.raise_for_status()
         data = resp.json()
         global_info = data.get("query", {}).get("globaluserinfo", {})
@@ -1113,7 +1125,12 @@ def get_global_userright_groups(force_refresh: bool = False) -> list[str]:
     }
 
     try:
-        resp = requests.get(WIKI_API_URL, params=params, timeout=10)
+        resp = requests.get(
+            WIKI_API_URL,
+            params=params,
+            headers=http_headers(),
+            timeout=10,
+        )
         resp.raise_for_status()
         data = resp.json()
         raw_groups = data.get("query", {}).get("globalgroups", [])

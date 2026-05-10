@@ -34,7 +34,17 @@ EXTRA_AUTHORIZED_USERS=TestUser1,TestUser2    # Add test accounts
 USERS_READ_ONLY=Viewer1,Viewer2               # View-only users
 USERS_TESTER=Tester1,Tester2                  # Tester tier
 RATE_LIMIT_JOBS_PER_HOUR=0                    # Enable rate limiting (0=off)
+BUCKBOT_HTTP_USER_AGENT="Buckbot/4.0 (...)"   # Framework API identity
+FOUR_AWARD_HTTP_USER_AGENT="FourAwardHelper/0.1 (...)"  # 4Award API identity
 ```
+
+Check required live secrets without printing values:
+
+```bash
+bash scripts/check-secrets.sh live
+```
+
+See `Deployment-docs/ENVIRONMENT.md` for the full envvar map.
 
 ## What Changed
 

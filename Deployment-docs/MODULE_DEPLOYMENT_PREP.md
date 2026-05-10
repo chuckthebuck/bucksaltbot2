@@ -121,6 +121,7 @@ export ENABLE_MODULE_LOADING=1
 export MODULE_CRON_BASE_URL=http://localhost:5000  # or your service URL
 export TOOL_DATA_DIR=/data/project/buckbot          # Toolforge standard
 export NOTDEV=1                                     # Production flag
+export BUCKBOT_HTTP_USER_AGENT="Buckbot/4.0 (https://github.com/chuckthebuck/bucksaltbot2; User:Alachuckthebuck)"
 ```
 
 Optional:
@@ -128,6 +129,7 @@ Optional:
 ```bash
 export CELERY_BROKER_URL=redis://broker:6379/9
 export CELERY_RESULT_BACKEND=redis://broker:6379/9
+export FOUR_AWARD_HTTP_USER_AGENT="FourAwardHelper/0.1 (https://github.com/chuckthebuck/module4awardhelper; User:Alachuckthebuck)"
 ```
 
 ### 8. Deployment Steps

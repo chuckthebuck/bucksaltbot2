@@ -34,6 +34,15 @@ FOUR_AWARD_ENABLE_TALK_NOTICES=1
 FOUR_AWARD_ENABLE_ARTICLE_HISTORY=1
 ```
 
+HTTP identity:
+
+```bash
+FOUR_AWARD_HTTP_USER_AGENT="FourAwardHelper/0.1 (https://github.com/chuckthebuck/module4awardhelper; User:Alachuckthebuck)"
+```
+
+This is intentionally separate from `BUCKBOT_HTTP_USER_AGENT`, so the framework
+and each module can identify their own Wikimedia API traffic independently.
+
 Recommended rollout:
 
 1. Run dry-run only.

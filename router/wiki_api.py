@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlparse
 
 import requests
 
+from http_config import http_headers
 from app import flask_app as app
 from router.diff_state import (
     _MW_DEBUG_BODY_MAX,
@@ -68,7 +69,7 @@ def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
 
     started = time.perf_counter()
     try:
-        resp = requests.get(url, params=params, timeout=15)
+        resp = requests.get(url, params=params, headers=http_headers(), timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
@@ -145,7 +146,7 @@ def fetch_rollbackable_window_end_timestamp(
 
     started = time.perf_counter()
     try:
-        resp = requests.get(url, params=params, timeout=15)
+        resp = requests.get(url, params=params, headers=http_headers(), timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
@@ -206,7 +207,7 @@ def fetch_recent_rollbackable_contribs(
 
     started = time.perf_counter()
     try:
-        resp = requests.get(url, params=params, timeout=15)
+        resp = requests.get(url, params=params, headers=http_headers(), timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
@@ -290,7 +291,7 @@ def iter_contribs_after_timestamp(
 
         started = time.perf_counter()
         try:
-            resp = requests.get(url, params=params, timeout=15)
+            resp = requests.get(url, params=params, headers=http_headers(), timeout=15)
             resp.raise_for_status()
             data = resp.json()
 
