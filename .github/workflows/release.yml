@@ -1,16 +1,30 @@
 name: Release framework
 
 on:
-  push:
-    branches:
-      - main
+  schedule:
+    # Nightly at 09:17 UTC. This creates at most one framework release per day,
+    # and only when main has changed since the latest framework-v* tag.
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+    inputs:
+      part:
+        description: SemVer part to bump.
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      force:
+        description: Release even when main has no changes since the latest framework tag.
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
   release:
-    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -18,13 +32,46 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Bump framework patch version
+      - name: Check whether release is needed
+        id: release_check
+        env:
+          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
         shell: bash
         run: |
-          python3 scripts/bump-framework-version.py --part patch --env-file version.env
+          latest_tag="$(git tag --list 'framework-v*' --sort=-v:refname | head -n 1)"
+
+          if [[ "$FORCE_RELEASE" == "true" ]]; then
+            echo "release_needed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=manual force release" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ -z "$latest_tag" ]]; then
+            echo "release_needed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=no previous framework tag" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          commits_since_tag="$(git rev-list --count "${latest_tag}..HEAD")"
+          if [[ "$commits_since_tag" -gt 0 ]]; then
+            echo "release_needed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=${commits_since_tag} commit(s) since ${latest_tag}" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_needed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no commits since ${latest_tag}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump framework patch version
+        if: ${{ steps.release_check.outputs.release_needed == 'true' }}
+        env:
+          VERSION_PART: ${{ github.event_name == 'workflow_dispatch' && inputs.part || 'patch' }}
+        shell: bash
+        run: |
+          python3 scripts/bump-framework-version.py --part "$VERSION_PART" --env-file version.env
           cat version.env >> "$GITHUB_OUTPUT"
 
       - name: Commit version bump
+        if: ${{ steps.release_check.outputs.release_needed == 'true' }}
         shell: bash
         run: |
           source version.env
@@ -34,6 +81,7 @@ jobs:
           git commit -m "chore(release): framework-v${VERSION}"
 
       - name: Tag release
+        if: ${{ steps.release_check.outputs.release_needed == 'true' }}
         shell: bash
         run: |
           source version.env
@@ -42,6 +90,7 @@ jobs:
           git push origin "framework-v${VERSION}"
 
       - name: Create GitHub release
+        if: ${{ steps.release_check.outputs.release_needed == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -49,4 +98,10 @@ jobs:
           source version.env
           gh release create "framework-v${VERSION}" \
             --title "framework-v${VERSION}" \
-            --notes "Automated framework release for framework-v${VERSION}."
+            --notes "Automated nightly framework release for framework-v${VERSION}."
+
+      - name: Report skipped release
+        if: ${{ steps.release_check.outputs.release_needed != 'true' }}
+        shell: bash
+        run: |
+          echo "Skipping framework release: ${{ steps.release_check.outputs.reason }}"

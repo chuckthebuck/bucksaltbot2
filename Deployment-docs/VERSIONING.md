@@ -38,6 +38,11 @@ Tag framework releases as:
 framework-v4.0.0
 ```
 
+Framework release tags are created by the nightly release workflow, not on every
+commit to `main`. The workflow checks whether `main` has commits after the
+latest `framework-v*` tag; if not, it skips the night. Maintainers can also run
+the workflow manually and choose `patch`, `minor`, or `major`.
+
 ## Module Versions
 
 Each module repo owns its own SemVer tags:

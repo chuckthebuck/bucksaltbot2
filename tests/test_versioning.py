@@ -25,6 +25,10 @@ def test_framework_version_files_match():
 def test_framework_release_workflow_tags_framework_versions():
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
+    assert "schedule:" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "push:" not in workflow
+    assert "git rev-list --count" in workflow
     assert "python3 scripts/bump-framework-version.py" in workflow
     assert "framework-v${VERSION}" in workflow
     assert "chore(release): framework-v${VERSION}" in workflow
