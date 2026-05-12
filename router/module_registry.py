@@ -58,6 +58,7 @@ class ModuleFrontend:
     props_id: str = "module-ui-props"
     mount_id: str = "app"
     docs: str | None = None
+    bundled: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -66,6 +67,7 @@ class ModuleFrontend:
             "props_id": self.props_id,
             "mount_id": self.mount_id,
             "docs": self.docs,
+            "bundled": self.bundled,
         }
 
 
@@ -370,12 +372,17 @@ def _parse_frontend(raw_frontend: Any) -> ModuleFrontend | None:
             raise ValueError(f"{field_name} must be a valid DOM id")
 
     docs = _validate_resource_spec(raw_frontend.get("docs"), field_name="frontend.docs")
+    bundled = _coerce_bool(
+        raw_frontend.get("bundled", raw_frontend.get("framework_bundled", False)),
+        field_name="frontend.bundled",
+    )
     return ModuleFrontend(
         script=script or "",
         styles=styles,
         props_id=props_id,
         mount_id=mount_id,
         docs=docs,
+        bundled=bundled,
     )
 
 

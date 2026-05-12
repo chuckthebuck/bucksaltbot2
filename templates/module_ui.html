@@ -15,6 +15,8 @@
 <script id="{{ props_id }}" type="application/json">
 {{ props|tojson }}
 </script>
+{% if script_url %}
 <script type="module" src="{{ script_url }}"></script>
+{% endif %}
 
 {% endblock %}

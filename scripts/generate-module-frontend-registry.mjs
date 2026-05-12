@@ -11,9 +11,11 @@ const modules = Array.isArray(raw.modules) ? raw.modules : [];
 const enabledModules = modules.filter((item) => item?.enabled !== false && item?.import);
 
 const imports = enabledModules
-  .map((item, index) => `import module${index} from ${JSON.stringify(item.import)};`)
+  .map((item) => `import ${JSON.stringify(item.import)};`)
   .join("\n");
-const entries = enabledModules.map((_item, index) => `module${index}`).join(", ");
+const entries = enabledModules
+  .map((item) => JSON.stringify({ name: item.name || null, import: item.import }))
+  .join(", ");
 const body = `${imports}${imports ? "\n\n" : ""}export default [${entries}];\n`;
 
 fs.writeFileSync(outputPath, body, "utf8");

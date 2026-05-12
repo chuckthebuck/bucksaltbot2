@@ -75,6 +75,46 @@ def test_module_docs_text_falls_back_to_vendored_module_docs(flask_app):
     assert "Four Award" in text
 
 
+def test_bundled_module_ui_uses_framework_asset_bundle(client):
+    import router.module_registry as registry
+
+    _set_session(client, "alice")
+    record = registry.ModuleRecord(
+        definition=registry.parse_module_definition(
+            {
+                "name": "four_award",
+                "repo": "https://example.invalid/four-award",
+                "entry_point": "four_award.handler",
+                "ui": True,
+                "frontend": {
+                    "script": "four_award:static/four-award-app.js",
+                    "styles": ["four_award:static/style.css"],
+                    "mount_id": "four-award-app",
+                    "props_id": "four-award-props",
+                    "bundled": True,
+                },
+            }
+        ),
+        enabled=True,
+    )
+
+    with (
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes._can_view_module_jobs", return_value=True),
+        patch("router.routes._can_manage_module", return_value=False),
+        patch("router.routes._can_run_module_jobs", return_value=False),
+        patch("router.routes._can_edit_module_config", return_value=False),
+        patch("router.routes.user_has_module_access", return_value=True),
+    ):
+        resp = client.get("/modules/four_award/ui")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'id="four-award-app"' in html
+    assert 'id="four-award-props"' in html
+    assert "/module-assets/four_award" not in html
+
+
 def test_local_redirect_target_rejects_external_urls():
     import router.routes as routes
 

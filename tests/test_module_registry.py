@@ -124,6 +124,7 @@ def test_parse_module_definition_accepts_packaged_frontend_metadata():
                 "props_id": "four-award-props",
                 "mount_id": "four-award-app",
                 "docs": "chuck_the_4awardhelper:docs/four_award.md",
+                "bundled": True,
             },
         }
     )
@@ -132,6 +133,7 @@ def test_parse_module_definition_accepts_packaged_frontend_metadata():
     assert definition.frontend.script == "chuck_the_4awardhelper:static/four-award-app.js"
     assert definition.frontend.styles == ("chuck_the_4awardhelper:static/style.css",)
     assert definition.frontend.docs == "chuck_the_4awardhelper:docs/four_award.md"
+    assert definition.frontend.bundled is True
 
 
 def test_parse_module_definition_rejects_frontend_without_ui():

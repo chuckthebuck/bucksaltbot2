@@ -3289,10 +3289,13 @@ def module_ui_page(module_name: str):
         module=record.definition.as_dict(),
         mount_id=frontend.mount_id,
         props_id=frontend.props_id,
-        script_url=_module_asset_url(record.definition.name, frontend.script),
+        script_url=None
+        if frontend.bundled
+        else _module_asset_url(record.definition.name, frontend.script),
         style_urls=[
             _module_asset_url(record.definition.name, style)
             for style in frontend.styles
+            if not frontend.bundled
         ],
         props={
             "username": username,

@@ -1,3 +1,9 @@
 {
-  "modules": []
+  "modules": [
+    {
+      "name": "four_award",
+      "enabled": true,
+      "import": "../vendor/modules/four_award/modules/four_award/frontend/entry.ts"
+    }
+  ]
 }

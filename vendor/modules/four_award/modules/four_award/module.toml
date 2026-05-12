@@ -13,6 +13,7 @@ styles = ["chuck_the_4awardhelper:static/style.css"]
 props_id = "four-award-props"
 mount_id = "four-award-app"
 docs = "chuck_the_4awardhelper:docs/four_award.md"
+bundled = true
 
 [[jobs]]
 name = "four-award-sync"
