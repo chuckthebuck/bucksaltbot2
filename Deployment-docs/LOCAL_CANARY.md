@@ -150,7 +150,9 @@ http://127.0.0.1:8000/dev-login?user=chuckbot
 ```
 
 The app detects Toolforge by the real Toolforge DB config path
-`~/replica.my.cnf`. If that file exists, the default DB host remains
-`tools-db`. If it does not exist, local env vars such as `TOOL_TOOLSDB_HOST`,
-`TOOL_TOOLSDB_USER`, `TOOL_TOOLSDB_PASSWORD`, and `TOOL_TOOLSDB_DATABASE`
-control the database connection.
+`~/replica.my.cnf`, `TOOL_DATA_DIR/replica.my.cnf`, or the
+`TOOL_TOOLSDB_USER` / `TOOL_TOOLSDB_PASSWORD` environment variables. On
+Toolforge the default DB host is `tools.db.svc.wikimedia.cloud`. In local safe
+mode, local env vars such as `TOOL_TOOLSDB_HOST`, `TOOL_TOOLSDB_USER`,
+`TOOL_TOOLSDB_PASSWORD`, and `TOOL_TOOLSDB_DATABASE` control the database
+connection.

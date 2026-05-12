@@ -32,7 +32,7 @@ These should not be committed.
 | `CONSUMER_SECRET` | wiki writes | Pywikibot OAuth consumer secret for bot edits. |
 | `ACCESS_TOKEN` | wiki writes | Pywikibot OAuth access token for bot edits. |
 | `ACCESS_SECRET` | wiki writes | Pywikibot OAuth access secret for bot edits. |
-| `TOOL_TOOLSDB_PASSWORD` | local canary DB | Local MariaDB password. Toolforge usually reads `~/replica.my.cnf`. |
+| `TOOL_TOOLSDB_PASSWORD` | Toolforge/local DB | MariaDB password. Toolforge buildservice can provide this through env when `replica.my.cnf` is not mounted. |
 
 ## Non-Secret Runtime Config
 
@@ -48,9 +48,9 @@ These are safe to document and usually safe to keep in `.env.example`.
 | `TOOL_REDIS_URI` | services | Redis URL for framework status/progress state. |
 | `CELERY_BROKER_URL` | services | Celery broker URL. |
 | `CELERY_RESULT_BACKEND` | services | Celery result backend URL. |
-| `TOOL_TOOLSDB_HOST` | local canary DB | Local DB host override. |
-| `TOOL_TOOLSDB_USER` | local canary DB | Local DB user override. |
-| `TOOL_TOOLSDB_DATABASE` | local canary DB | Local DB name override. |
+| `TOOL_TOOLSDB_HOST` | DB | Optional DB host override. Toolforge defaults to `tools.db.svc.wikimedia.cloud`; local canary defaults to `127.0.0.1`. |
+| `TOOL_TOOLSDB_USER` | DB | DB user override. |
+| `TOOL_TOOLSDB_DATABASE` | DB | DB name override. |
 | `TOOL_DATA_DIR` | filesystem | Runtime data/log root. |
 | `PYWIKIBOT_DIR` | filesystem | Pywikibot config directory. |
 
