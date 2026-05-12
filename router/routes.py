@@ -93,6 +93,7 @@ from router.framework_config import (
     WORKER_HEARTBEAT_KEY,
     oauth_callback_url,
 )
+from router.build_info import deployment_build_info
 from router.module_estop import emergency_stop_module
 
 
@@ -414,6 +415,7 @@ def MAX_JOB_ITEMS():
 @app.context_processor
 def inject_nav_capabilities():
     """Expose template flags so nav tabs only render when actionable."""
+    build_info = deployment_build_info().as_dict()
     username = session.get("username")
     if not username:
         return {
@@ -422,6 +424,7 @@ def inject_nav_capabilities():
             "nav_can_config": False,
             "nav_is_admin": False,
             "nav_can_modules": False,
+            "deployment_build_info": build_info,
         }
 
     perms = _user_permissions(username)
@@ -441,6 +444,7 @@ def inject_nav_capabilities():
         "nav_modules_href": "/goto?tab=four-award"
         if can_view_four_award and not can_edit_modules
         else "/goto?tab=modules",
+        "deployment_build_info": build_info,
     }
 
 

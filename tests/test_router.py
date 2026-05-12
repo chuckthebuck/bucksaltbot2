@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from werkzeug.exceptions import NotFound
 
+from router.build_info import ComponentBuildInfo, DeploymentBuildInfo
+
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -73,6 +75,35 @@ def test_module_docs_text_falls_back_to_vendored_module_docs(flask_app):
     )
 
     assert "Four Award" in text
+
+
+def test_footer_shows_framework_and_module_versions(client):
+    build_info = DeploymentBuildInfo(
+        framework=ComponentBuildInfo(
+            name="framework",
+            version="4.0.4",
+            commit="abc1234",
+        ),
+        modules=(
+            ComponentBuildInfo(
+                name="four_award",
+                version="0.1.2",
+                commit="b777437",
+            ),
+        ),
+    )
+
+    with patch("router.routes.deployment_build_info", return_value=build_info):
+        resp = client.get("/")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "Framework" in html
+    assert "v4.0.4" in html
+    assert "abc1234" in html
+    assert "four_award" in html
+    assert "v0.1.2" in html
+    assert "b777437" in html
 
 
 def test_bundled_module_ui_uses_framework_asset_bundle(client):

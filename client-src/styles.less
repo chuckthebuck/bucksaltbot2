@@ -142,11 +142,38 @@ a {
 }
 
 .footer {
-    justify-content: flex-end;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: @spacing-75 @spacing-125;
     margin-top: auto;
     width: calc( 100% - 2 * @spacing-125 );
     padding: @spacing-125;
     background-color: @chuck-navy;
+    color: @color-inverted;
+}
+
+.footer a {
+    color: @color-inverted;
+}
+
+.footer p {
+    margin: 0;
+}
+
+.footer-build {
+    display: flex;
+    flex-wrap: wrap;
+    gap: @spacing-50 @spacing-100;
+    align-items: center;
+    color: @chuck-ice;
+}
+
+.footer-build span {
+    white-space: nowrap;
+}
+
+.footer-build code {
     color: @color-inverted;
 }
 

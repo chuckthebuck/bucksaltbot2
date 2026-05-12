@@ -130,6 +130,21 @@
   </div>
 
   <footer class="footer">
+    <div class="footer-build">
+      {% set framework = deployment_build_info.framework %}
+      <span>
+        Framework
+        {% if framework.version %}v{{ framework.version }}{% endif %}
+        {% if framework.commit %}<code>{{ framework.commit }}</code>{% endif %}
+      </span>
+      {% for module in deployment_build_info.modules %}
+      <span>
+        {{ module.name }}
+        {% if module.version %}v{{ module.version }}{% endif %}
+        {% if module.commit %}<code>{{ module.commit }}</code>{% endif %}
+      </span>
+      {% endfor %}
+    </div>
     <p>Hosted on <a href="https://toolforge.org">Wikimedia Toolforge</a>.</p>
   </footer>
 
