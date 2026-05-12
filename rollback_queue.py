@@ -49,6 +49,27 @@ def _summary_with_requester(summary: str | None, requested_by: str) -> str:
     return f"{base}; {requester_tag}"
 
 
+def _restore_creation_revision(
+    site: pywikibot.Site,
+    title: str,
+    revision_id: int,
+    summary: str | None,
+    requested_by: str,
+) -> None:
+    page = pywikibot.Page(site, title)
+    original_text = page.getOldVersion(int(revision_id))
+    if page.get() == original_text:
+        return
+    page.text = original_text
+    page.save(
+        summary=_summary_with_requester(
+            summary or f"Restoring creator-only page to creation revision {revision_id}",
+            requested_by,
+        ),
+        minor=False,
+    )
+
+
 def _fetch_job_meta(job_id: int):
     """Return rollback_jobs row without preloading rollback_job_items."""
     with get_conn() as conn:
@@ -166,7 +187,8 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                 if job_id is not None:
                     cursor.execute(
                         """
-                        SELECT id, file_title, target_user, summary
+                        SELECT id, file_title, target_user, summary,
+                               item_action, restore_revision_id
                         FROM rollback_job_items
                         WHERE job_id=%s AND status='queued'
                         ORDER BY id ASC
@@ -178,7 +200,8 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                     if preferred_batch_id is None:
                         cursor.execute(
                             """
-                            SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary
+                            SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary,
+                                   i.item_action, i.restore_revision_id
                             FROM rollback_job_items i
                             JOIN rollback_jobs j ON j.id = i.job_id
                             WHERE i.status='queued' AND j.status IN ('queued', 'running')
@@ -189,7 +212,8 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                     else:
                         cursor.execute(
                             """
-                            SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary
+                            SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary,
+                                   i.item_action, i.restore_revision_id
                             FROM rollback_job_items i
                             JOIN rollback_jobs j ON j.id = i.job_id
                             WHERE i.status='queued' AND j.status IN ('queued', 'running')
@@ -347,8 +371,28 @@ def process_rollback_job(job_id: int):
                 # Backward-compatible tuple shape for tests and job-scoped calls.
                 item_id, file_title, target_user, summary = claimed
                 claimed_job_id = job_id
+                item_action = "rollback"
+                restore_revision_id = None
+            elif len(claimed) == 6:
+                (
+                    item_id,
+                    file_title,
+                    target_user,
+                    summary,
+                    item_action,
+                    restore_revision_id,
+                ) = claimed
+                claimed_job_id = job_id
             else:
-                item_id, claimed_job_id, file_title, target_user, summary = claimed
+                (
+                    item_id,
+                    claimed_job_id,
+                    file_title,
+                    target_user,
+                    summary,
+                    item_action,
+                    restore_revision_id,
+                ) = claimed
 
             claimed_job = _fetch_job_meta(claimed_job_id)
             if not claimed_job:
@@ -374,17 +418,28 @@ def process_rollback_job(job_id: int):
                     update_progress(claimed_job_id, "completed")
                     continue
 
-                token = site.tokens["rollback"]
+                if item_action == "restore_creation":
+                    if not restore_revision_id:
+                        raise RuntimeError("Missing creation revision for restore item")
+                    _restore_creation_revision(
+                        site,
+                        file_title,
+                        int(restore_revision_id),
+                        summary,
+                        claimed_requested_by,
+                    )
+                else:
+                    token = site.tokens["rollback"]
 
-                site.simple_request(
-                    action="rollback",
-                    title=file_title,
-                    user=target_user,
-                    token=token,
-                    summary=_summary_with_requester(summary, claimed_requested_by),
-                    markbot=True,
-                    
-                ).submit()
+                    site.simple_request(
+                        action="rollback",
+                        title=file_title,
+                        user=target_user,
+                        token=token,
+                        summary=_summary_with_requester(summary, claimed_requested_by),
+                        markbot=True,
+                        bot=True,
+                    ).submit()
 
                 _update_item(item_id, "completed", None)
                 update_progress(claimed_job_id, "completed")

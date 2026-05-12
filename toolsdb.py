@@ -228,6 +228,8 @@ def init_db():
                     file_title VARCHAR(512) NOT NULL,
                     target_user VARCHAR(255) NOT NULL,
                     summary TEXT NULL,
+                    item_action VARCHAR(32) NOT NULL DEFAULT 'rollback',
+                    restore_revision_id BIGINT NULL,
                     status VARCHAR(255) NOT NULL DEFAULT 'queued',
                     attempts INT NOT NULL DEFAULT 0,
                     error TEXT NULL,
@@ -243,6 +245,18 @@ def init_db():
                 "rollback_job_items",
                 "attempts",
                 "attempts INT NOT NULL DEFAULT 0",
+            )
+            _ensure_column(
+                cursor,
+                "rollback_job_items",
+                "item_action",
+                "item_action VARCHAR(32) NOT NULL DEFAULT 'rollback'",
+            )
+            _ensure_column(
+                cursor,
+                "rollback_job_items",
+                "restore_revision_id",
+                "restore_revision_id BIGINT NULL",
             )
             cursor.execute(
                 """

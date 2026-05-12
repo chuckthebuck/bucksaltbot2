@@ -247,6 +247,115 @@ def fetch_recent_rollbackable_contribs(
     return results
 
 
+def fetch_creator_only_restore_candidate(
+    title,
+    target_user,
+    debug_callback=None,
+):
+    """Return a restore item when target_user is the page's only editor.
+
+    MediaWiki rollback cannot restore a page when the target is the only author.
+    For account rollback, pages that were created and later changed only by the
+    target can instead be edited back to their creation revision.
+    """
+    page_title = str(title or "").strip()
+    normalized_target = _normalize_target_user_input(target_user).lower()
+    if not page_title or not normalized_target:
+        return None
+
+    revisions = []
+    continue_params = None
+
+    while True:
+        params = {
+            "action": "query",
+            "prop": "revisions",
+            "titles": page_title,
+            "rvprop": "ids|user|timestamp",
+            "rvdir": "newer",
+            "rvlimit": "500",
+            "format": "json",
+        }
+        if continue_params:
+            params.update(continue_params)
+
+        started = time.perf_counter()
+        try:
+            resp = requests.get(
+                WIKI_API_URL,
+                params=params,
+                headers=http_headers(),
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            if callable(debug_callback):
+                debug_callback(
+                    {
+                        "kind": "page-revisions",
+                        "params": params,
+                        "status_code": resp.status_code,
+                        "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                        "response_snippet": resp.text[:_MW_DEBUG_BODY_MAX],
+                        "continue": data.get("continue"),
+                    }
+                )
+        except requests.RequestException as e:
+            if callable(debug_callback):
+                debug_callback(
+                    {
+                        "kind": "page-revisions",
+                        "params": params,
+                        "error": f"{type(e).__name__}: {e}",
+                        "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                )
+            app.logger.error("Failed to fetch page revisions for %s: %s", page_title, e)
+            return None
+
+        pages = data.get("query", {}).get("pages", {})
+        page = next(iter(pages.values()), {})
+        if page.get("missing"):
+            return None
+        revisions.extend(page.get("revisions") or [])
+
+        if not data.get("continue"):
+            break
+        continue_params = data["continue"]
+        time.sleep(0.1)
+
+        # If the page is long enough to hit this guard, leave it to normal
+        # rollback. This fallback is for small creator-only spam/redirect pages.
+        if len(revisions) >= 5000:
+            return None
+
+    if len(revisions) < 2:
+        return None
+
+    users = {
+        _normalize_target_user_input(revision.get("user")).lower()
+        for revision in revisions
+        if revision.get("user")
+    }
+    if users != {normalized_target}:
+        return None
+
+    first_revision = revisions[0]
+    current_revision = revisions[-1]
+    first_revid = first_revision.get("revid")
+    current_revid = current_revision.get("revid")
+    if not first_revid or first_revid == current_revid:
+        return None
+
+    return {
+        "title": page_title,
+        "user": target_user,
+        "item_action": "restore_creation",
+        "restore_revision_id": int(first_revid),
+    }
+
+
 def iter_contribs_after_timestamp(
     target_user,
     start_timestamp,

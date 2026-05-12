@@ -285,18 +285,45 @@ def _can_edit_module_config(username: str | None, module_name: str) -> bool:
     )
 
 
-def _module_resource_response(resource_spec: str):
+def _vendored_module_resource(module_name: str | None, resource_path: str):
+    module_key = str(module_name or "").strip()
+    if not module_key or not resource_path or ".." in Path(resource_path).parts:
+        return None
+
+    vendored_root = Path(app.root_path) / "vendor" / "modules" / module_key
+    candidates = [
+        vendored_root / "modules" / module_key / resource_path,
+        vendored_root / resource_path,
+    ]
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+            if resolved.is_file() and resolved.is_relative_to(vendored_root.resolve()):
+                return resolved
+        except OSError:
+            continue
+    return None
+
+
+def _module_resource_response(resource_spec: str, module_name: str | None = None):
     spec = str(resource_spec or "").strip()
     if spec.startswith(("http://", "https://", "/")):
         abort(404)
     package, _, resource_path = spec.partition(":")
     if not package or not resource_path:
         abort(404)
+    resource = None
     try:
-        resource = resources.files(package).joinpath(resource_path)
+        packaged = resources.files(package).joinpath(resource_path)
+        if packaged.is_file():
+            resource = packaged
     except (ModuleNotFoundError, ValueError):
-        abort(404)
-    if not resource.is_file():
+        resource = None
+
+    if resource is None:
+        resource = _vendored_module_resource(module_name, resource_path)
+
+    if resource is None:
         abort(404)
     content_type = mimetypes.guess_type(resource_path)[0] or "application/octet-stream"
     response = make_response(resource.read_bytes())
@@ -305,7 +332,7 @@ def _module_resource_response(resource_spec: str):
     return response
 
 
-def _module_docs_text(resource_spec: str) -> str:
+def _module_docs_text(resource_spec: str, module_name: str | None = None) -> str:
     spec = str(resource_spec or "").strip()
     if not spec or spec.startswith(("http://", "https://", "/")):
         return ""
@@ -315,7 +342,15 @@ def _module_docs_text(resource_spec: str) -> str:
     try:
         resource = resources.files(package).joinpath(resource_path)
         if not resource.is_file():
-            return ""
+            resource = None
+    except (ModuleNotFoundError, ValueError, OSError):
+        resource = None
+
+    if resource is None:
+        resource = _vendored_module_resource(module_name, resource_path)
+    if resource is None:
+        return ""
+    try:
         return resource.read_text(encoding="utf-8")
     except (ModuleNotFoundError, ValueError, OSError):
         return ""
@@ -3231,7 +3266,7 @@ def module_packaged_asset(module_name: str, asset_spec: str):
     is_allowed = _can_manage_module(username, module_name) or _can_view_module_jobs(username, module_name)
     if not user_has_module_access(module_name, username, is_maintainer=is_allowed):
         abort(403)
-    return _module_resource_response(asset_spec)
+    return _module_resource_response(asset_spec, module_name=module_name)
 
 
 @app.route("/modules/<path:module_name>/ui")
@@ -3280,7 +3315,7 @@ def module_docs_page(module_name: str):
         abort(404)
     if not (_can_manage_module(username, module_name) or _can_view_module_jobs(username, module_name)):
         abort(403)
-    text = _module_docs_text(record.definition.frontend.docs)
+    text = _module_docs_text(record.definition.frontend.docs, module_name=module_name)
     if not text:
         abort(404)
     response = make_response(

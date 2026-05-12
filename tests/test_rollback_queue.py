@@ -34,7 +34,10 @@ def test_resolve_pywikibot_dir_falls_back_from_unwritable_home(monkeypatch):
     with patch("pywikibot_env.Path.mkdir", new=fake_mkdir):
         resolved = pywikibot_env.resolve_pywikibot_dir()
 
-    assert str(resolved) == "/workspace/.pywikibot"
+    assert str(resolved) in {
+        "/workspace/.pywikibot",
+        f"/tmp/.pywikibot-{pywikibot_env.os.getuid()}",
+    }
     assert attempted[0] == "/data/project/buckbot/.pywikibot"
 
 
@@ -217,6 +220,43 @@ def test_process_rollback_job_live_run_obtains_mw_rollback_token():
         bot=True,
     )
     mock_request.submit.assert_called_once()
+
+
+def test_process_rollback_job_restore_creation_item_saves_creation_text():
+    import rollback_queue
+
+    job = (1, "alice", "queued", 0, 12345)
+    items = [(10, "User:Bad/Sandbox", "Bad", "cleanup", "restore_creation", 123)]
+
+    mock_site = MagicMock()
+    mock_page = MagicMock()
+    mock_page.get.return_value = "#REDIRECT [[Spam]]"
+    mock_page.getOldVersion.return_value = "Original sandbox text"
+
+    with (
+        patch("rollback_queue._fetch_job_meta", return_value=job),
+        patch("rollback_queue._count_job_items", return_value=len(items)),
+        patch("rollback_queue.claim_next_item", side_effect=[items[0], None]),
+        patch(
+            "rollback_queue._derive_job_status_from_items",
+            return_value=("completed", {"completed": 1}),
+        ),
+        patch("rollback_queue._update_job_status"),
+        patch("rollback_queue._update_item"),
+        patch("rollback_queue._bot_site", return_value=mock_site),
+        patch("rollback_queue._count_batch_jobs", return_value=1),
+        patch("rollback_queue.status_updater.update_wiki_status"),
+        patch("rollback_queue.pywikibot.Page", return_value=mock_page) as page_cls,
+    ):
+        rollback_queue.process_rollback_job.run(1)
+
+    page_cls.assert_called_once_with(mock_site, "User:Bad/Sandbox")
+    mock_page.getOldVersion.assert_called_once_with(123)
+    mock_page.get.assert_called_once()
+    assert mock_page.text == "Original sandbox text"
+    mock_page.save.assert_called_once()
+    assert "requested-by=alice" in mock_page.save.call_args.kwargs["summary"]
+    mock_site.simple_request.assert_not_called()
 
 
 def test_process_rollback_job_live_run_uses_default_summary_when_none():

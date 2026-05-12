@@ -27,6 +27,7 @@ from router.wiki_api import (
     _utc_now_iso,
     fetch_rollbackable_window_end_timestamp,
     fetch_recent_rollbackable_contribs,
+    fetch_creator_only_restore_candidate,
     iter_contribs_after_timestamp,
     fetch_contribs_after_timestamp,
 )
@@ -169,6 +170,22 @@ def _fetch_recent_rollbackable_contribs_via_router(
     )
 
 
+def _fetch_creator_only_restore_candidate_via_router(
+    title, target_user, debug_callback=None
+):
+    _router = _r()
+    fn = (
+        getattr(_router, "fetch_creator_only_restore_candidate", None)
+        if _router
+        else None
+    )
+    if callable(fn) and fn is not fetch_creator_only_restore_candidate:
+        return fn(title, target_user, debug_callback=debug_callback)
+    return fetch_creator_only_restore_candidate(
+        title, target_user, debug_callback=debug_callback
+    )
+
+
 def _iter_contribs_after_timestamp_via_router(
     target_user,
     start_timestamp,
@@ -245,14 +262,24 @@ def create_rollback_jobs_from_diff(
                     cursor.execute(
                         """
                         INSERT INTO rollback_job_items
-                        (job_id, file_title, target_user, summary, status)
-                        VALUES (%s, %s, %s, %s, %s)
+                        (
+                            job_id,
+                            file_title,
+                            target_user,
+                            summary,
+                            item_action,
+                            restore_revision_id,
+                            status
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             job_id,
                             item["title"],
                             item["user"],
                             summary or None,
+                            item.get("item_action", "rollback"),
+                            item.get("restore_revision_id"),
                             "queued",
                         ),
                     )
@@ -377,14 +404,24 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         cursor.execute(
                             """
                             INSERT INTO rollback_job_items
-                            (job_id, file_title, target_user, summary, status)
-                            VALUES (%s, %s, %s, %s, %s)
+                            (
+                                job_id,
+                                file_title,
+                                target_user,
+                                summary,
+                                item_action,
+                                restore_revision_id,
+                                status
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 target_job_id,
                                 item["title"],
                                 item["user"],
                                 summary or None,
+                                item.get("item_action", "rollback"),
+                                item.get("restore_revision_id"),
                                 "queued",
                             ),
                         )
@@ -495,6 +532,14 @@ def resolve_diff_rollback_job_impl(job_id: int):
                     )
 
                     for item in account_items:
+                        restore_item = _fetch_creator_only_restore_candidate_via_router(
+                            item["title"],
+                            target_user,
+                            debug_callback=_debug,
+                        )
+                        if restore_item:
+                            item = restore_item
+
                         pending_chunk.append(item)
                         total_items += 1
 

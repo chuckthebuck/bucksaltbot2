@@ -129,6 +129,7 @@ from router.wiki_api import (  # noqa: F401
     _normalize_target_user_input,
     _utc_now_iso,
     fetch_contribs_after_timestamp,
+    fetch_creator_only_restore_candidate,
     fetch_diff_author_and_timestamp,
     fetch_recent_rollbackable_contribs,
     fetch_rollbackable_window_end_timestamp,

@@ -58,6 +58,18 @@ def test_init_db_sets_item_status_default_and_attempts_column():
     assert "attempts" in executed
 
 
+def test_init_db_adds_restore_item_columns():
+    """Creator-only restore items need explicit action metadata."""
+    mock_conn, mock_cursor = _make_mock_conn()
+    with patch("pymysql.connections.Connection", return_value=mock_conn):
+        import toolsdb
+
+        toolsdb.init_db()
+    executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
+    assert "item_action" in executed
+    assert "restore_revision_id" in executed
+
+
 def test_init_db_selects_correct_database():
     """init_db USE-s the database scoped to the configured username."""
     mock_conn, mock_cursor = _make_mock_conn()

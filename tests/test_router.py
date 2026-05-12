@@ -50,6 +50,31 @@ def test_module_resource_response_rejects_external_urls(flask_app):
             routes._module_resource_response("https://example.invalid/module.js")
 
 
+def test_module_resource_response_falls_back_to_vendored_module_asset(flask_app):
+    import router.routes as routes
+
+    with flask_app.test_request_context():
+        response = routes._module_resource_response(
+            "chuck_the_4awardhelper:static/four-award-app.js",
+            module_name="four_award",
+        )
+
+    assert response.status_code == 200
+    assert response.headers["Content-Type"].startswith("text/javascript")
+    assert b"four-award-app" in response.get_data()
+
+
+def test_module_docs_text_falls_back_to_vendored_module_docs(flask_app):
+    import router.routes as routes
+
+    text = routes._module_docs_text(
+        "chuck_the_4awardhelper:docs/four_award.md",
+        module_name="four_award",
+    )
+
+    assert "Four Award" in text
+
+
 def test_local_redirect_target_rejects_external_urls():
     import router.routes as routes
 
@@ -904,6 +929,122 @@ def test_fetch_recent_rollbackable_contribs_uses_top_and_limit_cap():
     assert params["ucshow"] == "top"
     assert params["ucdir"] == "older"
     assert int(params["uclimit"]) == 500
+
+
+def test_fetch_creator_only_restore_candidate_returns_creation_restore_item():
+    import router
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {
+        "query": {
+            "pages": {
+                "1": {
+                    "title": "User:Bad/Sandbox",
+                    "revisions": [
+                        {"revid": 100, "user": "Bad", "timestamp": "2026-01-01T00:00:00Z"},
+                        {"revid": 101, "user": "Bad", "timestamp": "2026-01-01T00:01:00Z"},
+                    ],
+                }
+            }
+        }
+    }
+    mock_resp.text = "{}"
+    mock_resp.status_code = 200
+
+    with patch("router.requests.get", return_value=mock_resp) as mock_get:
+        item = router.fetch_creator_only_restore_candidate(
+            "User:Bad/Sandbox",
+            "Bad",
+        )
+
+    assert item == {
+        "title": "User:Bad/Sandbox",
+        "user": "Bad",
+        "item_action": "restore_creation",
+        "restore_revision_id": 100,
+    }
+    params = mock_get.call_args.kwargs["params"]
+    assert params["prop"] == "revisions"
+    assert params["rvdir"] == "newer"
+
+
+def test_fetch_creator_only_restore_candidate_rejects_mixed_editor_page():
+    import router
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {
+        "query": {
+            "pages": {
+                "1": {
+                    "title": "User:Bad/Sandbox",
+                    "revisions": [
+                        {"revid": 100, "user": "Bad"},
+                        {"revid": 101, "user": "OtherEditor"},
+                    ],
+                }
+            }
+        }
+    }
+    mock_resp.text = "{}"
+    mock_resp.status_code = 200
+
+    with patch("router.requests.get", return_value=mock_resp):
+        item = router.fetch_creator_only_restore_candidate("User:Bad/Sandbox", "Bad")
+
+    assert item is None
+
+
+def test_resolve_from_account_uses_restore_item_for_creator_only_page():
+    import router
+
+    payload = {
+        "target_user": "Bad",
+        "summary": "restore creator-only spam page",
+        "requested_by": "alice",
+        "dry_run": True,
+        "limit": 1,
+        "requested_endpoint": "from_account",
+        "approved_endpoint": "from_account",
+    }
+
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_cursor.fetchone.return_value = (12345,)
+
+    with (
+        patch("router._load_diff_payload", return_value=payload),
+        patch("router._update_diff_payload"),
+        patch(
+            "router.fetch_recent_rollbackable_contribs",
+            return_value=[{"title": "User:Bad/Sandbox", "user": "Bad"}],
+        ),
+        patch(
+            "router.fetch_creator_only_restore_candidate",
+            return_value={
+                "title": "User:Bad/Sandbox",
+                "user": "Bad",
+                "item_action": "restore_creation",
+                "restore_revision_id": 100,
+            },
+        ),
+        patch("router.get_conn", return_value=mock_conn),
+        patch("router._set_diff_error"),
+        patch("router.status_updater.update_wiki_status"),
+        patch("router.process_rollback_job") as mock_task,
+    ):
+        mock_task.delay = MagicMock()
+        router.resolve_diff_rollback_job(1)
+
+    inserts = [
+        call
+        for call in mock_cursor.execute.call_args_list
+        if "INSERT INTO rollback_job_items" in call.args[0]
+    ]
+    assert inserts
+    item_args = inserts[0].args[1]
+    assert item_args[4] == "restore_creation"
+    assert item_args[5] == 100
 
 
 def test_fetch_diff_author_and_timestamp_handles_network_error():
