@@ -17,6 +17,7 @@ def module_manifest():
             "props_id": "four-award-props",
             "mount_id": "four-award-app",
             "docs": "chuck_the_4awardhelper:docs/four_award.md",
+            "bundled": True,
         },
         "jobs": [
             {

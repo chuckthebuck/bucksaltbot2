@@ -37,6 +37,9 @@ toolforge build start "$REPO_URL" --ref "$BRANCH" "${build_args[@]}"
 echo "Restarting webservice..."
 toolforge webservice buildservice restart
 
+echo "flushing jobs"
+toolforge jobs flush
+
 echo "Reloading jobs..."
 toolforge jobs load jobs.yaml
 

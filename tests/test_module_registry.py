@@ -136,6 +136,18 @@ def test_parse_module_definition_accepts_packaged_frontend_metadata():
     assert definition.frontend.bundled is True
 
 
+def test_four_award_python_manifest_marks_frontend_bundled():
+    from vendor.modules.four_award.modules.four_award.manifest import module_manifest
+
+    import router.module_registry as registry
+
+    definition = registry.parse_module_definition(module_manifest())
+
+    assert definition.frontend is not None
+    assert definition.frontend.mount_id == "four-award-app"
+    assert definition.frontend.bundled is True
+
+
 def test_parse_module_definition_rejects_frontend_without_ui():
     import router.module_registry as registry
 
