@@ -1441,6 +1441,55 @@ def test_four_award_view_jobs_shows_runs_tab_without_module_management(client):
     assert "Jobs YAML" not in html
 
 
+def test_four_award_unique_hit_runs_hide_duplicate_historical_claims():
+    import router.routes as routes
+
+    runs = [
+        {
+            "id": 4,
+            "trigger_type": "web_test",
+            "payload": {"mode": "historical_diff_dry_run"},
+            "result": {
+                "reviews": [
+                    {"article": "Example article", "users": ["Example"]},
+                ],
+            },
+        },
+        {
+            "id": 3,
+            "trigger_type": "web_test",
+            "payload": {"mode": "historical_diff_dry_run"},
+            "result": {
+                "reviews": [
+                    {"article": "Another article", "users": ["Example"]},
+                ],
+            },
+        },
+        {
+            "id": 2,
+            "trigger_type": "web_test",
+            "payload": {"mode": "historical_diff_dry_run"},
+            "result": {
+                "reviews": [
+                    {"article": "example article", "users": ["example"]},
+                ],
+            },
+        },
+        {
+            "id": 1,
+            "trigger_type": "cron",
+            "payload": {},
+            "result": {
+                "reviews": [
+                    {"article": "Example article", "users": ["Example"]},
+                ],
+            },
+        },
+    ]
+
+    assert [run["id"] for run in routes._four_award_unique_hit_runs(runs)] == [3, 2, 1]
+
+
 def test_module_registry_install_api_rejects_remote_modules(client):
     _set_session(client, "maintainer")
 

@@ -3520,6 +3520,68 @@ def _four_award_default_job_name(record) -> str | None:
     return jobs[0].name
 
 
+def _four_award_review_claim_keys(run: dict) -> set[tuple[str, tuple[str, ...]]]:
+    result = run.get("result")
+    if not isinstance(result, dict):
+        return set()
+    reviews = result.get("reviews")
+    if not isinstance(reviews, list):
+        return set()
+
+    keys: set[tuple[str, tuple[str, ...]]] = set()
+    for review in reviews:
+        if not isinstance(review, dict):
+            continue
+        article = str(review.get("article") or "").strip().casefold()
+        if not article:
+            continue
+        users = review.get("users")
+        normalized_users = tuple(
+            sorted(
+                {
+                    str(user).strip().casefold()
+                    for user in users
+                    if str(user).strip()
+                }
+            )
+        ) if isinstance(users, list) else ()
+        keys.add((article, normalized_users))
+    return keys
+
+
+def _four_award_run_is_historical_test(run: dict) -> bool:
+    payload = run.get("payload")
+    return bool(
+        run.get("trigger_type") == "web_test"
+        or (
+            isinstance(payload, dict)
+            and payload.get("mode") == "historical_diff_dry_run"
+        )
+    )
+
+
+def _four_award_unique_hit_runs(runs: list[dict]) -> list[dict]:
+    seen_claims: set[tuple[str, tuple[str, ...]]] = set()
+    included_ids: set[int] = set()
+
+    for run in sorted(runs, key=lambda item: int(item.get("id") or 0)):
+        if not _four_award_run_is_historical_test(run):
+            included_ids.add(int(run.get("id") or 0))
+            continue
+
+        claim_keys = _four_award_review_claim_keys(run)
+        if not claim_keys:
+            included_ids.add(int(run.get("id") or 0))
+            continue
+        if claim_keys.issubset(seen_claims):
+            continue
+
+        included_ids.add(int(run.get("id") or 0))
+        seen_claims.update(claim_keys)
+
+    return [run for run in runs if int(run.get("id") or 0) in included_ids]
+
+
 def _four_award_revision_text(oldid: int) -> dict[str, str]:
     config_values = get_module_config("four_award") or {}
     wiki_code = str(config_values.get("wiki_code") or "en").strip() or "en"
@@ -3618,7 +3680,9 @@ def four_award_runs_api():
         {
             "module": "four_award",
             "jobs": list_module_cron_jobs("four_award"),
-            "runs": list_module_job_runs("four_award", limit=50),
+            "runs": _four_award_unique_hit_runs(
+                list_module_job_runs("four_award", limit=200)
+            )[:50],
             "can_run": _four_award_run_allowed(username),
         }
     )
