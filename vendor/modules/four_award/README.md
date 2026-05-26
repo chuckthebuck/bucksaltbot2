@@ -52,8 +52,13 @@ Recommended rollout:
 
 ## Behavior
 
+* Records table rows are parsed into a local SQL-backed model before rendering.
 * Records table rows are rebuilt in canonical order: username A-Z, then award date/time.
 * Each wikitable entry is emitted as a single line.
+* Dry-run output includes a full records-table preview when approved records
+  would be added.
+* Duplicate nomination checks use the parsed records table rather than a raw
+  substring search.
 * The bot replies to nominations with hidden markers to avoid duplicate replies.
 * Ambiguous judgment calls become `manual_review_needed`; the bot only approves with clear evidence and only fails on objective problems.
 * Creation is checked against the article's first MediaWiki revision plus early article edits.
@@ -85,6 +90,27 @@ python3 -m pylint modules.four_award
 npm run lint
 python3 -m pytest tests/test_module_registry.py
 ```
+
+Focused module tests from this repository:
+
+```bash
+PYTHONPATH=. python3 -m pytest -q tests/test_four_award_records.py tests/test_four_award_replay.py
+```
+
+### Developing Inside the Framework
+
+The framework vendors this repo under `vendor/modules/four_award`. If you make a
+small 4Award change there while working on framework integration, preview the
+subtree split before pushing it back to the module repo:
+
+```bash
+bash scripts/backport-four-award-subtree.sh --dry-run
+```
+
+The matching VS Code task is `4Award: Preview vendored subtree backport`.
+Use `4Award: Push vendored subtree to module repo` only after the dry-run shows
+module files only. The script refuses splits that contain framework paths such
+as `router/`, `Deployment-docs/`, `vendor/`, or `requirements.txt`.
 
 ## Historic replay tests
 

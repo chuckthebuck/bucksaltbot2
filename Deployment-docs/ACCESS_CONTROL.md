@@ -38,6 +38,7 @@ Supported auto-grant roles:
 - `authenticated`
 - `commons_admin`
 - `commons_rollbacker`
+- project/global roles exposed by the auth layer, when configured
 
 ### Rollback Control
 
@@ -92,3 +93,26 @@ Legacy runtime/env keys are read as migration input only:
 
 New UI and API writes should use `ROLLBACK_CONTROL_JSON` and
 `ROLE_GRANTS_JSON`.
+
+## Module Rights
+
+Module rights use the same right engine as framework rights. The atom shape is:
+
+```txt
+module:<module_name>:<right>
+```
+
+Examples:
+
+- `module:four_award:view`
+- `module:four_award:run_jobs`
+- `module:four_award:edit_config`
+- `module:four_award:manage`
+- `module:four_award:estop`
+
+Modules declare only their module-owned rights in the manifest. The framework
+generates `view` and `estop` for every module because those are framework
+surfaces and do not require worker implementation.
+
+Framework `view_all` also allows viewing module job runs. Use explicit module
+rights when granting access to one module without broad job visibility.

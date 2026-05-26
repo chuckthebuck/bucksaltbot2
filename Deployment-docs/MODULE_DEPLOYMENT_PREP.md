@@ -45,7 +45,7 @@ This document guides you through preparing Chuck the Buckbot Framework for produ
   - [ ] List enabled module manifest names in `enabled-modules.txt`
   - [ ] If a module has an npm client package, pin it in `package.json`
   - [ ] If using npm client imports, list them in `module-frontend-packages.json`
-  - [ ] Run `npm run modules:frontend` before build if checking generated output
+  - [ ] Run `npm run build` before deploy if frontend assets changed
 
 - [ ] **Rollback module** (`modules/rollback/`):
   - [x] Manifest exists and is valid
@@ -63,12 +63,12 @@ This document guides you through preparing Chuck the Buckbot Framework for produ
 
 ### 4. Testing
 
-- [ ] **Run full test suite**:
+- [ ] **Run focused tests for the areas changed**:
   ```bash
-  pytest tests/ -v
+  python3 -m pytest -q tests/test_module_registry.py tests/test_module_runtime.py
   ```
-  
-  All should pass, including:
+
+  Add broader tests as needed, including:
   - Module registry tests (manifest parsing, DB persistence)
   - Module runtime tests (blueprint registration)
   - Module job tests (schedule calculation, manifest parsing, jobs.yaml generation)
@@ -77,9 +77,8 @@ This document guides you through preparing Chuck the Buckbot Framework for produ
 
 - [ ] **Test module bootstrap**:
   ```bash
-  ENABLE_MODULE_LOADING=1 python -c "from app import flask_app; print([m for m in flask_app.blueprints if 'module' in m])"
+  ENABLE_MODULE_LOADING=1 python scripts/check-module-install.py
   ```
-  Should show: `['rollback_module', ...]`
 
 - [ ] **Test module admin UI** (local or staging):
   - Navigate to `/modules` (maintainer-only)
@@ -118,7 +117,6 @@ Required for production:
 
 ```bash
 export ENABLE_MODULE_LOADING=1
-export MODULE_CRON_BASE_URL=http://localhost:5000  # or your service URL
 export TOOL_DATA_DIR=/data/project/buckbot          # Toolforge standard
 export NOTDEV=1                                     # Production flag
 export BUCKBOT_HTTP_USER_AGENT="Buckbot/4.0 (https://github.com/chuckthebuck/bucksaltbot2; User:Alachuckthebuck)"
@@ -142,8 +140,9 @@ export FOUR_AWARD_HTTP_USER_AGENT="FourAwardHelper/0.1 (https://github.com/chuck
 2. **Install/upgrade dependencies**:
    ```bash
    pip install -r requirements.txt
+   pip install -r requirements-modules.txt
    npm install
-   npm run modules:frontend
+   npm run build
    ```
 
 3. **Start services**:
@@ -164,12 +163,12 @@ export FOUR_AWARD_HTTP_USER_AGENT="FourAwardHelper/0.1 (https://github.com/chuck
    ```
    Should list all bundled modules (rollback, etc.)
 
-6. **Check logs**:
+5. **Check logs**:
    - Web service: Should show module registration on startup
-   - Worker: Should show cron executor running every 60s
-   - Beat: Should log task scheduling
+   - Rollback worker: Should show normal Celery worker startup
+   - Module controller/jobs: Should show manual or scheduled runs starting when requested
 
-7. **Install external modules**:
+6. **Install external modules**:
    - Remote runtime installation is disabled. `POST /api/v1/modules/install`
      intentionally returns `410`.
    - For local development, install the module repo editable in the framework
@@ -179,7 +178,7 @@ export FOUR_AWARD_HTTP_USER_AGENT="FourAwardHelper/0.1 (https://github.com/chuck
      `requirements-modules.txt`, and list the module manifest name in
      `enabled-modules.txt`.
 
-8. **Set up Toolforge cron jobs** (one-time, after deployment):
+7. **Set up Toolforge cron jobs** (one-time, after deployment):
    - Log into Toolforge
    - Generate jobs.yaml entries:
      ```bash
@@ -187,7 +186,7 @@ export FOUR_AWARD_HTTP_USER_AGENT="FourAwardHelper/0.1 (https://github.com/chuck
      ```
    - Copy the output to your local `jobs.yaml` (keeping the existing buckbot-celery and other framework jobs)
    - Commit and push the updated `jobs.yaml` to the repo
-   - Toolforge will automatically redeploy with the new cron jobs
+   - Load the updated file with `toolforge jobs load jobs.yaml`
    - **Note**: Cron jobs won't auto-update when modules are installed/removed; regenerate and update jobs.yaml manually as needed
 
 ### 9. Rollback Plan

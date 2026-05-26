@@ -108,6 +108,16 @@ git subtree pull \
   --squash
 ```
 
+If 4Award changes were made directly in the vendored framework copy, backport
+only the subtree to the module repo:
+
+```bash
+bash scripts/backport-four-award-subtree.sh --dry-run
+```
+
+The helper checks that the split contains module files only before the
+non-dry-run task pushes it.
+
 For a shared release, prefer a module tag from GitHub so another maintainer can
 recreate the snapshot:
 

@@ -39,6 +39,21 @@ git subtree pull \
   --squash
 ```
 
-Do not casually hand-edit files in this directory. Make module changes in the
-module repo, tag or commit them there, then pull the snapshot into the framework
-repo.
+Preferred flow: make module changes in the module repo, tag or commit them
+there, then pull the snapshot into the framework repo.
+
+When a 4Award change is easier to develop inside the framework first, use the
+backport helper before pushing anything to the module repo:
+
+```bash
+bash scripts/backport-four-award-subtree.sh --dry-run
+```
+
+That script runs `git subtree split --prefix=vendor/modules/four_award` and
+refuses the split if framework paths such as `router/`, `Deployment-docs/`,
+`vendor/`, or `requirements.txt` appear in the module commit. The matching VS
+Code tasks are:
+
+- `4Award: Preview vendored subtree backport`
+- `4Award: Push vendored subtree to module repo`
+- `4Award: Sync vendored subtree to local clone`

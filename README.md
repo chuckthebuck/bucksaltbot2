@@ -246,6 +246,16 @@ git subtree pull \
 Use the GitHub URL and a tag for the final shared release snapshot. Toolforge
 deploys the framework repo snapshot; it does not fetch module code separately.
 
+For 4Award changes developed directly in the vendored framework copy, use the
+checked backport helper before pushing to the module repo:
+
+```bash
+bash scripts/backport-four-award-subtree.sh --dry-run
+```
+
+The helper splits only `vendor/modules/four_award` and refuses commits that
+contain framework paths. The same workflow is available as VS Code tasks.
+
 ## Documentation
 
 Start with [Deployment-docs/DEPLOYMENT_DOCS_INDEX.md](Deployment-docs/DEPLOYMENT_DOCS_INDEX.md).

@@ -43,6 +43,7 @@ These are safe to document and usually safe to keep in `.env.example`.
 | `ENABLE_MODULE_LOADING` | framework | Enables module registry bootstrap. |
 | `ENABLED_MODULES` | framework | Optional override; empty uses `enabled-modules.txt`. |
 | `BOT_NAME` / `TOOL_NAME` | framework | Tool identity and default callback host. |
+| `NOTDEV` | framework | Production flag used by deployment/runtime scripts. |
 | `BUCKBOT_HTTP_USER_AGENT` | framework HTTP | User-Agent for framework-owned Wikimedia/Toolhub requests. |
 | `FOUR_AWARD_HTTP_USER_AGENT` | 4Award module HTTP | User-Agent for 4Award-owned Wikimedia requests. |
 | `TOOL_REDIS_URI` | services | Redis URL for framework status/progress state. |

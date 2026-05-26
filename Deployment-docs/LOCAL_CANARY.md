@@ -58,9 +58,8 @@ loading.
 
 ## Editable Module Development
 
-For active module work, do not edit the vendored snapshot first. Clone the
-module repo next to the framework repo and install it editable into the
-framework virtualenv:
+For active module work, the cleanest path is to clone the module repo next to
+the framework repo and install it editable into the framework virtualenv:
 
 ```bash
 python -m pip install -e ../module4awardhelper
@@ -81,6 +80,16 @@ npm run build
 
 Only refresh `vendor/modules/<module_name>/` when preparing a framework commit
 that should deploy or be reviewed as a pinned bundle.
+
+For 4Award framework-integration work, it is also acceptable to edit the
+vendored copy first and backport the subtree after review:
+
+```bash
+bash scripts/backport-four-award-subtree.sh --dry-run
+```
+
+Use the matching VS Code preview task before pushing the split to the 4Award
+repo. The helper refuses splits that accidentally include framework files.
 
 ## Canary Check
 
