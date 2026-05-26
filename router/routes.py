@@ -6,7 +6,7 @@ import os
 import sys as _sys
 import secrets
 import time
-from importlib import resources
+from importlib import resources, util as importlib_util
 from pathlib import Path
 
 import mwoauth
@@ -3521,6 +3521,12 @@ def _four_award_default_job_name(record) -> str | None:
 
 
 def _four_award_review_claim_keys(run: dict) -> set[tuple[str, tuple[str, ...]]]:
+    payload = run.get("payload")
+    if isinstance(payload, dict):
+        payload_keys = _four_award_claim_keys_from_payload(payload.get("claim_keys"))
+        if payload_keys:
+            return payload_keys
+
     result = run.get("result")
     if not isinstance(result, dict):
         return set()
@@ -3528,6 +3534,10 @@ def _four_award_review_claim_keys(run: dict) -> set[tuple[str, tuple[str, ...]]]
     if not isinstance(reviews, list):
         return set()
 
+    return _four_award_claim_keys_from_reviews(reviews)
+
+
+def _four_award_claim_keys_from_reviews(reviews: list) -> set[tuple[str, tuple[str, ...]]]:
     keys: set[tuple[str, tuple[str, ...]]] = set()
     for review in reviews:
         if not isinstance(review, dict):
@@ -3547,6 +3557,88 @@ def _four_award_review_claim_keys(run: dict) -> set[tuple[str, tuple[str, ...]]]
         ) if isinstance(users, list) else ()
         keys.add((article, normalized_users))
     return keys
+
+
+def _four_award_claim_keys_from_payload(value: object) -> set[tuple[str, tuple[str, ...]]]:
+    if not isinstance(value, list):
+        return set()
+
+    keys: set[tuple[str, tuple[str, ...]]] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        article = str(item.get("article") or "").strip().casefold()
+        users = item.get("users")
+        if not article or not isinstance(users, list):
+            continue
+        normalized_users = tuple(
+            sorted(
+                {
+                    str(user).strip().casefold()
+                    for user in users
+                    if str(user).strip()
+                }
+            )
+        )
+        keys.add((article, normalized_users))
+    return keys
+
+
+def _four_award_claim_keys_payload(
+    claim_keys: set[tuple[str, tuple[str, ...]]]
+) -> list[dict[str, object]]:
+    return [
+        {"article": article, "users": list(users)}
+        for article, users in sorted(claim_keys)
+    ]
+
+
+def _four_award_claim_keys_from_page_text(page_text: str) -> set[tuple[str, tuple[str, ...]]]:
+    package_name = "_vendor_four_award_runtime"
+    module_dir = (
+        Path(__file__).resolve().parent.parent
+        / "vendor"
+        / "modules"
+        / "four_award"
+        / "modules"
+        / "four_award"
+    )
+    package = _sys.modules.get(package_name)
+    if package is None:
+        spec = importlib_util.spec_from_file_location(
+            package_name,
+            module_dir / "__init__.py",
+            submodule_search_locations=[str(module_dir)],
+        )
+        if spec is None or spec.loader is None:
+            return set()
+        package = importlib_util.module_from_spec(spec)
+        _sys.modules[package_name] = package
+        spec.loader.exec_module(package)
+
+    parser_name = f"{package_name}.parser"
+    parser_module = _sys.modules.get(parser_name)
+    if parser_module is None:
+        parser_spec = importlib_util.spec_from_file_location(
+            parser_name,
+            module_dir / "parser.py",
+        )
+        if parser_spec is None or parser_spec.loader is None:
+            return set()
+        parser_module = importlib_util.module_from_spec(parser_spec)
+        _sys.modules[parser_name] = parser_module
+        parser_spec.loader.exec_module(parser_module)
+
+    try:
+        nominations = parser_module.parse_nominations(page_text)
+    except Exception:
+        return set()
+
+    reviews = [
+        {"article": nomination.article, "users": nomination.users}
+        for nomination in nominations
+    ]
+    return _four_award_claim_keys_from_reviews(reviews)
 
 
 def _four_award_run_is_historical_test(run: dict) -> bool:
@@ -3580,6 +3672,21 @@ def _four_award_unique_hit_runs(runs: list[dict]) -> list[dict]:
         seen_claims.update(claim_keys)
 
     return [run for run in runs if int(run.get("id") or 0) in included_ids]
+
+
+def _four_award_duplicate_historical_run(
+    claim_keys: set[tuple[str, tuple[str, ...]]],
+    runs: list[dict],
+) -> dict | None:
+    if not claim_keys:
+        return None
+    for run in sorted(runs, key=lambda item: int(item.get("id") or 0)):
+        if not _four_award_run_is_historical_test(run):
+            continue
+        existing_keys = _four_award_review_claim_keys(run)
+        if claim_keys & existing_keys:
+            return run
+    return None
 
 
 def _four_award_revision_text(oldid: int) -> dict[str, str]:
@@ -3730,6 +3837,24 @@ def four_award_test_run_api():
         revision = _four_award_revision_text(oldid)
     except ValueError:
         return jsonify({"detail": "Could not load revision text"}), 400
+    claim_keys = _four_award_claim_keys_from_page_text(revision["text"])
+    duplicate_run = _four_award_duplicate_historical_run(
+        claim_keys,
+        list_module_job_runs("four_award", limit=1000),
+    )
+    if duplicate_run is not None:
+        return jsonify(
+            {
+                "module": "four_award",
+                "status": "duplicate",
+                "duplicate_of_run_id": duplicate_run.get("id"),
+                "claim_keys": _four_award_claim_keys_payload(claim_keys),
+                "detail": (
+                    "This historical diff contains a Four Award claim "
+                    f"already found in run #{duplicate_run.get('id')}."
+                ),
+            }
+        ), 409
 
     job_name = str(payload.get("job_name") or "").strip()
     available_jobs = {job.name: job for job in record.definition.cron_jobs}
@@ -3751,6 +3876,7 @@ def four_award_test_run_api():
         "four_page_revision_timestamp": revision["timestamp"],
         "four_page_revision_user": revision["user"],
         "four_page_text": revision["text"],
+        "claim_keys": _four_award_claim_keys_payload(claim_keys),
         "publish_dry_run_report": False,
         "config_overrides": {
             "dry_run": True,

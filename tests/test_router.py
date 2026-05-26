@@ -1,5 +1,6 @@
 """Tests for router.py – rollback API and UI routes."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1488,6 +1489,58 @@ def test_four_award_unique_hit_runs_hide_duplicate_historical_claims():
     ]
 
     assert [run["id"] for run in routes._four_award_unique_hit_runs(runs)] == [3, 2, 1]
+
+
+def test_four_award_test_run_rejects_duplicate_historical_claim(client):
+    _set_session(client, "viewer")
+    record = SimpleNamespace(
+        enabled=True,
+        definition=SimpleNamespace(
+            cron_jobs=[SimpleNamespace(name="four-award-sync", enabled=True)]
+        ),
+    )
+    revision_text = """== Current nominations ==
+=== Example article ===
+{{Four Award Nomination
+ | article = Example article
+ | user = Example
+}}
+"""
+    existing_runs = [
+        {
+            "id": 12,
+            "trigger_type": "web_test",
+            "payload": {
+                "mode": "historical_diff_dry_run",
+                "claim_keys": [{"article": "example article", "users": ["example"]}],
+            },
+            "result": {},
+        }
+    ]
+
+    with (
+        patch("router.routes._four_award_operator_allowed", return_value=True),
+        patch("router.routes._four_award_run_allowed", return_value=True),
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes._four_award_revision_text", return_value={
+            "title": "Wikipedia:Four Award",
+            "text": revision_text,
+            "timestamp": "2026-05-21T00:00:00Z",
+            "user": "Tester",
+        }),
+        patch("router.routes.list_module_job_runs", return_value=existing_runs),
+        patch("router.routes.create_module_job_run") as create_run,
+    ):
+        resp = client.post(
+            "/api/v1/four-award/test-runs",
+            json={"diff": "12345", "job_name": "four-award-sync"},
+        )
+
+    assert resp.status_code == 409
+    data = resp.get_json()
+    assert data["status"] == "duplicate"
+    assert data["duplicate_of_run_id"] == 12
+    create_run.assert_not_called()
 
 
 def test_module_registry_install_api_rejects_remote_modules(client):
