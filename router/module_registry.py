@@ -527,8 +527,11 @@ def discover_installed_module_definitions() -> list[ModuleDefinition]:
         if hasattr(entry_points, "select"):
             selected = entry_points.select(group=MODULE_ENTRY_POINT_GROUP)
         else:  # pragma: no cover - compatibility with old importlib.metadata
-            legacy_get = getattr(entry_points, "get", None)
-            selected = legacy_get(MODULE_ENTRY_POINT_GROUP, []) if callable(legacy_get) else []
+            selected = (
+                entry_points.get(MODULE_ENTRY_POINT_GROUP, [])
+                if isinstance(entry_points, dict)
+                else []
+            )
     except Exception:
         LOGGER.exception("Failed to read Python package entry points")
         return []
@@ -554,8 +557,11 @@ def inspect_installed_module_entry_points() -> list[dict[str, Any]]:
         if hasattr(entry_points, "select"):
             selected = list(entry_points.select(group=MODULE_ENTRY_POINT_GROUP))
         else:  # pragma: no cover - compatibility with old importlib.metadata
-            legacy_get = getattr(entry_points, "get", None)
-            selected = list(legacy_get(MODULE_ENTRY_POINT_GROUP, [])) if callable(legacy_get) else []
+            selected = list(
+                entry_points.get(MODULE_ENTRY_POINT_GROUP, [])
+                if isinstance(entry_points, dict)
+                else []
+            )
     except Exception as exc:
         return [
             {
