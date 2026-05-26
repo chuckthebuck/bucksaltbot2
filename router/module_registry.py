@@ -28,6 +28,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
 MODULE_MANIFEST_FILENAMES = ("module.toml", "module.json")
 MODULE_ENTRY_POINT_GROUP = "chuck_buckbot.modules"
 ENABLED_MODULES_FILENAME = "enabled-modules.txt"
+GENERATED_MODULE_RIGHTS = ("view", "estop")
 LOGGER = logging.getLogger(__name__)
 
 
@@ -104,6 +105,11 @@ class ModuleDefinition:
     @property
     def has_custom_buildpacks(self) -> bool:
         return bool(self.buildpacks)
+
+    @property
+    def effective_rights(self) -> tuple[str, ...]:
+        """Return generated framework rights plus module-declared worker rights."""
+        return tuple(sorted({*GENERATED_MODULE_RIGHTS, *self.rights}))
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -333,6 +339,12 @@ def _parse_module_rights(raw_rights: Any) -> tuple[str, ...]:
             raise ValueError(
                 f"right {index} must be lowercase snake_case and must not contain ':'"
             )
+        if right in GENERATED_MODULE_RIGHTS:
+            LOGGER.warning(
+                "Ignoring framework-generated module right '%s' in manifest",
+                right,
+            )
+            continue
         rights.append(right)
 
     return tuple(sorted(set(rights)))
@@ -1406,6 +1418,8 @@ def user_has_module_access(module_name: str, username: str, *, is_maintainer: bo
         from router.authz import user_has_module_right
 
         if user_has_module_right(username, module_name, "access"):
+            return True
+        if user_has_module_right(username, module_name, "view"):
             return True
     except Exception:
         pass

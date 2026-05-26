@@ -9,7 +9,27 @@ This directory is a vendored snapshot of the 4Award module repo.
 - Python distribution: `chuck-the-4awardhelper`
 - Python import package: `chuck_the_4awardhelper`
 
-Update this directory with `git subtree pull` from the framework repo root:
+This is not a live checkout of the module repo. It is the framework's pinned
+deploy copy. For active development, install a local clone of the module repo in
+editable mode from the framework virtualenv:
+
+```bash
+python -m pip install -e ../module4awardhelper
+python scripts/check-module-install.py
+```
+
+When you are ready to update the deploy snapshot, run `git subtree pull` from
+the framework repo root. During local iteration the source can be a local clone:
+
+```bash
+git subtree pull \
+  --prefix=vendor/modules/four_award \
+  ../module4awardhelper \
+  main \
+  --squash
+```
+
+For a reproducible shared release, pull from GitHub by tag:
 
 ```bash
 git subtree pull \

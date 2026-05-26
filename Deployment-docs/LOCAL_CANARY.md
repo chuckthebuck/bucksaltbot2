@@ -56,6 +56,32 @@ module-frontend-packages.json
 The frontend registry is generated at build time. It is not runtime module
 loading.
 
+## Editable Module Development
+
+For active module work, do not edit the vendored snapshot first. Clone the
+module repo next to the framework repo and install it editable into the
+framework virtualenv:
+
+```bash
+python -m pip install -e ../module4awardhelper
+python scripts/check-module-install.py
+```
+
+The editable install provides the same package entry point as the vendored
+snapshot, so `enabled-modules.txt` does not change. Restart the local web or job
+process after Python changes if it has already imported the module.
+
+If the module frontend changed, build it in the module repo:
+
+```bash
+cd ../module4awardhelper
+npm install
+npm run build
+```
+
+Only refresh `vendor/modules/<module_name>/` when preparing a framework commit
+that should deploy or be reviewed as a pinned bundle.
+
 ## Canary Check
 
 ```bash

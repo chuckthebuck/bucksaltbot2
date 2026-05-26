@@ -6,7 +6,7 @@ access, Toolforge job orchestration, generated Jobs YAML, module permissions,
 and emergency stops. The module provides its own bot logic and, when needed,
 its own browser UI.
 
-The repo split is intentionally boring:
+The repo split is intentionally boring for deploys:
 
 ```text
 framework repo changes independently
@@ -14,10 +14,10 @@ module repo changes independently
 deploy pins known-good versions together
 ```
 
-Do not hand-copy module code into framework subdirectories for production.
-Vendor module repos as subtree snapshots under `vendor/modules/<module_name>/`,
-install those local paths during build, then register their manifests during
-deploy/startup.
+That does not mean every edit has to go through GitHub and a subtree refresh.
+For normal development, work in the module repo directly and install it into the
+framework virtualenv in editable mode. Vendor module repos as subtree snapshots
+under `vendor/modules/<module_name>/` only for deployable framework commits.
 
 Framework files that matter:
 
@@ -26,6 +26,70 @@ Framework files that matter:
 - `enabled-modules.txt` lists module names to register.
 - `module-frontend-packages.json` lists optional static frontend package imports
   for the Node/Vite build.
+
+## Development vs Deploy
+
+There are three supported module modes:
+
+| Mode | Where code lives | How framework sees it | When to use it |
+| --- | --- | --- | --- |
+| Framework-bundled | `modules/<module_name>/` | manifest discovery under `modules/` | rollback and other framework-owned modules |
+| Editable package | separate local module repo | Python entry point from `pip install -e` | day-to-day module development |
+| Vendored snapshot | `vendor/modules/<module_name>/` | Python entry point from `requirements-modules.txt` | Toolforge deploys and reproducible releases |
+
+Use editable packages while building. Use vendored snapshots when you need a
+single framework commit that Toolforge can build without fetching another repo.
+
+For 4Award development from the framework repo:
+
+```bash
+# one-time setup, assuming the module repo is next to this repo
+python -m pip install -e ../module4awardhelper
+python scripts/check-module-install.py
+```
+
+The editable install exposes the same `chuck_buckbot.modules` entry point as
+the vendored package. Python code changes in the module repo are picked up
+without copying files into `vendor/`; restart the local web/job process if the
+imported module is already loaded.
+
+When frontend code changes, build it in the module repo so the packaged static
+files are updated:
+
+```bash
+cd ../module4awardhelper
+npm install
+npm run build
+```
+
+Then run the framework locally as usual. The framework serves the package's
+built assets, not the module's Vue source files.
+
+When you are ready to deploy, commit the module repo and refresh the framework's
+vendored snapshot. You can pull from a local clone while iterating:
+
+```bash
+git subtree pull \
+  --prefix=vendor/modules/four_award \
+  ../module4awardhelper \
+  main \
+  --squash
+```
+
+For a release that other people or Toolforge operators need to reproduce, tag
+the module repo and refresh from the GitHub URL/tag:
+
+```bash
+git subtree pull \
+  --prefix=vendor/modules/four_award \
+  https://github.com/chuckthebuck/module4awardhelper.git \
+  v0.1.3 \
+  --squash
+```
+
+Update `vendor/modules/four_award/SUBTREE.md` when the source commit or module
+version changes. That file is the human-readable link between the vendored copy
+and the source module repo.
 
 ## Package Shape
 
@@ -58,7 +122,8 @@ four_award = "chuck_the_4awardhelper.manifest:module_manifest"
 The entry point can return a manifest dictionary, a path to a manifest file, or
 a `ModuleDefinition`.
 
-Install the vendored module into the framework with a local path:
+Install the vendored module into the framework with a local path for production
+builds:
 
 ```txt
 # requirements-modules.txt
@@ -74,7 +139,8 @@ four_award
 
 `requirements.txt` already includes `-r requirements-modules.txt`, so Toolforge
 builds install the vendored Python module package with the framework. Toolforge
-does not fetch module repos during build.
+does not fetch module repos during build. Editable installs are for local
+development only and should not be committed to `requirements-modules.txt`.
 
 ## Manifest
 
@@ -87,7 +153,7 @@ title = "Chuck the 4awardhelper"
 repo = "https://github.com/example/chuck-the-4awardhelper"
 entry_point = "chuck_the_4awardhelper.service:run_four_award_sync"
 ui = true
-rights = ["manage", "view_jobs", "run_jobs", "edit_config", "estop"]
+rights = ["manage", "run_jobs", "edit_config"]
 
 [[jobs]]
 name = "four-award-sync"
@@ -112,7 +178,36 @@ Important fields:
 - `frontend` points to packaged static assets owned by the module package.
 - `jobs` are Toolforge cron-style jobs generated into `jobs.yaml`.
 - `run` accepts human-readable schedules such as `every hour`, `every 15 minutes`, `every 24 hours`, or `daily at 03:00`.
-- `rights` are module-defined right names. The framework grants them as atoms such as `module:four_award:view_jobs`.
+- `rights` are module-defined worker right names. The framework grants them as
+  atoms such as `module:four_award:run_jobs`. The framework automatically
+  provides `module:<name>:view` and `module:<name>:estop`, so modules should not
+  declare those rights.
+
+## CTB API Namespace
+
+The framework owns the CTB API namespace. In this codebase the current route
+prefix is `/api/v1`:
+
+```txt
+/api/v1/modules
+/api/v1/modules/<module>/config
+/api/v1/modules/<module>/jobs
+/api/v1/modules/<module>/estop
+```
+
+Those standard routes are generated from the module registry and shared
+framework controllers. Module-owned CTB APIs may also live in this namespace,
+but they should stay under their module path:
+
+```txt
+/api/v1/modules/<module>/<module-owned-resource>
+```
+
+Avoid adding new top-level module API paths such as `/api/v1/four-award/...`.
+Those should move under `/api/v1/modules/four_award/` over time. A module
+manifest should not need to declare the generated framework endpoint paths. If a
+module needs to describe external API behavior, such as Wikimedia API URL,
+user-agent, or edit-summary tag, keep that separate from CTB routes.
 
 ## Module Frontend
 
@@ -186,14 +281,15 @@ toolforge jobs load jobs.yaml
 
 Common module rights:
 
-- `view_jobs` — see module job runs and output.
+- `view` — see module UI, job runs, and output; generated by the framework.
+- `estop` — emergency stop the module; generated by the framework.
 - `run_jobs` — queue module test/manual jobs.
 - `edit_config` — edit non-secret module settings.
 - `manage` — manage module state and access.
-- `estop` — emergency stop the module.
 
-The module declares the vocabulary. The framework controls how users receive the
-rights through maintainers, runtime groups, and MediaWiki role auto grants.
+The module declares only the worker-facing vocabulary. The framework controls
+how users receive both module-declared and framework-generated rights through
+maintainers, runtime groups, and MediaWiki role auto grants.
 
 ## Emergency Stop
 

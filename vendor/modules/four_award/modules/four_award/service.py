@@ -209,8 +209,11 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
     finally:
         reviewer.IGNORE_EXISTING_RECORDS = previous_ignore_existing_records
 
-    if approved:
-        sync_records_table(_approved_records(approved))
+    approved_records = _approved_records(approved)
+    records_table_preview = None
+    if approved_records:
+        records_table_preview = records.preview_records_table(approved_records)
+        sync_records_table(approved_records)
 
     dry_run_edits = wiki.get_dry_run_edits()
     report_text = _dry_run_report_wikitext(dry_run_edits, approved, failed, manual)
@@ -244,6 +247,7 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
             "wikitext": report_text,
             "published": report_page,
         },
+        "records_table_preview": records_table_preview,
     }
 
 

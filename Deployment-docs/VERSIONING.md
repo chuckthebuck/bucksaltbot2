@@ -69,6 +69,18 @@ Those directories are git subtree snapshots of module repos. The framework
 deploy does not fetch module repos from GitHub; Toolforge installs local module
 paths from `requirements-modules.txt`.
 
+A subtree snapshot is a copy with provenance, not a live dependency link. The
+connection back to the source repo is maintained by:
+
+- the subtree commit in framework git history
+- `vendor/modules/<module_name>/SUBTREE.md`
+- the module package version in its `pyproject.toml`
+- the module repo commit or tag used for the subtree pull
+
+Use editable installs for active development and subtree snapshots for
+deployable framework commits. You do not need to push the module repo to GitHub
+before testing it in the framework locally.
+
 Example:
 
 ```txt
@@ -83,6 +95,27 @@ git subtree pull \
   --prefix=vendor/modules/four_award \
   https://github.com/chuckthebuck/module4awardhelper.git \
   v0.1.2 \
+  --squash
+```
+
+During local iteration, the source can be a local clone instead of GitHub:
+
+```bash
+git subtree pull \
+  --prefix=vendor/modules/four_award \
+  ../module4awardhelper \
+  main \
+  --squash
+```
+
+For a shared release, prefer a module tag from GitHub so another maintainer can
+recreate the snapshot:
+
+```bash
+git subtree pull \
+  --prefix=vendor/modules/four_award \
+  https://github.com/chuckthebuck/module4awardhelper.git \
+  v0.1.3 \
   --squash
 ```
 
@@ -118,7 +151,13 @@ specific vendored module snapshot commit.
 
 ## Ownership Rule
 
-Do not make casual edits inside `vendor/modules/<module_name>/`.
+Do not make casual edits inside `vendor/modules/<module_name>/` for normal
+development. Use an editable module install instead:
+
+```bash
+python -m pip install -e ../module4awardhelper
+python scripts/check-module-install.py
+```
 
 Normal flow:
 

@@ -72,6 +72,7 @@ _USER_GRANT_RIGHTS = {
 
 _MODULE_BUILTIN_RIGHTS = {
     "access",
+    "view",
     "estop",
     "manage",
     "view_jobs",

@@ -170,7 +170,14 @@ export FOUR_AWARD_HTTP_USER_AGENT="FourAwardHelper/0.1 (https://github.com/chuck
    - Beat: Should log task scheduling
 
 7. **Install external modules**:
-   - Use `POST /api/v1/modules/install` with a GitHub or GitLab repo URL to add a module without bundling it in the framework repo.
+   - Remote runtime installation is disabled. `POST /api/v1/modules/install`
+     intentionally returns `410`.
+   - For local development, install the module repo editable in the framework
+     virtualenv with `python -m pip install -e ../module4awardhelper`.
+   - For Toolforge deployment, vendor the module under
+     `vendor/modules/<module_name>/`, pin that path in
+     `requirements-modules.txt`, and list the module manifest name in
+     `enabled-modules.txt`.
 
 8. **Set up Toolforge cron jobs** (one-time, after deployment):
    - Log into Toolforge

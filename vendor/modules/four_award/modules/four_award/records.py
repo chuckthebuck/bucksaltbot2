@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import sqlite3
 import re
-from collections import Counter
+from dataclasses import dataclass
 from typing import Iterable
 
 from .config import ENABLE_RECORDS, RECORDS_PAGE
 from .models import FourAwardRecord
-from .util import normalize_user, to_dts
+from .util import clean_wiki_value, normalize_title, normalize_user, to_dts, to_iso
 from .wiki import get_wiki
+
+
+@dataclass(frozen=True)
+class RecordsTableModel:
+    header: str
+    records: list[FourAwardRecord]
+    raw_rows: list[str]
+    trailing_row_marker: bool
+    had_final_newline: bool
 
 
 def _record_row(record: FourAwardRecord, ordinal: int) -> str:
@@ -33,49 +43,213 @@ def _four_awards_table(text: str) -> tuple[int, int] | None:
     return table_start, table_end + 2
 
 
-def _existing_counts(table: str) -> Counter[str]:
-    counts: Counter[str] = Counter()
-    for match in re.finditer(r"\[\[User:([^|\]]+)", table, re.I):
-        counts[normalize_user(match.group(1))] += 1
-    return counts
+def _split_table_rows(table: str) -> tuple[str, list[str], bool, bool]:
+    had_final_newline = table.endswith("\n")
+    table_body = table.rstrip()
+    if not table_body.endswith("|}"):
+        return table, [], False, had_final_newline
+
+    table_body = table_body[:-2].rstrip()
+    trailing_row_marker = bool(re.search(r"(?:^|\n)\|-\s*$", table_body))
+    if trailing_row_marker:
+        table_body = re.sub(r"(?:^|\n)\|-\s*$", "", table_body).rstrip()
+
+    chunks = re.split(r"(?m)(?=^\|-\s*$)", table_body)
+    header = chunks[0].rstrip()
+    rows = [chunk.rstrip() for chunk in chunks[1:] if chunk.strip()]
+    return header, rows, trailing_row_marker, had_final_newline
+
+
+def _row_cells(row: str) -> list[str]:
+    lines = row.strip().splitlines()
+    if lines and re.fullmatch(r"\|-\s*", lines[0]):
+        lines = lines[1:]
+    body = "\n".join(lines).strip()
+    if body.startswith("|"):
+        body = body[1:].strip()
+    if "||" in body:
+        return [cell.strip() for cell in body.split("||")]
+    return [
+        line[1:].strip()
+        for line in lines
+        if line.lstrip().startswith("|") and not line.lstrip().startswith("|-")
+    ]
+
+
+def _link_target(value: str, namespace: str | None = None) -> tuple[str, str]:
+    if namespace:
+        pattern = rf"\[\[\s*{re.escape(namespace)}:([^|\]#]+)(?:#[^|\]]*)?(?:\|([^\]]+))?\]\]"
+    else:
+        pattern = r"\[\[\s*([^|\]#]+)(?:#[^|\]]*)?(?:\|([^\]]+))?\]\]"
+    match = re.search(pattern, value, re.I)
+    if not match:
+        cleaned = clean_wiki_value(value)
+        return cleaned, cleaned
+    target = clean_wiki_value(match.group(1))
+    display = clean_wiki_value(match.group(2) or target)
+    display = re.sub(r"\s*\(\d+\)\s*$", "", display).strip()
+    return target, display
+
+
+def _record_from_row(row: str) -> FourAwardRecord | None:
+    cells = _row_cells(row)
+    if len(cells) < 2:
+        return None
+    user, display_user = _link_target(cells[0], "User")
+    article, _display_article = _link_target(cells[1])
+    user = normalize_title(user)
+    article = normalize_title(article)
+    if not user or not article:
+        return None
+    return FourAwardRecord(
+        user=user,
+        display_user=display_user or user,
+        article=article,
+        award_date=to_iso(cells[2]) if len(cells) > 2 else "",
+        creation_date=to_iso(cells[3]) if len(cells) > 3 else "",
+        dyk_date=to_iso(cells[4]) if len(cells) > 4 else "",
+        ga_date=to_iso(cells[5]) if len(cells) > 5 else "",
+        fa_date=to_iso(cells[6]) if len(cells) > 6 else "",
+    )
+
+
+def parse_records_table(table: str) -> RecordsTableModel:
+    header, rows, trailing_row_marker, had_final_newline = _split_table_rows(table)
+    records: list[FourAwardRecord] = []
+    raw_rows: list[str] = []
+    for row in rows:
+        record = _record_from_row(row)
+        if record is None:
+            raw_rows.append(row)
+        else:
+            records.append(record)
+    return RecordsTableModel(
+        header=header,
+        records=records,
+        raw_rows=raw_rows,
+        trailing_row_marker=trailing_row_marker,
+        had_final_newline=had_final_newline,
+    )
+
+
+def _records_conn(records: Iterable[FourAwardRecord]) -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        """
+        CREATE TABLE four_award_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            normalized_user TEXT NOT NULL,
+            user TEXT NOT NULL,
+            display_user TEXT,
+            article TEXT NOT NULL,
+            award_date TEXT,
+            creation_date TEXT,
+            dyk_date TEXT,
+            ga_date TEXT,
+            fa_date TEXT
+        )
+        """
+    )
+    conn.executemany(
+        """
+        INSERT INTO four_award_records
+        (normalized_user, user, display_user, article, award_date, creation_date,
+         dyk_date, ga_date, fa_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                normalize_user(record.user),
+                normalize_title(record.user),
+                record.display_user or normalize_title(record.user),
+                normalize_title(record.article),
+                to_iso(record.award_date),
+                to_iso(record.creation_date),
+                to_iso(record.dyk_date),
+                to_iso(record.ga_date),
+                to_iso(record.fa_date),
+            )
+            for record in records
+            if record and record.user and record.article
+        ],
+    )
+    return conn
+
+
+def _sorted_records(conn: sqlite3.Connection) -> list[FourAwardRecord]:
+    rows = conn.execute(
+        """
+        SELECT user, display_user, article, award_date, creation_date,
+               dyk_date, ga_date, fa_date
+        FROM four_award_records
+        ORDER BY normalized_user, award_date, article, id
+        """
+    ).fetchall()
+    return [
+        FourAwardRecord(
+            user=row[0],
+            display_user=row[1],
+            article=row[2],
+            award_date=row[3],
+            creation_date=row[4],
+            dyk_date=row[5],
+            ga_date=row[6],
+            fa_date=row[7],
+        )
+        for row in rows
+    ]
+
+
+def render_records_table(model: RecordsTableModel, records: Iterable[FourAwardRecord]) -> str:
+    conn = _records_conn(records)
+    try:
+        lines = [model.header.rstrip()]
+        raw_rows = [row.rstrip() for row in model.raw_rows if row.strip()]
+        if raw_rows:
+            lines.extend(raw_rows)
+
+        counts: dict[str, int] = {}
+        for record in _sorted_records(conn):
+            key = normalize_user(record.user)
+            counts[key] = counts.get(key, 0) + 1
+            lines.append(_record_row(record, counts[key]))
+
+        if model.trailing_row_marker:
+            lines.append("|-")
+        lines.append("|}")
+        output = "\n".join(lines) + "\n"
+        if not model.had_final_newline:
+            output = output.rstrip("\n")
+        return output
+    finally:
+        conn.close()
 
 
 def _insert_rows(table: str, records: list[FourAwardRecord]) -> str:
-    counts = _existing_counts(table)
-    row_chunks = re.split(r"(?m)(?=^\|-\s*$)", table)
-    header = row_chunks[0]
-    existing_rows = row_chunks[1:]
-    if not existing_rows and "|}" in header:
-        before_end, table_end = header.rsplit("|}", 1)
-        header = before_end
-        existing_rows = ["|}" + table_end]
+    model = parse_records_table(table)
+    output = render_records_table(model, [*model.records, *records])
+    return output if output.endswith("\n") else output + "\n"
 
-    def row_user(row: str) -> str:
-        match = re.search(r"\[\[User:([^|\]]+)", row, re.I)
-        return normalize_user(match.group(1)) if match else ""
 
-    for record in sorted(records, key=lambda r: (normalize_user(r.user), r.award_date or "")):
-        counts[normalize_user(record.user)] += 1
-        new_row = _record_row(record, counts[normalize_user(record.user)])
-        new_key = normalize_user(record.user)
-        inserted = False
-        for index, row in enumerate(existing_rows):
-            key = row_user(row)
-            if key and key > new_key:
-                existing_rows.insert(index, new_row + "\n")
-                inserted = True
-                break
-        if not inserted:
-            end_index = len(existing_rows)
-            for index, row in enumerate(existing_rows):
-                if row.strip().endswith("|}"):
-                    end_index = index
-                    break
-            existing_rows.insert(end_index, new_row + "\n")
-    output = header.rstrip() + "\n" + "".join(existing_rows).rstrip() + "\n"
-    if re.search(r"\|-\s*\n\|\}\s*$", table) and not re.search(r"\|-\s*\n\|\}\s*$", output):
-        output = re.sub(r"\|\}\s*$", "|-\n|}", output)
-    return output + ("\n" if table.endswith("\n") and not output.endswith("\n") else "")
+def render_records_page_text(page_text: str, records: Iterable[FourAwardRecord]) -> str:
+    span = _four_awards_table(page_text)
+    if not span:
+        raise RuntimeError("Could not find the Four Awards records table")
+    start, end = span
+    new_table = _insert_rows(page_text[start:end], [record for record in records if record])
+    return page_text[:start] + new_table + page_text[end:]
+
+
+def preview_records_table(records: Iterable[FourAwardRecord]) -> dict[str, object] | None:
+    records = [record for record in records if record]
+    if not records or not ENABLE_RECORDS:
+        return None
+    text = get_wiki().get_text(RECORDS_PAGE)
+    return {
+        "title": RECORDS_PAGE,
+        "record_count": len(records),
+        "wikitext": render_records_page_text(text, records),
+    }
 
 
 def sync_records_table(records: Iterable[FourAwardRecord]) -> int:
@@ -84,10 +258,5 @@ def sync_records_table(records: Iterable[FourAwardRecord]) -> int:
         return 0
     wiki = get_wiki()
     text = wiki.get_text(RECORDS_PAGE)
-    span = _four_awards_table(text)
-    if not span:
-        raise RuntimeError("Could not find the Four Awards records table")
-    start, end = span
-    new_table = _insert_rows(text[start:end], records)
-    wiki.save_text(RECORDS_PAGE, text[:start] + new_table + text[end:], "Update Four Award records")
+    wiki.save_text(RECORDS_PAGE, render_records_page_text(text, records), "Update Four Award records")
     return len(records)

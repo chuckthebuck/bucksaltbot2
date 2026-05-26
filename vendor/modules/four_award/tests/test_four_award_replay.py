@@ -97,6 +97,10 @@ def test_replay_matches_expected_successful_review():
         "User talk:Example",
         "Wikipedia:Four Award/Records",
     ]
+    preview = payload["result"]["records_table_preview"]
+    assert preview["title"] == "Wikipedia:Four Award/Records"
+    assert preview["record_count"] == 1
+    assert "[[User:Example|Example]]" in preview["wikitext"]
 
 
 def _successful_review_case() -> dict:

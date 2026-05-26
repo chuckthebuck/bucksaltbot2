@@ -9,7 +9,9 @@ packages.
 - [README.md](../README.md) — Current framework overview, module contract, UI
   ownership, permission model, and Toolforge flow.
 - [MODULE_DEVELOPMENT_GUIDE.md](MODULE_DEVELOPMENT_GUIDE.md) — How to build a
-  module package, declare cron jobs, expose rights, and use framework services.
+  module package, install it editable for local development, refresh a vendored
+  snapshot for deploys, declare cron jobs, expose rights, and use framework
+  services.
 - [MODULE_DEPLOYMENT_PREP.md](MODULE_DEPLOYMENT_PREP.md) — Toolforge-oriented
   deployment prep for packaged modules.
 - [LOCAL_CANARY.md](LOCAL_CANARY.md) — Local install, module install, and canary

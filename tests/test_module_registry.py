@@ -86,14 +86,21 @@ def test_parse_module_definition_accepts_module_rights():
             "repo": "https://example.invalid/four-award",
             "entry_point": "modules.four_award.service:run",
             "ui": True,
-            "rights": ["manage", "view jobs", "run-jobs", "edit config"],
+            "rights": ["manage", "run-jobs", "edit config"],
         }
     )
 
-    assert definition.rights == ("edit_config", "manage", "run_jobs", "view_jobs")
+    assert definition.rights == ("edit_config", "manage", "run_jobs")
+    assert definition.effective_rights == (
+        "edit_config",
+        "estop",
+        "manage",
+        "run_jobs",
+        "view",
+    )
 
 
-def test_parse_module_definition_accepts_module_estop_right():
+def test_parse_module_definition_ignores_framework_generated_rights():
     import router.module_registry as registry
 
     definition = registry.parse_module_definition(
@@ -102,11 +109,12 @@ def test_parse_module_definition_accepts_module_estop_right():
             "repo": "https://example.invalid/rollback",
             "entry_point": "modules.rollback.blueprint",
             "ui": True,
-            "rights": ["estop"],
+            "rights": ["view", "estop", "manage"],
         }
     )
 
-    assert definition.rights == ("estop",)
+    assert definition.rights == ("manage",)
+    assert definition.effective_rights == ("estop", "manage", "view")
 
 
 def test_parse_module_definition_accepts_packaged_frontend_metadata():

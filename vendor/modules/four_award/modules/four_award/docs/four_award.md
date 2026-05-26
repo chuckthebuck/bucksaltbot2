@@ -33,7 +33,7 @@ checks because current records would otherwise make old nominations fail.
 
 ## Module Rights
 
-- `module:four_award:view_jobs`: View 4award runs and dry-run output.
+- `module:four_award:view`: View 4award runs and dry-run output.
 - `module:four_award:run_jobs`: Queue historical dry-run tests and module jobs.
 - `module:four_award:edit_config`: Edit non-secret module settings.
 - `module:four_award:manage`: Manage the module.

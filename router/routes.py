@@ -269,10 +269,16 @@ def _can_view_module_jobs(username: str | None, module_name: str) -> bool:
         and (
             _can_run_module_jobs(username, module_name)
             or _has_permission(username, "view_all")
+            or _has_permission(username, module_right_atom(module_name, "view"))
             or _has_permission(username, module_right_atom(module_name, "view_jobs"))
+            or user_has_module_right(username, module_name, "view")
             or user_has_module_right(username, module_name, "view_jobs")
         )
     )
+
+
+def _module_effective_rights(record) -> list[str]:
+    return sorted(record.definition.effective_rights)
 
 
 def _can_edit_module_config(username: str | None, module_name: str) -> bool:
@@ -1819,7 +1825,7 @@ def get_runtime_authz_api():
             },
             "global_group_options": get_global_userright_groups(),
             "module_rights": {
-                record.definition.name: sorted({"estop", *record.definition.rights})
+                record.definition.name: _module_effective_rights(record)
                 for record in list_module_definitions()
                 if record.definition.rights or record.definition.name
             },
@@ -1878,7 +1884,7 @@ def update_runtime_authz_api():
             },
             "global_group_options": get_global_userright_groups(),
             "module_rights": {
-                record.definition.name: sorted({"estop", *record.definition.rights})
+                record.definition.name: _module_effective_rights(record)
                 for record in list_module_definitions()
                 if record.definition.rights or record.definition.name
             },

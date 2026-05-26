@@ -1423,6 +1423,20 @@ def test_four_award_view_jobs_can_open_runs_without_run_jobs(client):
     assert resp.headers["Location"] == "/four-award"
 
 
+def test_four_award_generated_view_can_open_runs_without_run_jobs(client):
+    _set_session(client, "viewer")
+
+    with (
+        patch("router.routes._user_permissions", return_value={"module:four_award:view"}),
+        patch("router.routes.is_maintainer", return_value=False),
+        patch("router.routes.is_admin_user", return_value=False),
+    ):
+        resp = client.get("/goto?tab=four-award")
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == "/four-award"
+
+
 def test_four_award_view_jobs_shows_runs_tab_without_module_management(client):
     _set_session(client, "viewer")
 
