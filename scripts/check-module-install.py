@@ -23,12 +23,15 @@ def main() -> int:
     local_definitions = discover_module_definitions("modules")
     local_names = {definition.name for definition in local_definitions}
     entry_points = inspect_installed_module_entry_points()
-    installed_names = {
-        definition.get("name")
-        for item in entry_points
-        for definition in [item.get("definition")]
-        if item.get("ok") and isinstance(definition, dict) and definition.get("name")
-    }
+    installed_names: set[str] = set()
+    for item in entry_points:
+        if not item.get("ok"):
+            continue
+        definition = item.get("definition")
+        if isinstance(definition, dict):
+            name = definition.get("name")
+            if isinstance(name, str) and name:
+                installed_names.add(name)
     available_names = local_names | installed_names
     missing = sorted(enabled - available_names)
     failed_entry_points = [item for item in entry_points if not item.get("ok")]

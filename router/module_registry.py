@@ -520,6 +520,13 @@ def _definition_from_package_entry_point(entry_point) -> ModuleDefinition:
     )
 
 
+def _legacy_group_entry_points(entry_points: Any, group: str) -> list[Any]:
+    """Handle old metadata.entry_points() dict output from older Python runtimes."""
+    if isinstance(entry_points, dict):
+        return list(entry_points.get(group, []))
+    return []
+
+
 def discover_installed_module_definitions() -> list[ModuleDefinition]:
     """Discover module definitions exposed by installed Python packages."""
     try:
@@ -527,11 +534,7 @@ def discover_installed_module_definitions() -> list[ModuleDefinition]:
         if hasattr(entry_points, "select"):
             selected = entry_points.select(group=MODULE_ENTRY_POINT_GROUP)
         else:  # pragma: no cover - compatibility with old importlib.metadata
-            selected = (
-                entry_points.get(MODULE_ENTRY_POINT_GROUP, [])
-                if isinstance(entry_points, dict)
-                else []
-            )
+            selected = _legacy_group_entry_points(entry_points, MODULE_ENTRY_POINT_GROUP)
     except Exception:
         LOGGER.exception("Failed to read Python package entry points")
         return []
@@ -557,11 +560,7 @@ def inspect_installed_module_entry_points() -> list[dict[str, Any]]:
         if hasattr(entry_points, "select"):
             selected = list(entry_points.select(group=MODULE_ENTRY_POINT_GROUP))
         else:  # pragma: no cover - compatibility with old importlib.metadata
-            selected = list(
-                entry_points.get(MODULE_ENTRY_POINT_GROUP, [])
-                if isinstance(entry_points, dict)
-                else []
-            )
+            selected = _legacy_group_entry_points(entry_points, MODULE_ENTRY_POINT_GROUP)
     except Exception as exc:
         return [
             {
