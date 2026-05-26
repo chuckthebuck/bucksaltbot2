@@ -132,6 +132,27 @@ def parse_records_table(table: str) -> RecordsTableModel:
     )
 
 
+def table_contains_record(table: str, article: str, users: Iterable[str]) -> bool:
+    model = parse_records_table(table)
+    wanted_article = normalize_title(article).casefold()
+    wanted_users = {normalize_user(user) for user in users if normalize_user(user)}
+    if not wanted_article or not wanted_users:
+        return False
+    return any(
+        normalize_title(record.article).casefold() == wanted_article
+        and normalize_user(record.user) in wanted_users
+        for record in model.records
+    )
+
+
+def page_text_contains_record(page_text: str, article: str, users: Iterable[str]) -> bool:
+    span = _four_awards_table(page_text)
+    if not span:
+        return False
+    start, end = span
+    return table_contains_record(page_text[start:end], article, users)
+
+
 def _records_conn(records: Iterable[FourAwardRecord]) -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.execute(

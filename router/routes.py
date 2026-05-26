@@ -3789,13 +3789,28 @@ def four_award_runs_api():
     if record is None:
         return jsonify({"detail": "Chuck the 4awardhelper is not installed"}), 404
 
+    unique_only = str(request.args.get("unique", "1")).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    try:
+        limit = int(request.args.get("limit", "50"))
+    except (TypeError, ValueError):
+        limit = 50
+    limit = max(1, min(limit, 1000))
+    raw_runs = list_module_job_runs("four_award", limit=limit)
+    runs = _four_award_unique_hit_runs(raw_runs) if unique_only else raw_runs
+
     return jsonify(
         {
             "module": "four_award",
             "jobs": list_module_cron_jobs("four_award"),
-            "runs": _four_award_unique_hit_runs(
-                list_module_job_runs("four_award", limit=200)
-            )[:50],
+            "runs": runs,
+            "limit": limit,
+            "unique": unique_only,
+            "returned": len(runs),
             "can_run": _four_award_run_allowed(username),
         }
     )

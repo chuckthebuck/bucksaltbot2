@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from modules.four_award.models import FourAwardRecord
-from modules.four_award.records import _insert_rows, parse_records_table, render_records_table
+from modules.four_award.records import (
+    _insert_rows,
+    parse_records_table,
+    render_records_table,
+    table_contains_record,
+)
 
 
 def test_records_table_uses_sql_model_to_sort_and_recalculate_ordinals():
@@ -79,3 +84,16 @@ def test_records_table_preserves_unparsed_rows_when_rerendering():
     assert '| colspan="7" | Manual note row' in rendered
     assert "[[User:Example|Example]]" in rendered
     assert rendered.endswith("|}\n")
+
+
+def test_records_table_duplicate_check_uses_parsed_rows_not_raw_substrings():
+    table = """{| class="wikitable"
+! User
+! Article
+|-
+| [[User:Exampleton|Exampleton]] || [[Example article extended]]
+|}
+"""
+
+    assert table_contains_record(table, "Example article extended", ["Exampleton"])
+    assert not table_contains_record(table, "Example article", ["Example"])

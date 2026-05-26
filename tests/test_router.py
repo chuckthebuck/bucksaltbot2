@@ -1505,6 +1505,33 @@ def test_four_award_unique_hit_runs_hide_duplicate_historical_claims():
     assert [run["id"] for run in routes._four_award_unique_hit_runs(runs)] == [3, 2, 1]
 
 
+def test_four_award_runs_api_can_return_non_unique_larger_history(client):
+    _set_session(client, "viewer")
+    record = SimpleNamespace(enabled=True)
+    runs = [
+        {"id": 2, "trigger_type": "web_test", "payload": {}, "result": {}},
+        {"id": 1, "trigger_type": "web_test", "payload": {}, "result": {}},
+    ]
+
+    with (
+        patch("router.routes._four_award_operator_allowed", return_value=True),
+        patch("router.routes._four_award_run_allowed", return_value=False),
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes.list_module_cron_jobs", return_value=[]),
+        patch("router.routes.list_module_job_runs", return_value=runs) as list_runs,
+        patch("router.routes._four_award_unique_hit_runs") as unique_runs,
+    ):
+        resp = client.get("/api/v1/four-award/runs?unique=0&limit=275")
+
+    assert resp.status_code == 200
+    list_runs.assert_called_once_with("four_award", limit=275)
+    unique_runs.assert_not_called()
+    data = resp.get_json()
+    assert data["unique"] is False
+    assert data["limit"] == 275
+    assert [run["id"] for run in data["runs"]] == [2, 1]
+
+
 def test_four_award_test_run_rejects_duplicate_historical_claim(client):
     _set_session(client, "viewer")
     record = SimpleNamespace(

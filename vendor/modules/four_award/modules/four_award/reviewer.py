@@ -12,6 +12,7 @@ from .models import (
     VerificationIssue,
     VerificationStage,
 )
+from .records import page_text_contains_record
 from .util import award_date, clean_wiki_value, date_window, normalize_title, normalize_user, parse_date, to_iso
 from .wiki import get_wiki
 
@@ -48,10 +49,7 @@ def _stage(
 
 
 def _contains_record(records_text: str, article: str, users: list[str]) -> bool:
-    haystack = records_text.replace("_", " ").casefold()
-    if normalize_title(article).casefold() not in haystack:
-        return False
-    return any(normalize_user(user) in haystack for user in users)
+    return page_text_contains_record(records_text, article, users)
 
 
 def _action_date(text: str, action_name: str) -> Optional[date]:

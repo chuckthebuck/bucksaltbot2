@@ -1163,7 +1163,7 @@ def list_module_job_runs(
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY id DESC LIMIT %s"
-    requested_limit = max(1, min(int(limit), 200))
+    requested_limit = max(1, min(int(limit), 1000))
     fetch_limit = min(1000, max(requested_limit, requested_limit * 10)) if non_blank else requested_limit
     params.append(fetch_limit)
 

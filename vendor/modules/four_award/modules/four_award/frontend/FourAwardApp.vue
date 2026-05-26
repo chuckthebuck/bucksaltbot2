@@ -39,6 +39,9 @@ const selectedJob = ref("");
 const historicalDiff = ref("");
 const selectedRunId = ref<number | null>(null);
 const nonBlankOnly = ref(false);
+const uniqueOnly = ref(true);
+const runLimit = ref(50);
+const apiReturned = ref(0);
 
 function runHasNonBlankResult(run: ModuleRunItem): boolean {
   const result = run.result;
@@ -93,12 +96,16 @@ async function loadRuns(): Promise<void> {
   try {
     loading.value = true;
     error.value = "";
-    const data = await fetchFourAwardRuns();
+    const data = await fetchFourAwardRuns({
+      unique: uniqueOnly.value,
+      limit: runLimit.value,
+    });
     jobs.value = data.jobs.map((job) => ({
       name: job.name,
       enabled: job.enabled,
     }));
     runs.value = data.runs;
+    apiReturned.value = data.returned || data.runs.length;
     if (!selectedJob.value) {
       selectedJob.value = jobs.value.find((job) => job.enabled)?.name || jobs.value[0]?.name || "";
     }
@@ -116,6 +123,16 @@ async function loadRuns(): Promise<void> {
   } finally {
     loading.value = false;
   }
+}
+
+async function reloadRunsWithCurrentFilters(): Promise<void> {
+  selectedRunId.value = null;
+  await loadRuns();
+}
+
+async function loadMoreRuns(): Promise<void> {
+  runLimit.value = Math.min(runLimit.value + 50, 1000);
+  await loadRuns();
 }
 
 async function refreshRun(runId: number): Promise<void> {
@@ -223,9 +240,18 @@ onMounted(() => {
             <input v-model="nonBlankOnly" type="checkbox">
             <span>Non-blank only</span>
           </label>
+          <label class="four-award-filter">
+            <input
+              v-model="uniqueOnly"
+              type="checkbox"
+              :disabled="loading"
+              @change="reloadRunsWithCurrentFilters"
+            >
+            <span>Unique historical claims only</span>
+          </label>
         </div>
         <p class="help-text">
-          Showing {{ displayedRuns.length }} of {{ runs.length }} runs.
+          Showing {{ displayedRuns.length }} of {{ runs.length }} loaded runs.
         </p>
         <table class="four-award-runs">
           <thead>
@@ -261,6 +287,18 @@ onMounted(() => {
             </tr>
           </tbody>
         </table>
+        <div class="four-award-load-more">
+          <CdxButton
+            weight="quiet"
+            :disabled="loading || runLimit >= 1000"
+            @click="loadMoreRuns"
+          >
+            Load 50 more
+          </CdxButton>
+          <span class="help-text">
+            Loaded {{ apiReturned }} runs from the latest {{ runLimit }} checked.
+          </span>
+        </div>
       </div>
 
       <aside class="four-award-output">
@@ -366,7 +404,7 @@ onMounted(() => {
 .four-award-output-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  flex-wrap: wrap;
   gap: 1rem;
 }
 
@@ -375,6 +413,13 @@ onMounted(() => {
   gap: 0.35rem;
   align-items: center;
   color: #54595d;
+}
+
+.four-award-load-more {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
 }
 
 .four-award-runs {
