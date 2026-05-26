@@ -24,9 +24,10 @@ def main() -> int:
     local_names = {definition.name for definition in local_definitions}
     entry_points = inspect_installed_module_entry_points()
     installed_names = {
-        item["definition"]["name"]
+        definition.get("name")
         for item in entry_points
-        if item.get("ok") and item.get("definition")
+        for definition in [item.get("definition")]
+        if item.get("ok") and isinstance(definition, dict) and definition.get("name")
     }
     available_names = local_names | installed_names
     missing = sorted(enabled - available_names)

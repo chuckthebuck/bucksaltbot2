@@ -2,8 +2,6 @@
 
 import os
 
-from http_config import HTTP_USER_AGENT, http_headers
-
 BOT_NAME = os.getenv("BOT_NAME") or os.getenv("TOOL_NAME") or "buckbot"
 
 REDIS_KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "rollback").strip() or "rollback"

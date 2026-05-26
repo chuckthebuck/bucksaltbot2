@@ -110,11 +110,11 @@ def copy_file_from_url(url, out_file, expect_sha1=None, max_retry=4):
 def compress_file_data(out_filename, data, compress_type):
     if compress_type in ["bzip2", "gzip"]:
         if compress_type == "bzip2":
-            f_out = bz2.BZ2File(out_filename + ".bz2", "wb")
-        elif compress_type == "gzip":
-            f_out = gzip.open(out_filename + ".gz", "wb")
-        f_out.write(data)
-        f_out.close()
+            with bz2.BZ2File(out_filename + ".bz2", "wb") as f_out:
+                f_out.write(data)
+        else:
+            with gzip.open(out_filename + ".gz", "wb") as f_out:
+                f_out.write(data)
     else:
         raise ValueError("Unhandled compression scheme: " + str(compress_type))
 

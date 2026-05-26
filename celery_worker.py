@@ -4,5 +4,5 @@ from app import celery
 app = celery
 
 # Import task modules to register them with celery
-import router  # noqa: F401
-import rollback_queue  # noqa: F401
+import router  # noqa: E402,F401
+import rollback_queue  # noqa: E402,F401

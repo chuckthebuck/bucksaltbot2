@@ -32,7 +32,6 @@ def _generate_cron_job_entries() -> list[dict[str, Any]]:
         module_name = job.get("module_name", "").strip()
         job_name = job.get("job_name", "").strip()
         schedule = job.get("schedule", "").strip()
-        endpoint = job.get("endpoint", "").strip()
         handler = str(job.get("handler") or "").strip()
         timeout_seconds = int(job.get("timeout_seconds", 300))
 

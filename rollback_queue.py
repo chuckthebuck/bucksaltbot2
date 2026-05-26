@@ -8,7 +8,7 @@ import status_updater
 
 ensure_pywikibot_env(strict=True)
 
-import pywikibot
+import pywikibot  # noqa: E402
 
 
 # MediaWiki API error codes that mean the rollback is already in the desired

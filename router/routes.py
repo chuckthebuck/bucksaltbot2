@@ -4182,6 +4182,6 @@ def module_cron_job_trigger(module_name: str, job_name: str):
         return jsonify(
             {"detail": f"Cron job timeout after {timeout}s"}
         ), 504
-    except Exception as exc:
+    except Exception:
         logging.exception("Failed to invoke cron job %s/%s", module_name, job_name)
         return jsonify({"detail": "Failed to invoke cron job"}), 500

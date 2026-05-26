@@ -2,6 +2,7 @@ import os
 import time
 import threading
 import logging
+from pathlib import Path
 import requests
 
 try:
@@ -125,7 +126,6 @@ def inject_user_permissions():
 
 
 import router  # noqa: E402,F401
-from pathlib import Path
 
 from router.module_registry import (  # noqa: E402
     bootstrap_installed_module_definitions,
