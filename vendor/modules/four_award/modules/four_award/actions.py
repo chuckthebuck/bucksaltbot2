@@ -8,6 +8,7 @@ from .wiki import get_wiki
 
 
 def remove_nomination(nomination: FourAwardNomination) -> bool:
+    """Remove a reviewed nomination block from the live nominations page."""
     if not ENABLE_REMOVAL:
         return False
     wiki = get_wiki()
@@ -21,6 +22,7 @@ def remove_nomination(nomination: FourAwardNomination) -> bool:
 
 
 def set_article_history_four(article: str, value: str) -> bool:
+    """Set or append the four= field on an article's Article history template."""
     if not ENABLE_ARTICLE_HISTORY:
         return False
     wiki = get_wiki()
@@ -35,6 +37,7 @@ def set_article_history_four(article: str, value: str) -> bool:
     if re.search(r"\|\s*four\s*=", template, re.I):
         new_template = re.sub(r"(\|\s*four\s*=\s*)[^\n|}]+", rf"\g<1>{value}", template, count=1, flags=re.I)
     else:
+        # Append near the closing braces to avoid disturbing existing history fields.
         insert_at = template.rfind("}}")
         new_template = f"{template[:insert_at]}|four={value}\n{template[insert_at:]}"
     wiki.save_text(title, text[: match.start()] + new_template + text[match.end() :], f"Mark [[{article}]] Four Award review result")

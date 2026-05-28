@@ -7,13 +7,14 @@ from . import actions, config, parser, records, replies, reviewer, util, wiki
 from .config import ENABLED, MAX_NOMINATIONS_PER_RUN
 from .parser import parse_nominations
 from .reviewer import review_nomination
-from .records import sync_records_table
+from .records import page_text_contains_article, sync_records_table
 from .replies import reply_result
 from .actions import remove_nomination, set_article_history_four
 from .models import FourAwardRecord, NominationResult, VerificationStage
 
 
 def _approved_records(results: List[NominationResult]) -> List[FourAwardRecord]:
+    """Flatten approved nomination results into one record per credited user."""
     records: List[FourAwardRecord] = []
     for result in results:
         if not result.record:
@@ -33,12 +34,27 @@ def _approved_records(results: List[NominationResult]) -> List[FourAwardRecord]:
     return records
 
 
+def _duplicate_article_titles(nominations) -> set[str]:
+    """Return nomination articles that already appear in the records table."""
+    if reviewer.IGNORE_EXISTING_RECORDS:
+        return set()
+
+    records_text = wiki.get_wiki().get_text(config.RECORDS_PAGE)
+    return {
+        nomination.article
+        for nomination in nominations
+        if nomination.article and page_text_contains_article(records_text, nomination.article)
+    }
+
+
 def _should_mark_article_history_no(result: NominationResult) -> bool:
+    """Return whether a failed review should write four=no to article history."""
     skip_codes = {"duplicate_record", "missing_article", "missing_article_page"}
     return not any(issue.code in skip_codes for issue in result.issues)
 
 
 def _config_bool(value: Any, default: bool) -> bool:
+    """Parse framework runtime config booleans with the module default as fallback."""
     if value is None:
         return default
     if isinstance(value, bool):
@@ -55,6 +71,11 @@ def _config_bool(value: Any, default: bool) -> bool:
 
 
 def _apply_runtime_config(ctx: Any | None) -> None:
+    """Apply framework-provided runtime config to module globals.
+
+    Several submodules import config values directly, so updates are mirrored to
+    those modules before a run starts.
+    """
     global ENABLED, MAX_NOMINATIONS_PER_RUN
 
     if ctx is None or not hasattr(ctx, "config"):
@@ -148,6 +169,7 @@ def _apply_runtime_config(ctx: Any | None) -> None:
 
 
 def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None = None):
+    """Run one Four Award review pass and return a JSON-serializable report."""
     _apply_runtime_config(ctx)
     wiki.reset_dry_run_edits()
     payload = payload or {}
@@ -173,6 +195,7 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
     nomination_count = len(nominations)
 
     if nomination_count == 0:
+        reviewer.IGNORE_EXISTING_RECORDS = previous_ignore_existing_records
         return {
             "status": "ok",
             "run_kind": "empty",
@@ -182,21 +205,50 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
             "started_at": started_at,
         }
 
+    duplicate_articles = _duplicate_article_titles(nominations)
+    duplicate_count = sum(
+        1 for nomination in nominations if nomination.article in duplicate_articles
+    )
+    if duplicate_articles and all(
+        nomination.article in duplicate_articles for nomination in nominations
+    ):
+        reviewer.IGNORE_EXISTING_RECORDS = previous_ignore_existing_records
+        return {
+            "status": "ok",
+            "run_kind": "duplicate_noop",
+            "has_nominations": False,
+            "nomination_count": 0,
+            "source_nomination_count": nomination_count,
+            "duplicate_count": duplicate_count,
+            "duplicate_articles": sorted(duplicate_articles, key=str.casefold),
+            "dry_run": bool(config.DRY_RUN),
+            "started_at": started_at,
+        }
+
+    runnable_nominations = [
+        nomination
+        for nomination in nominations
+        if nomination.article not in duplicate_articles
+    ]
+
     approved: List[NominationResult] = []
     failed: List[NominationResult] = []
     manual: List[NominationResult] = []
 
     try:
-        for nom in nominations[:MAX_NOMINATIONS_PER_RUN]:
+        for nom in runnable_nominations[:MAX_NOMINATIONS_PER_RUN]:
             result = review_nomination(nom)
 
             if result.status == "approved":
+                # Approved nominations are safe to remove, record, mark, and notify.
                 approved.append(result)
                 remove_nomination(nom)
                 set_article_history_four(nom.article, "yes")
                 reply_result(nom, result)
 
             elif result.status == "failed_to_verify":
+                # Hard failures are removed so the page does not keep retrying
+                # an invalid nomination on every scheduled run.
                 failed.append(result)
                 remove_nomination(nom)
                 if _should_mark_article_history_no(result):
@@ -204,6 +256,7 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
                 reply_result(nom, result)
 
             else:
+                # Manual-review cases stay on the nomination page and receive a note.
                 manual.append(result)
                 reply_result(nom, result)
     finally:
@@ -236,6 +289,9 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
         "run_kind": "reviewed",
         "has_nominations": True,
         "nomination_count": nomination_count,
+        "source_nomination_count": nomination_count,
+        "duplicate_count": duplicate_count,
+        "duplicate_articles": sorted(duplicate_articles, key=str.casefold),
         "processed_count": len(approved) + len(failed) + len(manual),
         "approved": len(approved),
         "failed": len(failed),
@@ -252,6 +308,7 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
 
 
 def _stage_payload(stage: VerificationStage) -> dict[str, object]:
+    """Serialize a verification stage for API responses and dry-run reports."""
     return {
         "key": stage.key,
         "label": stage.label,
@@ -267,6 +324,7 @@ def _stage_payload(stage: VerificationStage) -> dict[str, object]:
 
 
 def _review_payloads(results: list[NominationResult]) -> list[dict[str, object]]:
+    """Serialize review results for the run payload."""
     payloads: list[dict[str, object]] = []
     for result in results:
         payloads.append(
@@ -285,6 +343,7 @@ def _review_payloads(results: list[NominationResult]) -> list[dict[str, object]]
 
 
 def _result_rows(label: str, results: list[NominationResult]) -> list[str]:
+    """Render review results as wikitable rows."""
     rows = []
     for result in results:
         issue_text = "; ".join(issue.reason for issue in result.issues) or ""
@@ -299,6 +358,7 @@ def _result_rows(label: str, results: list[NominationResult]) -> list[str]:
 
 
 def _table_cell(value: object) -> str:
+    """Escape a value for use in simple wikitables."""
     return str(value or "").replace("|", "{{!}}").replace("\n", "<br>")
 
 
@@ -308,6 +368,7 @@ def _dry_run_report_wikitext(
     failed: list[NominationResult],
     manual: list[NominationResult],
 ) -> str:
+    """Build the userspace dry-run report with review and diff previews."""
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     lines = [
         "== Four Award dry-run report ==",
@@ -371,6 +432,7 @@ def _dry_run_report_wikitext(
 
 
 def _verification_detail_rows(results: list[NominationResult]) -> list[str]:
+    """Render detailed stage evidence rows for the dry-run report."""
     rows: list[str] = []
     for result in results:
         article = result.nomination.article

@@ -17,6 +17,7 @@ from .models import PageCreation
 
 @dataclass
 class ReplayEdit:
+    """Captured save operation from a replay run."""
     title: str
     before: str
     after: str
@@ -25,12 +26,14 @@ class ReplayEdit:
 
 @dataclass
 class ReplayPage:
+    """Replay page fixture with current and optional expected final text."""
     before: str
     expected: str | None = None
 
 
 @dataclass
 class ReplayWiki:
+    """In-memory WikiClient substitute used by replay fixtures."""
     pages: dict[str, ReplayPage]
     existing: set[str] = field(default_factory=set)
     creation: dict[str, PageCreation] = field(default_factory=dict)
@@ -39,27 +42,34 @@ class ReplayWiki:
     edits: list[ReplayEdit] = field(default_factory=list)
 
     def get_text(self, title: str) -> str:
+        """Return fixture text, defaulting missing pages to empty text."""
         if title not in self.pages:
             return ""
         return self.pages[title].before
 
     def exists(self, title: str) -> bool:
+        """Return whether the replay case considers a page to exist."""
         return title in self.existing or title in self.pages
 
     def page_creation(self, title: str) -> PageCreation:
+        """Return fixture creation metadata for a page."""
         return self.creation.get(title, PageCreation(user=None, date=None))
 
     def first_revision_date(self, title: str) -> date | None:
+        """Return fixture creation date."""
         return self.page_creation(title).date
 
     def latest_revision_date(self, title: str) -> date | None:
+        """Return fixture latest revision date or creation date fallback."""
         return self.latest_revision_dates.get(title) or self.first_revision_date(title)
 
     def revision_users(self, title: str, start: date | None = None, end: date | None = None, limit: int = 500) -> set[str]:
+        """Return fixture revision users; date windows are ignored in replay."""
         del start, end, limit
         return set(self.users_by_title.get(title, set()))
 
     def save_text(self, title: str, text: str, summary: str) -> wiki.SaveResult:
+        """Record a replay edit and update the in-memory page text."""
         before = self.get_text(title)
         if before != text:
             self.pages.setdefault(title, ReplayPage(before=""))
@@ -69,10 +79,12 @@ class ReplayWiki:
 
 
 class ReplayFailure(AssertionError):
+    """Raised when replay output does not match the fixture expectation."""
     pass
 
 
 def fetch_revision_text(revid: int) -> str:
+    """Fetch live revision text for fixtures that reference revision ids."""
     params = {
         "action": "query",
         "prop": "revisions",
@@ -94,6 +106,7 @@ def fetch_revision_text(revid: int) -> str:
 
 
 def _page_from_case(raw: dict[str, Any]) -> ReplayPage:
+    """Build a ReplayPage from inline text or live revision ids."""
     before = raw.get("before_text")
     expected = raw.get("expected_text")
     if before is None and raw.get("before_revid"):
@@ -106,6 +119,7 @@ def _page_from_case(raw: dict[str, Any]) -> ReplayPage:
 
 
 def _parse_creation(raw: dict[str, Any]) -> dict[str, PageCreation]:
+    """Parse fixture page-creation metadata."""
     creation: dict[str, PageCreation] = {}
     for title, value in raw.items():
         creation[title] = PageCreation(
@@ -116,6 +130,7 @@ def _parse_creation(raw: dict[str, Any]) -> dict[str, PageCreation]:
 
 
 def _parse_revision_dates(raw: dict[str, Any]) -> dict[str, date]:
+    """Parse fixture latest revision dates."""
     return {
         title: date.fromisoformat(value)
         for title, value in raw.items()
@@ -124,10 +139,12 @@ def _parse_revision_dates(raw: dict[str, Any]) -> dict[str, date]:
 
 
 def load_case(path: str | Path) -> dict[str, Any]:
+    """Load a replay case JSON file."""
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def build_replay_wiki(case: dict[str, Any]) -> ReplayWiki:
+    """Build the in-memory wiki from replay case data."""
     pages = {title: _page_from_case(raw) for title, raw in case.get("pages", {}).items()}
     existing = set(case.get("existing_pages", [])) | set(pages)
     users_by_title = {
@@ -144,6 +161,7 @@ def build_replay_wiki(case: dict[str, Any]) -> ReplayWiki:
 
 
 def install_replay_wiki(client: ReplayWiki) -> None:
+    """Patch Four Award modules so the run uses the replay wiki."""
     wiki._client = client
     parser.get_wiki = lambda: client
     reviewer.get_wiki = lambda: client
@@ -153,6 +171,7 @@ def install_replay_wiki(client: ReplayWiki) -> None:
 
 
 def apply_replay_settings(case: dict[str, Any]) -> None:
+    """Apply fixture-local config switches before running the service."""
     settings = case.get("settings", {})
     if "allow_automated_approval" in settings:
         reviewer.ALLOW_AUTOMATED_APPROVAL = bool(settings["allow_automated_approval"])
@@ -165,6 +184,7 @@ def apply_replay_settings(case: dict[str, Any]) -> None:
 
 
 def _filtered_pages(case: dict[str, Any], client: ReplayWiki) -> Iterable[str]:
+    """Return pages whose final text should be compared."""
     titles = case.get("compare_pages")
     if titles:
         return titles
@@ -172,6 +192,7 @@ def _filtered_pages(case: dict[str, Any], client: ReplayWiki) -> Iterable[str]:
 
 
 def _diff(expected: str, actual: str, title: str) -> str:
+    """Return a unified diff for replay assertion failures."""
     return "\n".join(
         difflib.unified_diff(
             expected.splitlines(),
@@ -184,6 +205,7 @@ def _diff(expected: str, actual: str, title: str) -> str:
 
 
 def run_replay_case(case: dict[str, Any]) -> dict[str, Any]:
+    """Run a replay fixture and assert configured result/page expectations."""
     client = build_replay_wiki(case)
     install_replay_wiki(client)
     apply_replay_settings(case)
@@ -215,6 +237,7 @@ def run_replay_case(case: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> int:
+    """CLI entrypoint for running one or more replay fixtures."""
     arg_parser = argparse.ArgumentParser(description="Replay Four Award bot behavior against old before/after revisions.")
     arg_parser.add_argument("case", nargs="+", help="Replay case JSON file")
     args = arg_parser.parse_args()

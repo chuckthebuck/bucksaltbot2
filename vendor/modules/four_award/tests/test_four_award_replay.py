@@ -212,6 +212,31 @@ def test_historical_payload_can_ignore_current_records_table():
     )
 
 
+def test_live_run_noops_when_all_nomination_articles_are_already_recorded():
+    case = _successful_review_case()
+    case["settings"] = {"allow_automated_approval": True}
+    case["pages"]["Wikipedia:Four Award/Records"]["before_text"] = (
+        "== Four Awards ==\n"
+        "{| class=\"wikitable\"\n"
+        "! User\n! Article\n"
+        "|-\n"
+        "| [[User:Someone else|Someone else]] || [[Example article]]\n"
+        "|}\n"
+    )
+    case["expected_result"] = {
+        "run_kind": "duplicate_noop",
+        "has_nominations": False,
+        "nomination_count": 0,
+        "duplicate_count": 1,
+    }
+
+    payload = run_replay_case(case)
+
+    assert payload["edits"] == []
+    assert payload["result"]["duplicate_articles"] == ["Example article"]
+    assert payload["result"]["source_nomination_count"] == 1
+
+
 def test_placeholder_user_is_not_treated_as_real_user():
     case = _successful_review_case()
     case["settings"] = {"allow_automated_approval": True}

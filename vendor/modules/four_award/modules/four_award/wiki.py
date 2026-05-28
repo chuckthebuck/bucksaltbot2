@@ -31,12 +31,15 @@ except Exception:  # pragma: no cover - supplied by the framework at runtime
 
 @dataclass
 class SaveResult:
+    """Outcome of a wiki write or dry-run write."""
     title: str
     summary: str
     saved: bool
 
 
 class WikiClient:
+    """Thin wiki adapter around Pywikibot edits and MediaWiki API reads."""
+
     def __init__(self) -> None:
         self._site = None
         self.wiki_code = WIKI_CODE
@@ -44,6 +47,7 @@ class WikiClient:
 
     @property
     def site(self):
+        """Lazily create and authenticate the Pywikibot Site."""
         if pywikibot is None:
             raise RuntimeError("pywikibot is not available")
         if self._site is None:
@@ -54,6 +58,7 @@ class WikiClient:
         return self._site
 
     def configure_site(self, *, wiki_code: str | None = None, wiki_family: str | None = None) -> None:
+        """Switch wiki target and reset the cached Site when it changes."""
         next_code = str(wiki_code or self.wiki_code).strip() or self.wiki_code
         next_family = str(wiki_family or self.wiki_family).strip() or self.wiki_family
         if next_code != self.wiki_code or next_family != self.wiki_family:
@@ -62,18 +67,23 @@ class WikiClient:
             self._site = None
 
     def page(self, title: str):
+        """Return a Pywikibot page bound to the configured site."""
         return pywikibot.Page(self.site, title)
 
     def get_text(self, title: str) -> str:
+        """Return current page text."""
         return self.page(title).text
 
     def exists(self, title: str) -> bool:
+        """Return whether a page exists according to Pywikibot."""
         return bool(self.page(title).exists())
 
     def first_revision_date(self, title: str) -> Optional[date]:
+        """Return the creation date for a page."""
         return self.page_creation(title).date
 
     def latest_revision_date(self, title: str) -> Optional[date]:
+        """Return the date of the latest revision visible through the API."""
         data = self._query_revisions(
             title,
             {
@@ -89,6 +99,7 @@ class WikiClient:
         return timestamp.date() if timestamp else None
 
     def page_creation(self, title: str) -> PageCreation:
+        """Return creator and creation date for a page."""
         data = self._query_revisions(
             title,
             {
@@ -105,6 +116,7 @@ class WikiClient:
         return PageCreation(user=revision.get("user"), date=timestamp.date() if timestamp else None)
 
     def revision_users(self, title: str, start: date | None = None, end: date | None = None, limit: int = 500) -> set[str]:
+        """Return users who edited a page within an optional date window."""
         params = {
             "rvlimit": str(max(1, min(limit, 500))),
             "rvprop": "timestamp|user",
@@ -121,6 +133,7 @@ class WikiClient:
         return {revision["user"] for revision in self._revisions_from_query(data) if revision.get("user")}
 
     def page_exists(self, title: str) -> bool:
+        """Return whether a page exists using the configured API endpoint."""
         params = {
             "action": "query",
             "titles": title,
@@ -132,6 +145,7 @@ class WikiClient:
         return bool(pages and not pages[0].get("missing"))
 
     def _query_revisions(self, title: str, revision_params: dict[str, str]) -> dict:
+        """Run a MediaWiki revisions query for a page."""
         params = {
             "action": "query",
             "prop": "revisions",
@@ -145,12 +159,14 @@ class WikiClient:
         return response.json()
 
     def _revisions_from_query(self, data: dict) -> list[dict]:
+        """Extract revision objects from formatversion=2 query output."""
         pages = data.get("query", {}).get("pages", [])
         if not pages or pages[0].get("missing"):
             return []
         return pages[0].get("revisions") or []
 
     def save_text(self, title: str, text: str, summary: str) -> SaveResult:
+        """Save text unless dry-run mode is active."""
         summary = f"{summary} {EDIT_TAG_LINK}".strip()
         if DRY_RUN:
             _record_dry_run_edit(self, title, text, summary)
@@ -163,6 +179,7 @@ class WikiClient:
         return SaveResult(title=title, summary=summary, saved=True)
 
     def publish_text(self, title: str, text: str, summary: str) -> SaveResult:
+        """Save text even when the main module is running in dry-run mode."""
         summary = f"{summary} {EDIT_TAG_LINK}".strip()
         page = self.page(title)
         if page.text == text:
@@ -177,18 +194,22 @@ _dry_run_edits: list[dict[str, object]] = []
 
 
 def get_wiki() -> WikiClient:
+    """Return the process-wide wiki client."""
     return _client
 
 
 def reset_dry_run_edits() -> None:
+    """Clear recorded dry-run edits before a new run."""
     _dry_run_edits.clear()
 
 
 def get_dry_run_edits() -> list[dict[str, object]]:
+    """Return a copy of proposed dry-run edits."""
     return [dict(edit) for edit in _dry_run_edits]
 
 
 def publish_dry_run_report(title: str, text: str) -> SaveResult:
+    """Publish a dry-run report, restricted to userspace."""
     normalized_title = str(title or "").strip()
     if not normalized_title.lower().startswith("user:"):
         raise ValueError("Dry-run report page must be in userspace")
@@ -202,6 +223,7 @@ def configure_runtime(
     wiki_api_url: str | None = None,
     dry_run: bool | None = None,
 ) -> None:
+    """Apply runtime wiki target and dry-run settings."""
     global DRY_RUN, WIKI_API_URL
     _client.configure_site(wiki_code=wiki_code, wiki_family=wiki_family)
     if wiki_api_url is not None:
@@ -211,20 +233,24 @@ def configure_runtime(
 
 
 def _parse_mw_timestamp(value: str | None) -> Optional[datetime]:
+    """Parse MediaWiki UTC timestamps."""
     if not value:
         return None
     return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
 def _mw_timestamp(value: datetime) -> str:
+    """Format a datetime for MediaWiki API revision parameters."""
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _headers() -> dict[str, str]:
+    """Return API request headers for this module."""
     return {"User-Agent": HTTP_USER_AGENT}
 
 
 def _record_dry_run_edit(client: WikiClient, title: str, text: str, summary: str) -> None:
+    """Record a compact diff preview instead of saving target page text."""
     try:
         before = client.get_text(title)
     except Exception as exc:

@@ -18,6 +18,7 @@ from .wiki import get_wiki
 
 
 def _issue(code: str, reason: str) -> VerificationIssue:
+    """Create a machine-readable verification issue with human context."""
     return VerificationIssue(code=code, reason=reason)
 
 
@@ -34,6 +35,7 @@ def _stage(
     end: date | None = None,
     details: dict[str, str] | None = None,
 ) -> VerificationStage:
+    """Create a structured evidence stage for UI and dry-run reporting."""
     return VerificationStage(
         key=key,
         label=label,
@@ -49,15 +51,18 @@ def _stage(
 
 
 def _contains_record(records_text: str, article: str, users: list[str]) -> bool:
+    """Return whether the records page already credits one of the users."""
     return page_text_contains_record(records_text, article, users)
 
 
 def _action_date(text: str, action_name: str) -> Optional[date]:
+    """Extract a dated action from an Article history template."""
     value = _action_value(text, action_name)
     return parse_date(value)
 
 
 def _action_value(text: str, action_name: str) -> str:
+    """Return an action date/value from numbered or named Article history params."""
     params = _template_params(text)
     for key, value in params.items():
         match = re.fullmatch(r"action(\d+)", key, re.I)
@@ -72,6 +77,7 @@ def _action_value(text: str, action_name: str) -> str:
 
 
 def _action_link(text: str, action_name: str) -> str:
+    """Return the process-page link associated with an Article history action."""
     params = _template_params(text)
     for key, value in params.items():
         match = re.fullmatch(r"action(\d+)", key, re.I)
@@ -84,6 +90,7 @@ def _action_link(text: str, action_name: str) -> str:
 
 
 def _template_params(template_text: str) -> dict[str, str]:
+    """Parse template parameters while preserving nested templates and links."""
     text = template_text.strip()
     if text.startswith("{{") and text.endswith("}}"):
         text = text[2:-2]
@@ -122,6 +129,7 @@ def _template_params(template_text: str) -> dict[str, str]:
 
 
 def _link_target(value: str) -> str:
+    """Normalize the target of a wiki link or plain-title value."""
     match = re.search(r"\[\[([^|\]]+)", value)
     if match:
         return normalize_title(match.group(1))
@@ -129,6 +137,7 @@ def _link_target(value: str) -> str:
 
 
 def _raw_link_target(value: str | None) -> str:
+    """Normalize a nomination-supplied link without requiring display text."""
     if not value:
         return ""
     match = re.search(r"\[\[([^|\]]+)", value)
@@ -136,6 +145,7 @@ def _raw_link_target(value: str | None) -> str:
 
 
 def _looks_like_process_page(title: str, kind: str) -> bool:
+    """Filter obvious article links out of GA/FAC process-page candidates."""
     normalized = normalize_title(title).casefold()
     if kind == "ga":
         return normalized.startswith("talk:") or "/ga" in normalized
@@ -145,6 +155,7 @@ def _looks_like_process_page(title: str, kind: str) -> bool:
 
 
 def _article_history_template(text: str) -> str:
+    """Return the Article history template body from a talk page."""
     match = re.search(r"\{\{\s*Article history\b.*?\n\}\}", text, re.I | re.S)
     if match:
         return match.group(0)
@@ -153,6 +164,7 @@ def _article_history_template(text: str) -> str:
 
 
 def _has_fa_status(history: str) -> bool:
+    """Return whether Article history records current or kept FA status."""
     if not history:
         return False
     if re.search(r"\|\s*(currentstatus|status)\s*=\s*FA\b", history, re.I):
@@ -167,6 +179,7 @@ def _has_fa_status(history: str) -> bool:
 
 
 def _date_from_text(text: str) -> str:
+    """Extract and ISO-normalize the first recognizable date from free text."""
     parsed = parse_date(text)
     if parsed:
         return to_iso(parsed)
@@ -178,6 +191,7 @@ def _date_from_text(text: str) -> str:
 
 
 def _bot_process_date(text: str, bot_names: tuple[str, ...]) -> str:
+    """Find the most recent date on lines associated with process bots."""
     bot_lines = [
         line
         for line in text.splitlines()
@@ -191,6 +205,7 @@ def _bot_process_date(text: str, bot_names: tuple[str, ...]) -> str:
 
 
 def _latest_process_date(article: str, pages: list[str], bot_names: tuple[str, ...]) -> str:
+    """Infer a process date from bot text or the latest revision date."""
     wiki = get_wiki()
     for page in pages:
         if not page:
@@ -209,6 +224,7 @@ def _latest_process_date(article: str, pages: list[str], bot_names: tuple[str, .
 
 
 def _record_for(nomination: FourAwardNomination, history: str, creation_date: Optional[date]) -> FourAwardRecord:
+    """Build the Four Award record from nomination, history, and revision evidence."""
     dyk_date = _action_value(history, "DYK") or nomination.dyk or ""
     ga_date = (
         _action_value(history, "GAN")
@@ -232,6 +248,7 @@ def _record_for(nomination: FourAwardNomination, history: str, creation_date: Op
 
 
 def _has_milestone_evidence(nomination: FourAwardNomination, history: str, label: str) -> bool:
+    """Return whether a missing date still has a process-page evidence link."""
     if label == "DYK date":
         return bool(_action_value(history, "DYK") or nomination.dyk or nomination.dyknom)
     if label == "GA date":
@@ -242,11 +259,13 @@ def _has_milestone_evidence(nomination: FourAwardNomination, history: str, label
 
 
 def _missing_users(expected: list[str], evidence: set[str]) -> list[str]:
+    """Return expected credited users that do not appear in normalized evidence."""
     normalized = {normalize_user(user) for user in evidence}
     return [user for user in expected if normalize_user(user) not in normalized]
 
 
 def _signature_users(text: str) -> set[str]:
+    """Extract usernames from common wiki signature/link forms."""
     users = set()
     for pattern in (
         r"\[\[\s*User:([^|\]/#]+)",
@@ -259,6 +278,7 @@ def _signature_users(text: str) -> set[str]:
 
 
 def _safe_text(title: str) -> str:
+    """Fetch page text, treating missing/unreadable evidence pages as empty."""
     try:
         return get_wiki().get_text(title)
     except Exception:
@@ -266,6 +286,7 @@ def _safe_text(title: str) -> str:
 
 
 def _process_page_users(title: str, start: date | None = None, end: date | None = None) -> set[str]:
+    """Collect users from process-page revision history and signatures."""
     if not title:
         return set()
     wiki = get_wiki()
@@ -275,6 +296,7 @@ def _process_page_users(title: str, start: date | None = None, end: date | None 
 
 
 def _stage_evidence_users(article: str, process_pages: list[str], start: date | None, end: date | None) -> set[str]:
+    """Collect article and process-page contributors inside a milestone window."""
     wiki = get_wiki()
     users = wiki.revision_users(article, start=start, end=end)
     for page in process_pages:
@@ -283,10 +305,12 @@ def _stage_evidence_users(article: str, process_pages: list[str], start: date | 
 
 
 def _default_dyk_page(nomination: FourAwardNomination) -> str:
+    """Return the conventional DYK nomination page for an article."""
     return nomination.dyknom or f"Template:Did you know nominations/{nomination.article}"
 
 
 def _process_page_title(article: str, page: str) -> str:
+    """Resolve relative process-page links against the article talk page."""
     normalized = normalize_title(page)
     if normalized.startswith("/"):
         return f"Talk:{article}{normalized}"
@@ -294,6 +318,7 @@ def _process_page_title(article: str, page: str) -> str:
 
 
 def _ga_pages(nomination: FourAwardNomination, history: str) -> list[str]:
+    """Return candidate GA process pages from nomination, history, and convention."""
     nominated = _raw_link_target(nomination.ga)
     return [
         nominated if _looks_like_process_page(nominated, "ga") else "",
@@ -304,6 +329,7 @@ def _ga_pages(nomination: FourAwardNomination, history: str) -> list[str]:
 
 
 def _fa_pages(nomination: FourAwardNomination, history: str) -> list[str]:
+    """Return candidate FAC process pages from nomination, history, and convention."""
     nominated = _raw_link_target(nomination.fac)
     return [
         nominated if _looks_like_process_page(nominated, "fa") else "",
@@ -318,6 +344,7 @@ def _contribution_review(
     history: str,
     record: FourAwardRecord,
 ) -> tuple[list[VerificationIssue], list[VerificationStage]]:
+    """Verify credited users contributed during creation, DYK, GA, and FA windows."""
     wiki = get_wiki()
     issues: list[VerificationIssue] = []
     stages: list[VerificationStage] = []
@@ -364,6 +391,8 @@ def _contribution_review(
     fa_start = ga_end or ga_start
     fa_end = parse_date(record.fa_date)
 
+    # Each milestone window starts at the previous milestone and ends at the
+    # current one, matching the evidence a reviewer would inspect manually.
     checks = (
         (
             "missing_dyk_contribution",
@@ -426,6 +455,7 @@ def _contribution_review(
 
 
 def review_nomination(nomination: FourAwardNomination) -> NominationResult:
+    """Review one nomination and classify it as approved, failed, or manual."""
     stages: list[VerificationStage] = []
     if not nomination.article:
         issue = _issue("missing_article", "The nomination does not identify an article.")
@@ -444,6 +474,7 @@ def review_nomination(nomination: FourAwardNomination) -> NominationResult:
     stages.append(_stage("article_page", "Article page exists", "passed", "Article page exists.", pages=[nomination.article]))
 
     if IGNORE_EXISTING_RECORDS:
+        # Replay/dry-run mode may intentionally reprocess historical cases.
         stages.append(
             _stage(
                 "duplicate_record",

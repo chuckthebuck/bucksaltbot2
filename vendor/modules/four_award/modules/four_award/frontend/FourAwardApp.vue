@@ -55,6 +55,10 @@ function runHasNonBlankResult(run: ModuleRunItem): boolean {
 function runResultLabel(run: ModuleRunItem): string {
   const result = run.result;
   if (!result) return "Pending";
+  if (result.run_kind === "duplicate_noop") {
+    const count = Number(result.duplicate_count || result.source_nomination_count || 0);
+    return count === 1 ? "Duplicate no-op" : `${count} duplicate no-ops`;
+  }
   if (result.run_kind === "empty" || result.has_nominations === false) return "Blank";
   if (result.run_kind === "reviewed" || result.has_nominations === true) {
     const count = Number(result.nomination_count || 0);
@@ -247,7 +251,7 @@ onMounted(() => {
               :disabled="loading"
               @change="reloadRunsWithCurrentFilters"
             >
-            <span>Unique historical claims only</span>
+            <span>Hide duplicate/no-op runs</span>
           </label>
         </div>
         <p class="help-text">

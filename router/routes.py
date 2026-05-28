@@ -3658,11 +3658,41 @@ def _four_award_run_is_historical_test(run: dict) -> bool:
     )
 
 
+def _four_award_run_is_duplicate_noop(run: dict) -> bool:
+    result = run.get("result")
+    if not isinstance(result, dict):
+        return False
+    if result.get("run_kind") == "duplicate_noop":
+        return True
+
+    reviews = result.get("reviews")
+    if not isinstance(reviews, list) or not reviews:
+        return False
+
+    for review in reviews:
+        if not isinstance(review, dict):
+            return False
+        issues = review.get("issues")
+        if not isinstance(issues, list) or not issues:
+            return False
+        issue_codes = {
+            str(issue.get("code") or "")
+            for issue in issues
+            if isinstance(issue, dict)
+        }
+        if issue_codes != {"duplicate_record"}:
+            return False
+    return True
+
+
 def _four_award_unique_hit_runs(runs: list[dict]) -> list[dict]:
     seen_claims: set[tuple[str, tuple[str, ...]]] = set()
     included_ids: set[int] = set()
 
     for run in sorted(runs, key=lambda item: int(item.get("id") or 0)):
+        if _four_award_run_is_duplicate_noop(run):
+            continue
+
         if not _four_award_run_is_historical_test(run):
             included_ids.add(int(run.get("id") or 0))
             continue

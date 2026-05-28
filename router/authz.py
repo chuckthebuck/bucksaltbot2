@@ -81,6 +81,8 @@ _MODULE_BUILTIN_RIGHTS = {
 }
 
 _USER_GRANT_GROUPS = {
+    # These named groups are the human-facing access bundles used by both
+    # runtime config and legacy env var migration.
     "basic": {"write"},
     "read_only": set(),
     "tester": {
@@ -129,6 +131,8 @@ _USER_GRANT_GROUPS = {
 }
 
 _LEGACY_RIGHT_ALIASES = {
+    # Keep accepting old grant names so previously persisted config continues
+    # to behave the same after the granular-permission migration.
     "from_diff": "rollback_diff",
     "batch": "rollback_batch",
     "from_diff_dry_run_only": "rollback_diff_dry_run_only",
@@ -189,6 +193,7 @@ def _parse_user_csv(raw_value: str) -> set[str]:
 
 
 def _normalize_username(raw_value: str) -> str:
+    """Normalize usernames into MediaWiki's canonical first-letter-uppercase shape."""
     cleaned = str(raw_value or "").strip()
 
     if cleaned.lower().startswith("user:"):
@@ -207,6 +212,7 @@ def _normalize_username(raw_value: str) -> str:
 
 
 def _normalize_auto_grant_role_name(raw_value: str) -> str:
+    """Normalize implicit role keys while preserving project/global role syntax."""
     value = str(raw_value or "").strip().lower().replace(" ", "_")
     if value in {"commons_admin", "project:commons:sysop"}:
         return "commons_admin"
@@ -216,6 +222,7 @@ def _normalize_auto_grant_role_name(raw_value: str) -> str:
 
 
 def _is_valid_auto_grant_role(role_name: str) -> bool:
+    """Return True for built-in roles and project/global group role selectors."""
     role_name = _normalize_auto_grant_role_name(role_name)
     if role_name in _AUTO_GRANT_ROLE_KEYS:
         return True
@@ -239,10 +246,12 @@ def _normalize_grant_atom(atom: str) -> str:
 
 
 def _normalize_module_name(raw_value: str) -> str:
+    """Normalize module ids for permission atoms."""
     return str(raw_value or "").strip().lower().replace("-", "_")
 
 
 def _is_module_right_atom(atom: str) -> bool:
+    """Return True for atoms shaped like module:<module_name>:<right>."""
     parts = _normalize_grant_atom(atom).split(":")
     return (
         len(parts) == 3
@@ -253,6 +262,7 @@ def _is_module_right_atom(atom: str) -> bool:
 
 
 def module_right_atom(module_name: str, right: str) -> str:
+    """Build the canonical grant atom for a module-specific right."""
     normalized_module = _normalize_module_name(module_name)
     normalized_right = _normalize_grant_atom(right)
     if not normalized_module or not normalized_right:
@@ -275,6 +285,7 @@ def _resolve_grant_atom(atom: str) -> str:
 
 
 def _configured_user_grant_groups(config: dict | None = None) -> dict[str, set[str]]:
+    """Merge built-in grant groups with optional runtime-defined group bundles."""
     groups = {name: set(rights) for name, rights in _USER_GRANT_GROUPS.items()}
     custom = {}
     if isinstance(config, dict):
@@ -296,6 +307,7 @@ def _configured_user_grant_groups(config: dict | None = None) -> dict[str, set[s
 
 
 def _normalize_groups_config_input(value, key: str) -> dict:
+    """Validate and canonicalize CHUCKBOT_GROUPS_JSON-style config input."""
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -330,6 +342,7 @@ def _normalize_groups_config_input(value, key: str) -> dict:
 
 
 def _normalize_user_grants_map_input(value, key: str) -> dict:
+    """Validate and canonicalize username-to-grants config maps."""
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -376,6 +389,8 @@ def _normalize_user_grants_map_input(value, key: str) -> dict:
                 continue
 
             if normalized_atom.startswith("group:"):
+                # Group definitions may be added later, so accept unknown
+                # group atoms here and resolve them when grants are expanded.
                 group_name = normalized_atom.split(":", 1)[1]
                 if not group_name:
                     raise ValueError(f"Unknown grant group '{group_name}' for {user}")
@@ -401,6 +416,7 @@ def _normalize_user_grants_map_input(value, key: str) -> dict:
 
 
 def _expand_user_grants(config: dict, username: str) -> set[str]:
+    """Return direct rights granted to a user after expanding group atoms."""
     user = _normalize_username(username)
     if not user:
         return set()
@@ -438,6 +454,7 @@ def _expand_user_grants(config: dict, username: str) -> set[str]:
 def _implicit_role_flags(
     config: dict, username: str, commons_groups: set[str] | None = None
 ) -> dict[str, bool]:
+    """Return MediaWiki-derived role flags for display and auto-grant checks."""
     normalized_username = _normalize_username(username)
     if not normalized_username:
         return {role: False for role in _USER_IMPLICIT_FLAGS}
@@ -468,6 +485,7 @@ def _implicit_role_flags(
 
 
 def _normalize_auto_grants_map_input(value, key: str) -> dict:
+    """Validate and canonicalize role-to-grants config maps."""
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -518,6 +536,8 @@ def _normalize_auto_grants_map_input(value, key: str) -> dict:
                 continue
 
             if normalized_atom.startswith("group:"):
+                # As with user grants, group atoms are stored even if a custom
+                # group is defined in a later config update.
                 group_name = normalized_atom.split(":", 1)[1]
                 if not group_name:
                     raise ValueError(
@@ -543,6 +563,7 @@ def _normalize_auto_grants_map_input(value, key: str) -> dict:
 
 
 def _expand_auto_grants(config: dict, username: str) -> set[str]:
+    """Return rights granted through enabled implicit MediaWiki roles."""
     role_map = config.get("ROLE_GRANTS_JSON") or {}
     if not isinstance(role_map, dict):
         return set()
@@ -577,6 +598,7 @@ def _expand_auto_grants(config: dict, username: str) -> set[str]:
 
 
 def _expand_all_grants(config: dict, username: str) -> set[str]:
+    """Return the union of direct user grants and implicit role grants."""
     return _expand_user_grants(config, username) | _expand_auto_grants(config, username)
 
 
@@ -585,6 +607,7 @@ def _get_user_grants_payload(
     config: dict,
     commons_groups: set[str] | None = None,
 ) -> dict:
+    """Build the inspectable grants payload returned by admin-facing routes."""
     normalized_username = _normalize_username(target_username)
     grants_map = (
         config.get("ROLLBACK_CONTROL_JSON")
@@ -638,6 +661,7 @@ def _get_user_grants_payload(
 
 
 def _parse_user_grants_env(raw_value: str) -> dict:
+    """Parse legacy USER_GRANTS_JSON/ROLLBACK_CONTROL_JSON env config safely."""
     if not raw_value:
         return {}
 
@@ -649,6 +673,7 @@ def _parse_user_grants_env(raw_value: str) -> dict:
 
 
 def _parse_role_grants_env(raw_value: str) -> dict:
+    """Parse ROLE_GRANTS_JSON env config safely."""
     if not raw_value:
         return {}
 
@@ -659,6 +684,7 @@ def _parse_role_grants_env(raw_value: str) -> dict:
         return {}
 
 def _parse_nonnegative_int(value, fallback: int) -> int:
+    """Parse runtime integer config with a conservative fallback."""
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -671,6 +697,7 @@ def _parse_nonnegative_int(value, fallback: int) -> int:
 
 
 def _runtime_authz_defaults() -> dict:
+    """Build the effective authz baseline from env vars and built-in groups."""
     _router = _r()
     _extra = _router.EXTRA_AUTHORIZED_USERS if _router else EXTRA_AUTHORIZED_USERS
     _read_only = _router.USERS_READ_ONLY if _router else USERS_READ_ONLY
@@ -742,6 +769,7 @@ def _invalidate_runtime_authz_cache() -> None:
 
 
 def _load_runtime_authz_overrides() -> dict:
+    """Load persisted authz config, migrating legacy rows into current fields."""
     global _runtime_authz_cache, _runtime_authz_cache_expiry
 
     now = time.time()
@@ -771,6 +799,8 @@ def _load_runtime_authz_overrides() -> dict:
             continue
 
         if key in _JSON_CONFIG_KEYS:
+            # Persisted JSON is considered untrusted input because admins can
+            # edit it at runtime; normalize it before it reaches permission checks.
             try:
                 if key == "ROLE_GRANTS_JSON":
                     overrides[key] = _normalize_auto_grants_map_input(raw_value, key)
@@ -835,12 +865,14 @@ def _load_runtime_authz_overrides() -> dict:
 
 
 def _effective_runtime_authz_config() -> dict:
+    """Return env defaults overlaid with cached runtime overrides."""
     cfg = _runtime_authz_defaults()
     cfg.update(_load_runtime_authz_overrides())
     return cfg
 
 
 def _serialize_runtime_authz_config(config: dict) -> dict:
+    """Return the API-safe representation of runtime authz config."""
     output = {}
     for key in _RUNTIME_AUTHZ_ALLOWED_KEYS:
         value = config.get(key)
@@ -854,6 +886,7 @@ def _serialize_runtime_authz_config(config: dict) -> dict:
 
 
 def _normalize_user_list_input(value, key: str) -> list[str]:
+    """Normalize a legacy comma/list user field for runtime config endpoints."""
     if isinstance(value, str):
         candidates = [part.strip() for part in value.replace("\n", ",").split(",")]
     elif isinstance(value, list):
@@ -886,6 +919,7 @@ def _normalize_user_list_input(value, key: str) -> list[str]:
 
 
 def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
+    """Validate a partial runtime-authz update payload."""
     normalized = {}
     errors = []
 
@@ -927,6 +961,7 @@ def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
 
 
 def _persist_runtime_authz_updates(updates: dict, updated_by: str) -> None:
+    """Persist normalized runtime-authz updates and clear local caches."""
     rows = {}
     for key, value in updates.items():
         if key in _JSON_CONFIG_KEYS:
@@ -939,6 +974,7 @@ def _persist_runtime_authz_updates(updates: dict, updated_by: str) -> None:
 
 
 def get_user_groups(username, force_refresh: bool = False):
+    """Return Commons local groups for a user, cached briefly to spare the API."""
     now = time.time()
 
     cached = _group_cache.get(username)
@@ -969,6 +1005,7 @@ def get_user_groups(username, force_refresh: bool = False):
 
 
 def _project_api_url(project: str) -> str:
+    """Resolve a Wikimedia project shortcut or host into an API URL."""
     value = str(project or "").strip().lower()
     if value in {"commons", "commonswiki"}:
         return "https://commons.wikimedia.org/w/api.php"
@@ -1035,6 +1072,7 @@ def get_project_user_groups(
     project: str,
     force_refresh: bool = False,
 ):
+    """Return groups for a user on an arbitrary Wikimedia project."""
     normalized_project = str(project or "").strip().lower()
     cache_key = f"project:{normalized_project}:{username}"
     now = time.time()
@@ -1073,6 +1111,7 @@ def get_project_user_groups(
 
 
 def get_user_global_groups(username, force_refresh: bool = False):
+    """Return CentralAuth global groups for a user."""
     normalized_username = _normalize_username(username)
     cache_key = f"global:{normalized_username}"
     now = time.time()
@@ -1151,6 +1190,7 @@ def get_global_userright_groups(force_refresh: bool = False) -> list[str]:
 
 
 def _auto_grant_role_enabled(username: str, role_name: str) -> bool:
+    """Evaluate whether a MediaWiki-backed role applies to a user."""
     normalized_username = _normalize_username(username)
     role_name = _normalize_auto_grant_role_name(role_name)
     if not normalized_username:
@@ -1171,6 +1211,7 @@ def _auto_grant_role_enabled(username: str, role_name: str) -> bool:
 
 
 def user_has_module_right(username: str, module_name: str, right: str) -> bool:
+    """Return True when a user has a specific module grant or module admin power."""
     if not username:
         return False
     config = _effective_runtime_authz_config()

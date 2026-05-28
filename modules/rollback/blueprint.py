@@ -26,6 +26,7 @@ _ROLLBACK_PAGES = [
 
 
 def _require_module_access() -> str:
+    """Require a signed-in user with access to the rollback module."""
     username = session.get("username")
     if not username:
         abort(401)
@@ -41,6 +42,7 @@ def _require_module_access() -> str:
 
 
 def _rollback_definition():
+    """Return the registered rollback module definition or 404 if unavailable."""
     record = get_module_definition("rollback")
     if record is None:
         abort(404)
@@ -49,6 +51,7 @@ def _rollback_definition():
 
 @blueprint.route("/")
 def index():
+    """Render a lightweight module landing page that links to shared rollback UIs."""
     username = _require_module_access()
     definition = _rollback_definition()
 
@@ -79,35 +82,41 @@ def index():
 
 @blueprint.route("/queue")
 def queue():
+    """Redirect module users to the shared rollback queue page."""
     _require_module_access()
     return redirect("/rollback-queue")
 
 
 @blueprint.route("/from-diff")
 def from_diff():
+    """Redirect module users to the shared from-diff rollback page."""
     _require_module_access()
     return redirect("/rollback-from-diff")
 
 
 @blueprint.route("/account")
 def account():
+    """Redirect module users to the shared account rollback page."""
     _require_module_access()
     return redirect("/rollback-account")
 
 
 @blueprint.route("/batch")
 def batch():
+    """Redirect module users to the shared batch rollback page."""
     _require_module_access()
     return redirect("/rollback_batch")
 
 
 @blueprint.route("/requests")
 def requests_page():
+    """Redirect module users to the shared request-review page."""
     _require_module_access()
     return redirect("/rollback-requests")
 
 
 @blueprint.route("/config")
 def config_page():
+    """Redirect module users to the shared rollback runtime-config page."""
     _require_module_access()
     return redirect("/rollback-config")

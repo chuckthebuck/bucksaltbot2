@@ -78,6 +78,44 @@ def test_module_docs_text_falls_back_to_vendored_module_docs(flask_app):
     assert "Four Award" in text
 
 
+def test_four_award_duplicate_noop_detection_handles_new_result_shape():
+    import router.routes as routes
+
+    assert routes._four_award_run_is_duplicate_noop(
+        {"result": {"run_kind": "duplicate_noop"}}
+    )
+
+
+def test_four_award_duplicate_noop_detection_handles_legacy_review_shape():
+    import router.routes as routes
+
+    assert routes._four_award_run_is_duplicate_noop(
+        {
+            "result": {
+                "run_kind": "reviewed",
+                "reviews": [
+                    {
+                        "article": "Example article",
+                        "issues": [{"code": "duplicate_record"}],
+                    }
+                ],
+            }
+        }
+    )
+    assert not routes._four_award_run_is_duplicate_noop(
+        {
+            "result": {
+                "reviews": [
+                    {
+                        "article": "Example article",
+                        "issues": [{"code": "duplicate_record"}, {"code": "other"}],
+                    }
+                ],
+            }
+        }
+    )
+
+
 def test_footer_shows_framework_and_module_versions(client):
     build_info = DeploymentBuildInfo(
         framework=ComponentBuildInfo(

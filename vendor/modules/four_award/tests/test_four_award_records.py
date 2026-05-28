@@ -5,6 +5,7 @@ from modules.four_award.records import (
     _insert_rows,
     parse_records_table,
     render_records_table,
+    table_contains_article,
     table_contains_record,
 )
 
@@ -97,3 +98,16 @@ def test_records_table_duplicate_check_uses_parsed_rows_not_raw_substrings():
 
     assert table_contains_record(table, "Example article extended", ["Exampleton"])
     assert not table_contains_record(table, "Example article", ["Example"])
+
+
+def test_records_table_article_duplicate_check_ignores_user():
+    table = """{| class="wikitable"
+! User
+! Article
+|-
+| [[User:Exampleton|Exampleton]] || [[Example article]]
+|}
+"""
+
+    assert table_contains_article(table, "Example article")
+    assert not table_contains_article(table, "Different article")

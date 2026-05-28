@@ -13,6 +13,7 @@ from .wiki import get_wiki
 
 @dataclass(frozen=True)
 class RecordsTableModel:
+    """Parsed records table while preserving unrecognized rows and formatting."""
     header: str
     records: list[FourAwardRecord]
     raw_rows: list[str]
@@ -21,6 +22,7 @@ class RecordsTableModel:
 
 
 def _record_row(record: FourAwardRecord, ordinal: int) -> str:
+    """Render a sorted Four Award record row."""
     display = record.display_user or record.user
     suffix = f" ({ordinal})" if ordinal > 1 else ""
     return (
@@ -32,6 +34,7 @@ def _record_row(record: FourAwardRecord, ordinal: int) -> str:
 
 
 def _four_awards_table(text: str) -> tuple[int, int] | None:
+    """Return the byte span of the Four Awards wikitable on the records page."""
     heading = re.search(r"^==\s*Four Awards\s*==\s*$", text, re.M | re.I)
     start_search = heading.end() if heading else 0
     table_start = text.find("{|", start_search)
@@ -44,6 +47,7 @@ def _four_awards_table(text: str) -> tuple[int, int] | None:
 
 
 def _split_table_rows(table: str) -> tuple[str, list[str], bool, bool]:
+    """Split a wikitable into header, row chunks, and formatting flags."""
     had_final_newline = table.endswith("\n")
     table_body = table.rstrip()
     if not table_body.endswith("|}"):
@@ -61,6 +65,7 @@ def _split_table_rows(table: str) -> tuple[str, list[str], bool, bool]:
 
 
 def _row_cells(row: str) -> list[str]:
+    """Extract cells from simple one-line or line-per-cell wikitable rows."""
     lines = row.strip().splitlines()
     if lines and re.fullmatch(r"\|-\s*", lines[0]):
         lines = lines[1:]
@@ -77,6 +82,7 @@ def _row_cells(row: str) -> list[str]:
 
 
 def _link_target(value: str, namespace: str | None = None) -> tuple[str, str]:
+    """Return target and display text from a wiki link cell."""
     if namespace:
         pattern = rf"\[\[\s*{re.escape(namespace)}:([^|\]#]+)(?:#[^|\]]*)?(?:\|([^\]]+))?\]\]"
     else:
@@ -92,6 +98,7 @@ def _link_target(value: str, namespace: str | None = None) -> tuple[str, str]:
 
 
 def _record_from_row(row: str) -> FourAwardRecord | None:
+    """Parse a table row into a record, preserving bad rows elsewhere."""
     cells = _row_cells(row)
     if len(cells) < 2:
         return None
@@ -114,6 +121,7 @@ def _record_from_row(row: str) -> FourAwardRecord | None:
 
 
 def parse_records_table(table: str) -> RecordsTableModel:
+    """Parse a Four Awards wikitable into records plus raw unknown rows."""
     header, rows, trailing_row_marker, had_final_newline = _split_table_rows(table)
     records: list[FourAwardRecord] = []
     raw_rows: list[str] = []
@@ -133,6 +141,7 @@ def parse_records_table(table: str) -> RecordsTableModel:
 
 
 def table_contains_record(table: str, article: str, users: Iterable[str]) -> bool:
+    """Return whether a table already records an article for any credited user."""
     model = parse_records_table(table)
     wanted_article = normalize_title(article).casefold()
     wanted_users = {normalize_user(user) for user in users if normalize_user(user)}
@@ -145,7 +154,20 @@ def table_contains_record(table: str, article: str, users: Iterable[str]) -> boo
     )
 
 
+def table_contains_article(table: str, article: str) -> bool:
+    """Return whether a table already records an article for any user."""
+    model = parse_records_table(table)
+    wanted_article = normalize_title(article).casefold()
+    if not wanted_article:
+        return False
+    return any(
+        normalize_title(record.article).casefold() == wanted_article
+        for record in model.records
+    )
+
+
 def page_text_contains_record(page_text: str, article: str, users: Iterable[str]) -> bool:
+    """Return whether the records page text contains a matching Four Award row."""
     span = _four_awards_table(page_text)
     if not span:
         return False
@@ -153,7 +175,17 @@ def page_text_contains_record(page_text: str, article: str, users: Iterable[str]
     return table_contains_record(page_text[start:end], article, users)
 
 
+def page_text_contains_article(page_text: str, article: str) -> bool:
+    """Return whether the records page text contains the article in any row."""
+    span = _four_awards_table(page_text)
+    if not span:
+        return False
+    start, end = span
+    return table_contains_article(page_text[start:end], article)
+
+
 def _records_conn(records: Iterable[FourAwardRecord]) -> sqlite3.Connection:
+    """Load records into SQLite so sorting stays explicit and deterministic."""
     conn = sqlite3.connect(":memory:")
     conn.execute(
         """
@@ -198,6 +230,7 @@ def _records_conn(records: Iterable[FourAwardRecord]) -> sqlite3.Connection:
 
 
 def _sorted_records(conn: sqlite3.Connection) -> list[FourAwardRecord]:
+    """Return records sorted by user, award date, article, and insertion order."""
     rows = conn.execute(
         """
         SELECT user, display_user, article, award_date, creation_date,
@@ -222,6 +255,7 @@ def _sorted_records(conn: sqlite3.Connection) -> list[FourAwardRecord]:
 
 
 def render_records_table(model: RecordsTableModel, records: Iterable[FourAwardRecord]) -> str:
+    """Render a records table while preserving header and unknown existing rows."""
     conn = _records_conn(records)
     try:
         lines = [model.header.rstrip()]
@@ -247,12 +281,14 @@ def render_records_table(model: RecordsTableModel, records: Iterable[FourAwardRe
 
 
 def _insert_rows(table: str, records: list[FourAwardRecord]) -> str:
+    """Insert records into an existing table and keep final-newline behavior sane."""
     model = parse_records_table(table)
     output = render_records_table(model, [*model.records, *records])
     return output if output.endswith("\n") else output + "\n"
 
 
 def render_records_page_text(page_text: str, records: Iterable[FourAwardRecord]) -> str:
+    """Return records page text with new Four Award records inserted."""
     span = _four_awards_table(page_text)
     if not span:
         raise RuntimeError("Could not find the Four Awards records table")
@@ -262,6 +298,7 @@ def render_records_page_text(page_text: str, records: Iterable[FourAwardRecord])
 
 
 def preview_records_table(records: Iterable[FourAwardRecord]) -> dict[str, object] | None:
+    """Return a dry-run preview of the records page update."""
     records = [record for record in records if record]
     if not records or not ENABLE_RECORDS:
         return None
@@ -274,6 +311,7 @@ def preview_records_table(records: Iterable[FourAwardRecord]) -> dict[str, objec
 
 
 def sync_records_table(records: Iterable[FourAwardRecord]) -> int:
+    """Persist new Four Award records to the configured records page."""
     records = [record for record in records if record]
     if not records or not ENABLE_RECORDS:
         return 0

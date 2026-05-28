@@ -11,6 +11,10 @@ ensure_pywikibot_env(strict=True)
 import pywikibot  # noqa: E402
 
 
+# The queue stores one row per target page, while Celery jobs may process rows
+# across the whole batch.  Keep helpers small so the worker can refresh state
+# between items and react quickly to cancellation.
+
 # MediaWiki API error codes that mean the rollback is already in the desired
 # state.  The page does not need to change, so these are not real failures.
 _ROLLBACK_NOOP_CODES = frozenset({"alreadyrolled", "onlyauthor"})
@@ -56,6 +60,7 @@ def _restore_creation_revision(
     summary: str | None,
     requested_by: str,
 ) -> None:
+    """Restore a creator-only page to its initial revision."""
     page = pywikibot.Page(site, title)
     original_text = page.getOldVersion(int(revision_id))
     if page.get() == original_text:
@@ -86,6 +91,7 @@ def _fetch_job_meta(job_id: int):
 
 
 def _update_job_status(job_id: int, status: str):
+    """Write the aggregate job status."""
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -108,6 +114,7 @@ def _count_batch_jobs(batch_id: int) -> int:
 
 
 def _update_item(item_id: int, status: str, error: str | None = None):
+    """Write the status for a single rollback target."""
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -118,6 +125,7 @@ def _update_item(item_id: int, status: str, error: str | None = None):
 
 
 def _count_job_items(job_id: int) -> int:
+    """Return the total number of item rows for a rollback job."""
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -129,6 +137,7 @@ def _count_job_items(job_id: int) -> int:
 
 
 def _get_item_status_counts(job_id: int) -> dict[str, int]:
+    """Return item-status counts used to derive the aggregate job status."""
     counts: dict[str, int] = {}
     with get_conn() as conn:
         with conn.cursor() as cursor:
@@ -230,6 +239,9 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                     return None
 
                 item_id = item[0]
+                # The WHERE status='queued' guard makes this a compare-and-set
+                # claim.  If another worker won the race, rowcount is 0 and the
+                # loop simply looks for the next queued item.
                 cursor.execute(
                     """
                     UPDATE rollback_job_items
@@ -281,6 +293,7 @@ def _bot_site() -> pywikibot.Site:
 
 @shared_task(ignore_result=True)
 def process_rollback_job(job_id: int):
+    """Process queued rollback items, updating DB progress and wiki status."""
     site = None
     try:
         job = _fetch_job_meta(job_id)
@@ -394,6 +407,8 @@ def process_rollback_job(job_id: int):
                     restore_revision_id,
                 ) = claimed
 
+            # Claims can come from sibling jobs in the same batch, so refresh
+            # the owning job before deciding whether this item is still editable.
             claimed_job = _fetch_job_meta(claimed_job_id)
             if not claimed_job:
                 _update_item(item_id, "failed", "Missing rollback_jobs row")
@@ -414,11 +429,14 @@ def process_rollback_job(job_id: int):
 
             try:
                 if claimed_dry_run:
+                    # Dry-runs exercise queue/progress flow without touching the wiki.
                     _update_item(item_id, "completed", None)
                     update_progress(claimed_job_id, "completed")
                     continue
 
                 if item_action == "restore_creation":
+                    # Some from-diff jobs represent page creation rather than a
+                    # normal rollback-able edit; restore the creation revision.
                     if not restore_revision_id:
                         raise RuntimeError("Missing creation revision for restore item")
                     _restore_creation_revision(

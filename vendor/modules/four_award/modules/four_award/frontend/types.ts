@@ -15,6 +15,9 @@ export interface ModuleRunItem {
     run_kind?: string;
     has_nominations?: boolean;
     nomination_count?: number;
+    source_nomination_count?: number;
+    duplicate_count?: number;
+    duplicate_articles?: string[];
     processed_count?: number;
     dry_run?: boolean;
     approved?: number;
