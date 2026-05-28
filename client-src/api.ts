@@ -57,6 +57,7 @@ export interface RuntimeAuthzConfig {
   ROLLBACK_CONTROL_JSON: Record<string, string[]>;
   ROLE_GRANTS_JSON: Record<string, string[]>;
   CHUCKBOT_GROUPS_JSON: Record<string, string[]>;
+  CHUCKBOT_GROUP_DESCRIPTIONS_JSON: Record<string, string>;
   RATE_LIMIT_JOBS_PER_HOUR: number;
   RATE_LIMIT_TESTER_JOBS_PER_HOUR: number;
 }

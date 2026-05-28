@@ -69,6 +69,7 @@ type ImplicitFlagKey =
   | "commons_rollbacker";
 
 type AutoGrantRoleKey = string;
+type ConfigTabKey = "groups" | "auto_grants" | "module_rights" | "advanced";
 
 interface GrantAdvisory {
   key: string;
@@ -312,6 +313,7 @@ const errorMessage = ref("");
 const successMessage = ref("");
 const canEditConfig = ref(initialProps.can_edit_config);
 const canManageUserGrants = ref(initialProps.can_edit_config);
+const activeConfigTab = ref<ConfigTabKey>("groups");
 const moduleRights = ref<Record<string, string[]>>({});
 const projectGroupOptions = ref<Record<string, string[]>>({});
 const globalGroupOptions = ref<string[]>([]);
@@ -323,12 +325,14 @@ const config = ref<RuntimeAuthzConfig>({
     commons_rollbacker: ["group:basic"],
   },
   CHUCKBOT_GROUPS_JSON: {},
+  CHUCKBOT_GROUP_DESCRIPTIONS_JSON: {},
   RATE_LIMIT_JOBS_PER_HOUR: 0,
   RATE_LIMIT_TESTER_JOBS_PER_HOUR: 0,
 });
 
 const grantsJsonText = ref("{}");
 const groupsJsonText = ref("{}");
+const groupDescriptionsJsonText = ref("{}");
 const autoGrantsJsonText = ref("{}");
 
 const userSearchLookupItems = ref<Array<{ label: string; value: string }>>([]);
@@ -353,6 +357,8 @@ const newAutoGrantProject = ref("commons");
 const newAutoGrantGroup = ref("");
 const selectedFrameworkGroup = ref<GrantGroupKey | string>("basic");
 const newFrameworkGroup = ref("");
+const newFrameworkGroupDescription = ref("");
+const selectedFrameworkGroupDescription = ref("");
 
 const implicitFlags = ref<Record<ImplicitFlagKey, boolean>>({
   authenticated: false,
@@ -457,6 +463,7 @@ const filteredAutoGrantRoleFields = computed(() =>
 
 const frameworkGroupFields = computed<Array<{ key: string; label: string; help: string }>>(() => {
   const configured = Object.keys(config.value.CHUCKBOT_GROUPS_JSON || {});
+  const descriptions = config.value.CHUCKBOT_GROUP_DESCRIPTIONS_JSON || {};
   const groups = new Set<string>([
     ...userGrantGroupFields.map((field) => field.key),
     ...configured,
@@ -468,7 +475,7 @@ const frameworkGroupFields = computed<Array<{ key: string; label: string; help: 
     return {
       key: group,
       label: base?.label || friendlyGroupLabel(group),
-      help: base?.help || "Custom framework group.",
+      help: descriptions[group] || base?.help || "Custom framework group.",
     };
   });
 });
@@ -929,6 +936,27 @@ function normalizeFrameworkGroupName(value: string): string {
   return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
 
+function frameworkGroupIsBuiltIn(group: string): boolean {
+  return userGrantGroupFields.some((field) => field.key === group);
+}
+
+function persistSelectedFrameworkGroupDescription(): void {
+  const group = normalizeFrameworkGroupName(String(selectedFrameworkGroup.value));
+  if (!group || frameworkGroupIsBuiltIn(group)) return;
+
+  const descriptions = {
+    ...(config.value.CHUCKBOT_GROUP_DESCRIPTIONS_JSON || {}),
+  };
+  const description = selectedFrameworkGroupDescription.value.trim();
+  if (description) {
+    descriptions[group] = description;
+  } else {
+    delete descriptions[group];
+  }
+  config.value.CHUCKBOT_GROUP_DESCRIPTIONS_JSON = descriptions;
+  groupDescriptionsJsonText.value = JSON.stringify(descriptions, null, 2);
+}
+
 function clearFrameworkGroupChecks(): void {
   frameworkGroupRightChecks.value = emptyRightChecks();
   frameworkGroupModuleRightChecks.value = Object.fromEntries(
@@ -939,6 +967,7 @@ function clearFrameworkGroupChecks(): void {
 function persistSelectedFrameworkGroupChecks(): void {
   const group = normalizeFrameworkGroupName(String(selectedFrameworkGroup.value));
   if (!group) return;
+  persistSelectedFrameworkGroupDescription();
 
   const atoms: string[] = [];
   for (const field of userGrantRightFields) {
@@ -962,6 +991,8 @@ function persistSelectedFrameworkGroupChecks(): void {
 function loadSelectedFrameworkGroupChecks(): void {
   clearFrameworkGroupChecks();
   const group = normalizeFrameworkGroupName(String(selectedFrameworkGroup.value));
+  selectedFrameworkGroupDescription.value =
+    config.value.CHUCKBOT_GROUP_DESCRIPTIONS_JSON?.[group] || "";
   const hasOverride = Object.prototype.hasOwnProperty.call(
     config.value.CHUCKBOT_GROUPS_JSON || {},
     group,
@@ -1006,9 +1037,21 @@ function addFrameworkGroup(): void {
     ...(config.value.CHUCKBOT_GROUPS_JSON || {}),
     [group]: config.value.CHUCKBOT_GROUPS_JSON?.[group] || [],
   };
+  if (newFrameworkGroupDescription.value.trim()) {
+    config.value.CHUCKBOT_GROUP_DESCRIPTIONS_JSON = {
+      ...(config.value.CHUCKBOT_GROUP_DESCRIPTIONS_JSON || {}),
+      [group]: newFrameworkGroupDescription.value.trim(),
+    };
+    groupDescriptionsJsonText.value = JSON.stringify(
+      config.value.CHUCKBOT_GROUP_DESCRIPTIONS_JSON,
+      null,
+      2,
+    );
+  }
   groupsJsonText.value = JSON.stringify(config.value.CHUCKBOT_GROUPS_JSON, null, 2);
   selectedFrameworkGroup.value = group;
   newFrameworkGroup.value = "";
+  newFrameworkGroupDescription.value = "";
   loadSelectedFrameworkGroupChecks();
   errorMessage.value = "";
   successMessage.value = `Added framework group ${friendlyGroupLabel(group)}.`;
@@ -1025,7 +1068,11 @@ function removeSelectedFrameworkGroup(): void {
   const next = { ...(config.value.CHUCKBOT_GROUPS_JSON || {}) };
   delete next[group];
   config.value.CHUCKBOT_GROUPS_JSON = next;
+  const descriptions = { ...(config.value.CHUCKBOT_GROUP_DESCRIPTIONS_JSON || {}) };
+  delete descriptions[group];
+  config.value.CHUCKBOT_GROUP_DESCRIPTIONS_JSON = descriptions;
   groupsJsonText.value = JSON.stringify(next, null, 2);
+  groupDescriptionsJsonText.value = JSON.stringify(descriptions, null, 2);
   selectedFrameworkGroup.value = frameworkGroupFields.value[0]?.key || "basic";
   loadSelectedFrameworkGroupChecks();
 }
@@ -1191,12 +1238,20 @@ function applyServerConfig(nextConfig: RuntimeAuthzConfig): void {
     ROLLBACK_CONTROL_JSON: { ...(nextConfig.ROLLBACK_CONTROL_JSON || {}) },
     ROLE_GRANTS_JSON: { ...(nextConfig.ROLE_GRANTS_JSON || {}) },
     CHUCKBOT_GROUPS_JSON: { ...(nextConfig.CHUCKBOT_GROUPS_JSON || {}) },
+    CHUCKBOT_GROUP_DESCRIPTIONS_JSON: {
+      ...(nextConfig.CHUCKBOT_GROUP_DESCRIPTIONS_JSON || {}),
+    },
     RATE_LIMIT_JOBS_PER_HOUR: Number(nextConfig.RATE_LIMIT_JOBS_PER_HOUR || 0),
     RATE_LIMIT_TESTER_JOBS_PER_HOUR: Number(nextConfig.RATE_LIMIT_TESTER_JOBS_PER_HOUR || 0),
   };
 
   grantsJsonText.value = JSON.stringify(config.value.ROLLBACK_CONTROL_JSON || {}, null, 2);
   groupsJsonText.value = JSON.stringify(config.value.CHUCKBOT_GROUPS_JSON || {}, null, 2);
+  groupDescriptionsJsonText.value = JSON.stringify(
+    config.value.CHUCKBOT_GROUP_DESCRIPTIONS_JSON || {},
+    null,
+    2,
+  );
   autoGrantsJsonText.value = JSON.stringify(config.value.ROLE_GRANTS_JSON || {}, null, 2);
   loadSelectedAutoGrantRoleChecks();
   loadSelectedFrameworkGroupChecks();
@@ -1212,6 +1267,23 @@ function parseJsonObjectText(text: string, label: string): Record<string, string
   }
 
   return parsed as Record<string, string[]>;
+}
+
+function parseJsonStringMapText(text: string, label: string): Record<string, string> {
+  const trimmed = text.trim();
+  if (!trimmed) return {};
+
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must be an object`);
+  }
+
+  return Object.fromEntries(
+    Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [
+      key,
+      String(value || ""),
+    ]),
+  );
 }
 
 function parseUserGrantsJsonText(): Record<string, string[]> {
@@ -1258,11 +1330,14 @@ async function saveConfig(): Promise<void> {
     const parsedUserGrants = parseUserGrantsJsonText();
     config.value.ROLLBACK_CONTROL_JSON = parsedUserGrants;
     persistSelectedAutoGrantRoleChecks();
-    config.value.CHUCKBOT_GROUPS_JSON = parseJsonObjectText(groupsJsonText.value, "Chuckbot groups JSON");
     persistSelectedFrameworkGroupChecks();
     config.value.CHUCKBOT_GROUPS_JSON = parseJsonObjectText(
       groupsJsonText.value,
       "Chuckbot groups JSON",
+    );
+    config.value.CHUCKBOT_GROUP_DESCRIPTIONS_JSON = parseJsonStringMapText(
+      groupDescriptionsJsonText.value,
+      "Chuckbot group descriptions JSON",
     );
     config.value.ROLE_GRANTS_JSON = parseJsonObjectText(
       autoGrantsJsonText.value,
@@ -1470,24 +1545,153 @@ onMounted(() => {
       </div>
     </section>
 
-    <div v-if="!loading" class="runtime-config-grid runtime-config-grid--numbers">
-      <section class="runtime-config-card">
-        <h3>Bulk user grants JSON</h3>
+    <section v-if="!loading" class="runtime-config-card runtime-management-panel">
+      <div class="runtime-management-header">
+        <div>
+          <h3>Access management</h3>
+          <p class="runtime-config-help">
+            Group definitions, wiki-derived auto grants, and raw config are split
+            out here so the user editor can stay focused.
+          </p>
+        </div>
+        <div class="runtime-tablist" role="tablist" aria-label="Access management sections">
+          <button
+            type="button"
+            :class="{ 'is-active': activeConfigTab === 'groups' }"
+            @click="activeConfigTab = 'groups'"
+          >
+            Framework groups
+          </button>
+          <button
+            type="button"
+            :class="{ 'is-active': activeConfigTab === 'auto_grants' }"
+            @click="activeConfigTab = 'auto_grants'"
+          >
+            Wiki auto-grants
+          </button>
+          <button
+            type="button"
+            :class="{ 'is-active': activeConfigTab === 'module_rights' }"
+            @click="activeConfigTab = 'module_rights'"
+          >
+            Module grant list
+          </button>
+          <button
+            type="button"
+            :class="{ 'is-active': activeConfigTab === 'advanced' }"
+            @click="activeConfigTab = 'advanced'"
+          >
+            Advanced JSON
+          </button>
+        </div>
+      </div>
+
+      <section v-if="activeConfigTab === 'groups'" class="runtime-management-section">
+        <h3>Chuckbot framework groups</h3>
         <p class="runtime-config-help">
-          The editor above writes this map. Use the JSON only for bulk cleanup or
-          migration work.
+          Edit framework groups without changing code. These are the reusable
+          bundles users and wiki auto-grants attach to.
         </p>
-        <details class="advanced-config-json">
-          <summary>Edit raw user grant map</summary>
-          <textarea
-            v-model="grantsJsonText"
-            :disabled="!canEditConfig"
-            rows="8"
-          />
-        </details>
+
+        <div class="framework-group-builder">
+          <label>
+            <span>New group</span>
+            <input
+              v-model="newFrameworkGroup"
+              :disabled="!canEditConfig || saving"
+              placeholder="Four Award operator"
+              type="text"
+              @keyup.enter="addFrameworkGroup"
+            >
+          </label>
+          <label>
+            <span>Description</span>
+            <input
+              v-model="newFrameworkGroupDescription"
+              :disabled="!canEditConfig || saving"
+              placeholder="Can run and review Four Award jobs"
+              type="text"
+              @keyup.enter="addFrameworkGroup"
+            >
+          </label>
+          <CdxButton
+            type="button"
+            :disabled="!canEditConfig || saving"
+            @click="addFrameworkGroup"
+          >
+            Add group
+          </CdxButton>
+        </div>
+
+        <div class="framework-group-select-row">
+          <label>
+            <span>Group</span>
+            <select
+              :value="selectedFrameworkGroup"
+              :disabled="!canEditConfig || saving"
+              @change="onSelectedFrameworkGroupChange"
+            >
+              <option v-for="group in frameworkGroupFields" :key="group.key" :value="group.key">
+                {{ group.label }}
+              </option>
+            </select>
+          </label>
+          <label>
+            <span>Description</span>
+            <input
+              v-model="selectedFrameworkGroupDescription"
+              :disabled="!canEditConfig || saving || frameworkGroupIsBuiltIn(String(selectedFrameworkGroup))"
+              placeholder="Custom group description"
+              type="text"
+              @input="persistSelectedFrameworkGroupDescription"
+            >
+          </label>
+          <CdxButton
+            type="button"
+            weight="quiet"
+            :disabled="!canEditConfig || saving || frameworkGroupIsBuiltIn(String(selectedFrameworkGroup))"
+            @click="removeSelectedFrameworkGroup"
+          >
+            Remove group
+          </CdxButton>
+        </div>
+
+        <UnifiedTable
+          :rows="frameworkGroupRowsForSelected()"
+          :columns="frameworkGroupColumns"
+          row-key="key"
+          table-class="runtime-rights-table"
+        />
+
+        <h4>Included rights</h4>
+        <UnifiedTable
+          :rows="rightRows"
+          :columns="frameworkGroupRightColumns"
+          row-key="key"
+          table-class="runtime-rights-table"
+        />
+
+        <h4>Included module rights</h4>
+        <div v-if="autoGrantModuleRightRows.length === 0" class="runtime-config-help">
+          No modules currently declare rights.
+        </div>
+        <UnifiedTable
+          v-else
+          :rows="autoGrantModuleRightRows"
+          :columns="frameworkGroupModuleRightColumns"
+          row-key="key"
+          table-class="runtime-rights-table"
+        />
+
+        <ul v-if="selectedFrameworkGroupAdvisories.length" class="grant-advisories">
+          <li v-for="advisory in selectedFrameworkGroupAdvisories" :key="advisory.key">
+            <strong>{{ advisory.title }}</strong>
+            <span>{{ advisory.detail }}</span>
+          </li>
+        </ul>
       </section>
 
-      <section class="runtime-config-card">
+      <section v-if="activeConfigTab === 'auto_grants'" class="runtime-management-section">
         <h3>Auto grants by implicit role</h3>
         <p class="runtime-config-help">
           Configure eligibility rules from login status, project groups, or global
@@ -1638,117 +1842,9 @@ onMounted(() => {
           </li>
         </ul>
 
-        <details class="advanced-config-json">
-          <summary>Advanced auto grants JSON</summary>
-          <p class="runtime-config-help">
-            The form above writes this JSON for you. You can still use this for bulk edits.
-          </p>
-        <textarea
-          v-model="autoGrantsJsonText"
-          :disabled="!canEditConfig"
-          rows="8"
-        />
-        </details>
       </section>
 
-      <section class="runtime-config-card">
-        <h3>Chuckbot framework groups</h3>
-        <p class="runtime-config-help">
-          Edit framework groups without changing code. These groups are what user
-          grants and auto grants attach to.
-        </p>
-
-        <div class="framework-group-builder">
-          <label>
-            <span>New group</span>
-            <input
-              v-model="newFrameworkGroup"
-              :disabled="!canEditConfig || saving"
-              placeholder="Four Award operator"
-              type="text"
-              @keyup.enter="addFrameworkGroup"
-            >
-          </label>
-          <CdxButton
-            type="button"
-            :disabled="!canEditConfig || saving"
-            @click="addFrameworkGroup"
-          >
-            Add group
-          </CdxButton>
-        </div>
-
-        <div class="framework-group-select-row">
-          <label>
-            <span>Group</span>
-            <select
-              :value="selectedFrameworkGroup"
-              :disabled="!canEditConfig || saving"
-              @change="onSelectedFrameworkGroupChange"
-            >
-              <option v-for="group in frameworkGroupFields" :key="group.key" :value="group.key">
-                {{ group.label }}
-              </option>
-            </select>
-          </label>
-          <CdxButton
-            type="button"
-            weight="quiet"
-            :disabled="!canEditConfig || saving || userGrantGroupFields.some((field) => field.key === selectedFrameworkGroup)"
-            @click="removeSelectedFrameworkGroup"
-          >
-            Remove group
-          </CdxButton>
-        </div>
-
-        <UnifiedTable
-          :rows="frameworkGroupRowsForSelected()"
-          :columns="frameworkGroupColumns"
-          row-key="key"
-          table-class="runtime-rights-table"
-        />
-
-        <h4>Included rights</h4>
-        <UnifiedTable
-          :rows="rightRows"
-          :columns="frameworkGroupRightColumns"
-          row-key="key"
-          table-class="runtime-rights-table"
-        />
-
-        <h4>Included module rights</h4>
-        <div v-if="autoGrantModuleRightRows.length === 0" class="runtime-config-help">
-          No modules currently declare rights.
-        </div>
-        <UnifiedTable
-          v-else
-          :rows="autoGrantModuleRightRows"
-          :columns="frameworkGroupModuleRightColumns"
-          row-key="key"
-          table-class="runtime-rights-table"
-        />
-
-        <ul v-if="selectedFrameworkGroupAdvisories.length" class="grant-advisories">
-          <li v-for="advisory in selectedFrameworkGroupAdvisories" :key="advisory.key">
-            <strong>{{ advisory.title }}</strong>
-            <span>{{ advisory.detail }}</span>
-          </li>
-        </ul>
-
-        <details class="advanced-config-json">
-          <summary>Advanced framework groups JSON</summary>
-          <p class="runtime-config-help">
-            The group editor above writes this JSON for you. You can still use this for bulk edits.
-          </p>
-          <textarea
-            v-model="groupsJsonText"
-            :disabled="!canEditConfig"
-            rows="10"
-          />
-        </details>
-      </section>
-
-      <section class="runtime-config-card">
+      <section v-if="activeConfigTab === 'module_rights'" class="runtime-management-section">
         <h3>Module-declared rights</h3>
         <p class="runtime-config-help">
           Modules publish their framework rights here. Project/global roles only
@@ -1774,18 +1870,61 @@ onMounted(() => {
         </dl>
       </section>
 
-      <section v-for="field in numberFields" :key="field.key" class="runtime-config-card">
-        <h3>{{ field.label }}</h3>
-        <p class="runtime-config-help">{{ field.help }}</p>
-        <input
-          type="number"
-          min="0"
-          :disabled="!canEditConfig"
-          :value="config[field.key]"
-          @input="(event) => onNumberInput(field.key, event)"
-        />
+      <section v-if="activeConfigTab === 'advanced'" class="runtime-management-section">
+        <h3>Advanced configuration</h3>
+        <p class="runtime-config-help">
+          These controls are for bulk cleanup, migration, and rate-limit changes.
+          Day-to-day user grants and group edits should use the forms above.
+        </p>
+
+        <div class="runtime-number-grid">
+          <label v-for="field in numberFields" :key="field.key" class="runtime-number-field">
+            <span>{{ field.label }}</span>
+            <p class="runtime-config-help">{{ field.help }}</p>
+            <input
+              type="number"
+              min="0"
+              :disabled="!canEditConfig"
+              :value="config[field.key]"
+              @input="(event) => onNumberInput(field.key, event)"
+            />
+          </label>
+        </div>
+
+        <details class="advanced-config-json">
+          <summary>Bulk user grants JSON</summary>
+          <textarea
+            v-model="grantsJsonText"
+            :disabled="!canEditConfig"
+            rows="8"
+          />
+        </details>
+        <details class="advanced-config-json">
+          <summary>Framework groups JSON</summary>
+          <textarea
+            v-model="groupsJsonText"
+            :disabled="!canEditConfig"
+            rows="8"
+          />
+        </details>
+        <details class="advanced-config-json">
+          <summary>Framework group descriptions JSON</summary>
+          <textarea
+            v-model="groupDescriptionsJsonText"
+            :disabled="!canEditConfig"
+            rows="8"
+          />
+        </details>
+        <details class="advanced-config-json">
+          <summary>Wiki auto-grants JSON</summary>
+          <textarea
+            v-model="autoGrantsJsonText"
+            :disabled="!canEditConfig"
+            rows="8"
+          />
+        </details>
       </section>
-    </div>
+    </section>
 
     <div class="runtime-config-save">
       <CdxButton

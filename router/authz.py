@@ -175,6 +175,7 @@ _JSON_CONFIG_KEYS = {
     "ROLLBACK_CONTROL_JSON",
     "ROLE_GRANTS_JSON",
     "CHUCKBOT_GROUPS_JSON",
+    "CHUCKBOT_GROUP_DESCRIPTIONS_JSON",
 }
 
 _LEGACY_JSON_CONFIG_KEYS = {
@@ -338,6 +339,28 @@ def _normalize_groups_config_input(value, key: str) -> dict:
                 raise ValueError(f"Unknown right '{normalized_atom}' for group {group_name}")
             rights.add(normalized_atom)
         normalized[group_name] = sorted(rights)
+    return normalized
+
+
+def _normalize_group_descriptions_input(value, key: str) -> dict:
+    """Validate and canonicalize group-name to description config."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{key} must be valid JSON") from exc
+
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be an object mapping group name to description")
+
+    normalized = {}
+    for raw_group, raw_description in value.items():
+        group_name = _normalize_grant_atom(str(raw_group))
+        if not group_name:
+            continue
+        description = str(raw_description or "").strip()
+        if description:
+            normalized[group_name] = description[:500]
     return normalized
 
 
@@ -759,6 +782,7 @@ def _runtime_authz_defaults() -> dict:
         "CHUCKBOT_GROUPS_JSON": {
             name: sorted(rights) for name, rights in _USER_GRANT_GROUPS.items()
         },
+        "CHUCKBOT_GROUP_DESCRIPTIONS_JSON": {},
     }
 
 
@@ -806,6 +830,8 @@ def _load_runtime_authz_overrides() -> dict:
                     overrides[key] = _normalize_auto_grants_map_input(raw_value, key)
                 elif key == "CHUCKBOT_GROUPS_JSON":
                     overrides[key] = _normalize_groups_config_input(raw_value, key)
+                elif key == "CHUCKBOT_GROUP_DESCRIPTIONS_JSON":
+                    overrides[key] = _normalize_group_descriptions_input(raw_value, key)
                 else:
                     overrides[key] = _normalize_user_grants_map_input(raw_value, key)
             except ValueError:
@@ -952,6 +978,8 @@ def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
                     normalized[key] = _normalize_auto_grants_map_input(value, key)
                 elif key == "CHUCKBOT_GROUPS_JSON":
                     normalized[key] = _normalize_groups_config_input(value, key)
+                elif key == "CHUCKBOT_GROUP_DESCRIPTIONS_JSON":
+                    normalized[key] = _normalize_group_descriptions_input(value, key)
                 else:
                     normalized[key] = _normalize_user_grants_map_input(value, key)
             except ValueError as exc:

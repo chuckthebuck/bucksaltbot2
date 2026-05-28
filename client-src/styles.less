@@ -688,6 +688,58 @@ body {
     margin-bottom: @spacing-125;
 }
 
+.runtime-management-panel {
+    display: grid;
+    gap: @spacing-100;
+}
+
+.runtime-management-header {
+    display: grid;
+    gap: @spacing-75;
+}
+
+.runtime-management-header h3 {
+    margin-bottom: @spacing-25;
+}
+
+.runtime-tablist {
+    display: flex;
+    flex-wrap: wrap;
+    gap: @spacing-50;
+    border-bottom: @border-width-base @border-style-base @chuck-border;
+}
+
+.runtime-tablist button {
+    min-height: 36px;
+    padding: 0 @spacing-75;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    background: transparent;
+    color: @chuck-blue;
+    font: inherit;
+    font-weight: @font-weight-bold;
+    cursor: pointer;
+}
+
+.runtime-tablist button:hover {
+    background: @chuck-ice;
+}
+
+.runtime-tablist button.is-active {
+    border-bottom-color: @chuck-navy;
+    color: @chuck-navy;
+}
+
+.runtime-management-section {
+    display: grid;
+    gap: @spacing-100;
+}
+
+.runtime-management-section h3,
+.runtime-management-section h4 {
+    margin-bottom: 0;
+}
+
 .runtime-user-picker {
     display: grid;
     grid-template-columns: minmax( 280px, 1fr ) auto auto;
@@ -1000,7 +1052,7 @@ body {
 .framework-group-builder,
 .framework-group-select-row {
     display: grid;
-    grid-template-columns: repeat( 3, minmax( 0, 1fr ) ) auto;
+    grid-template-columns: repeat( 3, minmax( 0, 1fr ) );
     gap: @spacing-75;
     align-items: end;
     margin-bottom: @spacing-100;
@@ -1034,6 +1086,30 @@ body {
     cursor: pointer;
     font-weight: @font-weight-bold;
     margin-bottom: @spacing-50;
+}
+
+.runtime-number-grid {
+    display: grid;
+    grid-template-columns: repeat( 2, minmax( 0, 1fr ) );
+    gap: @spacing-75;
+}
+
+.runtime-number-field {
+    display: grid;
+    gap: @spacing-25;
+    padding: @spacing-75;
+    border: @border-width-base @border-style-base @chuck-border;
+    border-radius: @border-radius-base;
+    background: @chuck-ice;
+}
+
+.runtime-number-field span {
+    font-weight: @font-weight-bold;
+    color: @chuck-navy;
+}
+
+.runtime-number-field p {
+    margin: 0;
 }
 
 .grant-advisories {
@@ -1070,6 +1146,7 @@ body {
     .runtime-rights-columns,
     .runtime-user-picker,
     .rights-flow,
+    .runtime-number-grid,
     .auto-role-builder,
     .auto-role-select-row,
     .framework-group-builder,

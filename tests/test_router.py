@@ -3156,3 +3156,21 @@ def test_update_runtime_authz_user_grants_updates_single_user(client):
         "from_diff_dry_run_only",
         "group:operator",
     ]
+
+
+def test_runtime_authz_accepts_framework_group_descriptions():
+    import router
+
+    normalized, errors = router._normalize_runtime_authz_updates(
+        {
+            "CHUCKBOT_GROUP_DESCRIPTIONS_JSON": {
+                "Four Award Operator": "Can review and run Four Award jobs.",
+                "empty": "",
+            }
+        }
+    )
+
+    assert errors == []
+    assert normalized["CHUCKBOT_GROUP_DESCRIPTIONS_JSON"] == {
+        "four_award_operator": "Can review and run Four Award jobs."
+    }
