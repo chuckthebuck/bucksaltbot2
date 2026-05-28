@@ -7,9 +7,9 @@ from typing import Optional
 
 import requests
 
+from . import config
 from .config import (
     DRY_RUN,
-    EDIT_TAG_LINK,
     HTTP_USER_AGENT,
     WIKI_API_URL,
     WIKI_CODE,
@@ -35,6 +35,23 @@ class SaveResult:
     title: str
     summary: str
     saved: bool
+
+
+def format_edit_summary(summary: str) -> str:
+    """Append module identity and approval metadata to a Four Award summary."""
+    base = str(summary or "").strip()
+    suffix = str(getattr(config, "EDIT_SUMMARY_SUFFIX", "") or "").strip()
+    brfa_task = str(getattr(config, "BRFA_TASK", "") or "").strip()
+    parts = [base] if base else []
+
+    if suffix and suffix not in base:
+        parts.append(suffix)
+    if brfa_task:
+        brfa_text = brfa_task if brfa_task.lower().startswith("brfa") else f"BRFA: {brfa_task}"
+        if brfa_text not in parts:
+            parts.append(brfa_text)
+
+    return "; ".join(parts).strip()
 
 
 class WikiClient:
@@ -167,7 +184,7 @@ class WikiClient:
 
     def save_text(self, title: str, text: str, summary: str) -> SaveResult:
         """Save text unless dry-run mode is active."""
-        summary = f"{summary} {EDIT_TAG_LINK}".strip()
+        summary = format_edit_summary(summary)
         if DRY_RUN:
             _record_dry_run_edit(self, title, text, summary)
             return SaveResult(title=title, summary=summary, saved=False)
@@ -180,7 +197,7 @@ class WikiClient:
 
     def publish_text(self, title: str, text: str, summary: str) -> SaveResult:
         """Save text even when the main module is running in dry-run mode."""
-        summary = f"{summary} {EDIT_TAG_LINK}".strip()
+        summary = format_edit_summary(summary)
         page = self.page(title)
         if page.text == text:
             return SaveResult(title=title, summary=summary, saved=False)

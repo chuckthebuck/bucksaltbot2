@@ -25,6 +25,7 @@ export interface CreateJobItem {
   title: string;
   user: string;
   summary: string | null;
+  rollback_through_bots?: boolean;
 }
 
 export interface QueueProps {
@@ -490,6 +491,7 @@ export async function cancelJob(id: number, token?: string): Promise<void> {
 export async function createJob(payload: {
   requested_by: string;
   dry_run: boolean;
+  rollback_through_bots?: boolean;
   items: CreateJobItem[];
   token?: string;
 }): Promise<{ ok: boolean; result: any }> {
@@ -505,6 +507,7 @@ export async function createJob(payload: {
     body: JSON.stringify({
       requested_by: payload.requested_by,
       dry_run: payload.dry_run,
+      rollback_through_bots: !!payload.rollback_through_bots,
       items: payload.items,
     }),
   });

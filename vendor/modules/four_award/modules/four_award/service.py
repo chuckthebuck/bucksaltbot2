@@ -155,6 +155,10 @@ def _apply_runtime_config(ctx: Any | None) -> None:
         util.AWARD_DATE_OVERRIDE = config.AWARD_DATE_OVERRIDE
     if get("dry_run_report_page") is not None:
         config.DRY_RUN_REPORT_PAGE = str(get("dry_run_report_page") or "").strip()
+    config.EDIT_SUMMARY_SUFFIX = str(
+        get("edit_summary_suffix", config.DEFAULT_EDIT_SUMMARY_SUFFIX) or ""
+    ).strip()
+    config.BRFA_TASK = str(get("brfa_task", config.DEFAULT_BRFA_TASK) or "").strip()
     config.PUBLISH_DRY_RUN_REPORT = _config_bool(
         get("publish_dry_run_report", config.PUBLISH_DRY_RUN_REPORT),
         config.PUBLISH_DRY_RUN_REPORT,

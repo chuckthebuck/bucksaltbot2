@@ -1,8 +1,10 @@
+import json
 import os
+import time
 from celery import shared_task
 from pywikibot_env import ensure_pywikibot_env
 from redis_state import set_progress, update_progress
-from toolsdb import get_conn
+from toolsdb import get_conn, get_runtime_config
 import status_updater
 
 
@@ -18,6 +20,18 @@ import pywikibot  # noqa: E402
 # MediaWiki API error codes that mean the rollback is already in the desired
 # state.  The page does not need to change, so these are not real failures.
 _ROLLBACK_NOOP_CODES = frozenset({"alreadyrolled", "onlyauthor"})
+_ROLLBACK_NOT_CURRENT_CODES = frozenset({"alreadyrolled"})
+_ROLLBACK_NOT_CURRENT_PHRASES = (
+    "not the latest",
+    "current revision",
+    "current version",
+    "last contributor",
+)
+_ROLLBACK_EDIT_SUMMARY_TEMPLATE_KEY = "edit_summary_template"
+_ROLLBACK_EDIT_SUMMARY_ENV_KEY = "ROLLBACK_EDIT_SUMMARY_TEMPLATE"
+_ROLLBACK_THROUGH_BOT_CONFIG_KEY = "ROLLBACK_THROUGH_BOT_USERS"
+_ROLLBACK_THROUGH_BOT_CACHE_TTL = 60
+_rollback_through_bot_cache: tuple[set[str] | None, float] = (None, 0.0)
 
 
 def _format_exception(exc: Exception) -> str:
@@ -39,18 +53,84 @@ def _format_exception(exc: Exception) -> str:
     return exc.__class__.__name__
 
 
-def _summary_with_requester(summary: str | None, requested_by: str) -> str:
-    """Append requester attribution to rollback summary when missing."""
-    requester_tag = f"requested-by={requested_by}"
-    base = (summary or "").strip()
+def _looks_like_not_current_rollback(error_text: str) -> bool:
+    normalized = str(error_text or "").casefold()
+    return any(code in normalized for code in _ROLLBACK_NOT_CURRENT_CODES) or any(
+        phrase in normalized for phrase in _ROLLBACK_NOT_CURRENT_PHRASES
+    )
 
-    if not base:
-        return f"Mass rollback via bucksaltbot queue; {requester_tag}"
+
+class _SummaryFields(dict):
+    """Format-map fields that collapse missing optional values to an empty string."""
+
+    def __missing__(self, key: str) -> str:
+        return ""
+
+
+def _configured_rollback_edit_summary_template() -> str | None:
+    """Return a module-configured rollback edit summary template, if present."""
+    env_template = os.getenv(_ROLLBACK_EDIT_SUMMARY_ENV_KEY)
+    if env_template and env_template.strip():
+        return env_template.strip()
+
+    try:
+        from router.module_registry import get_module_config
+
+        value = get_module_config("rollback").get(_ROLLBACK_EDIT_SUMMARY_TEMPLATE_KEY)
+    except Exception:
+        value = None
+
+    value = str(value or "").strip()
+    return value or None
+
+
+def _summary_with_requester(
+    summary: str | None,
+    requested_by: str,
+    *,
+    batch_id: int | str | None = None,
+    job_id: int | str | None = None,
+    title: str | None = None,
+    target_user: str | None = None,
+    action: str = "rollback",
+    revision_id: int | str | None = None,
+) -> str:
+    """Build a rollback edit summary with requester and queue metadata."""
+    requester_tag = f"requested-by={requested_by}"
+    base = (summary or "").strip() or "Mass rollback via bucksaltbot queue"
+
+    template = _configured_rollback_edit_summary_template()
+    if template:
+        fields = _SummaryFields(
+            summary=base,
+            requested_by=requested_by,
+            requester=requested_by,
+            batch_id="" if batch_id is None else str(batch_id),
+            batch="" if batch_id is None else str(batch_id),
+            job_id="" if job_id is None else str(job_id),
+            job="" if job_id is None else str(job_id),
+            title=title or "",
+            page=title or "",
+            target_user=target_user or "",
+            user=target_user or "",
+            action=action,
+            revision_id="" if revision_id is None else str(revision_id),
+        )
+        rendered = template.format_map(fields).strip()
+        return rendered or base
+
+    parts = [base]
 
     if requester_tag in base:
-        return base
+        requester_tag = ""
+    if requester_tag:
+        parts.append(requester_tag)
+    if batch_id not in (None, ""):
+        parts.append(f"batch={batch_id}")
+    if job_id not in (None, ""):
+        parts.append(f"job={job_id}")
 
-    return f"{base}; {requester_tag}"
+    return "; ".join(parts)
 
 
 def _restore_creation_revision(
@@ -59,6 +139,9 @@ def _restore_creation_revision(
     revision_id: int,
     summary: str | None,
     requested_by: str,
+    *,
+    batch_id: int | str | None = None,
+    job_id: int | str | None = None,
 ) -> None:
     """Restore a creator-only page to its initial revision."""
     page = pywikibot.Page(site, title)
@@ -70,9 +153,180 @@ def _restore_creation_revision(
         summary=_summary_with_requester(
             summary or f"Restoring creator-only page to creation revision {revision_id}",
             requested_by,
+            batch_id=batch_id,
+            job_id=job_id,
+            title=title,
+            action="restore_creation",
+            revision_id=revision_id,
         ),
         minor=False,
     )
+
+
+def _revision_user(revision: dict) -> str:
+    return str(revision.get("user") or "").strip()
+
+
+def _parse_configured_bot_users(raw_value: str | None) -> set[str]:
+    if not raw_value:
+        return set()
+
+    value = str(raw_value).strip()
+    if not value:
+        return set()
+
+    candidates: list[str]
+    if value.startswith("["):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = []
+        candidates = [str(item) for item in parsed] if isinstance(parsed, list) else []
+    else:
+        candidates = [part.strip() for part in value.replace("\n", ",").split(",")]
+
+    return {candidate.casefold() for candidate in candidates if candidate.strip()}
+
+
+def _configured_rollback_through_bot_users() -> set[str] | None:
+    """Return configured bot allowlist, or None when no allowlist is configured."""
+    global _rollback_through_bot_cache
+
+    cached_users, expires_at = _rollback_through_bot_cache
+    if time.time() < expires_at:
+        return cached_users
+
+    env_users = _parse_configured_bot_users(os.getenv(_ROLLBACK_THROUGH_BOT_CONFIG_KEY))
+    runtime_users = set()
+    try:
+        rows = get_runtime_config([_ROLLBACK_THROUGH_BOT_CONFIG_KEY])
+        runtime_users = _parse_configured_bot_users(
+            rows.get(_ROLLBACK_THROUGH_BOT_CONFIG_KEY)
+        )
+    except Exception:
+        runtime_users = set()
+
+    configured = env_users | runtime_users
+    result = configured if configured else None
+    _rollback_through_bot_cache = (
+        result,
+        time.time() + _ROLLBACK_THROUGH_BOT_CACHE_TTL,
+    )
+    return result
+
+
+def _revision_is_bot(site: pywikibot.Site, revision: dict) -> bool:
+    user = _revision_user(revision)
+    if not user:
+        return False
+    configured_users = _configured_rollback_through_bot_users()
+    if configured_users is not None:
+        return user.casefold() in configured_users
+    if revision.get("bot") is True:
+        return True
+    try:
+        return bool(status_updater.is_flagged_bot(site, user))
+    except Exception:
+        return False
+
+
+def _fetch_recent_revisions(site: pywikibot.Site, title: str, limit: int = 50) -> list[dict]:
+    request = site.simple_request(
+        action="query",
+        prop="revisions",
+        titles=title,
+        rvlimit=str(limit),
+        rvprop="ids|user|flags",
+        rvdir="older",
+        formatversion="2",
+    )
+    data = request.submit()
+    pages = data.get("query", {}).get("pages", [])
+    if not pages or pages[0].get("missing"):
+        return []
+    revisions = pages[0].get("revisions") or []
+    return [revision for revision in revisions if isinstance(revision, dict)]
+
+
+def _restore_revision_text(
+    site: pywikibot.Site,
+    title: str,
+    revision_id: int,
+    summary: str | None,
+    requested_by: str,
+    *,
+    batch_id: int | str | None = None,
+    job_id: int | str | None = None,
+) -> None:
+    page = pywikibot.Page(site, title)
+    target_text = page.getOldVersion(int(revision_id))
+    if page.get() == target_text:
+        return
+    page.text = target_text
+    page.save(
+        summary=_summary_with_requester(
+            summary or f"Rollback through bot edits to pre-vandal revision {revision_id}",
+            requested_by,
+            batch_id=batch_id,
+            job_id=job_id,
+            title=title,
+            action="rollback_through_bots",
+            revision_id=revision_id,
+        ),
+        minor=False,
+    )
+
+
+def _rollback_through_bot_edits(
+    site: pywikibot.Site,
+    title: str,
+    target_user: str,
+    summary: str | None,
+    requested_by: str,
+    *,
+    batch_id: int | str | None = None,
+    job_id: int | str | None = None,
+) -> bool:
+    """Restore to the revision before the target user's edits under top bot edits."""
+    target_key = target_user.strip().casefold()
+    if not target_key:
+        return False
+
+    revisions = _fetch_recent_revisions(site, title)
+    skipped_bot_edit = False
+    target_parent_id = None
+    found_target = False
+
+    for revision in revisions:
+        user_key = _revision_user(revision).casefold()
+        if not found_target:
+            if user_key == target_key:
+                found_target = True
+                target_parent_id = revision.get("parentid")
+                continue
+            if _revision_is_bot(site, revision):
+                skipped_bot_edit = True
+                continue
+            return False
+
+        if user_key == target_key:
+            target_parent_id = revision.get("parentid")
+            continue
+        break
+
+    if not skipped_bot_edit or not found_target or not target_parent_id:
+        return False
+
+    _restore_revision_text(
+        site,
+        title,
+        int(target_parent_id),
+        summary,
+        requested_by,
+        batch_id=batch_id,
+        job_id=job_id,
+    )
+    return True
 
 
 def _fetch_job_meta(job_id: int):
@@ -197,7 +451,7 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                     cursor.execute(
                         """
                         SELECT id, file_title, target_user, summary,
-                               item_action, restore_revision_id
+                               item_action, restore_revision_id, rollback_through_bots
                         FROM rollback_job_items
                         WHERE job_id=%s AND status='queued'
                         ORDER BY id ASC
@@ -210,7 +464,8 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                         cursor.execute(
                             """
                             SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary,
-                                   i.item_action, i.restore_revision_id
+                                   i.item_action, i.restore_revision_id,
+                                   i.rollback_through_bots
                             FROM rollback_job_items i
                             JOIN rollback_jobs j ON j.id = i.job_id
                             WHERE i.status='queued' AND j.status IN ('queued', 'running')
@@ -222,7 +477,8 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                         cursor.execute(
                             """
                             SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary,
-                                   i.item_action, i.restore_revision_id
+                                   i.item_action, i.restore_revision_id,
+                                   i.rollback_through_bots
                             FROM rollback_job_items i
                             JOIN rollback_jobs j ON j.id = i.job_id
                             WHERE i.status='queued' AND j.status IN ('queued', 'running')
@@ -386,6 +642,7 @@ def process_rollback_job(job_id: int):
                 claimed_job_id = job_id
                 item_action = "rollback"
                 restore_revision_id = None
+                rollback_through_bots = False
             elif len(claimed) == 6:
                 (
                     item_id,
@@ -394,6 +651,18 @@ def process_rollback_job(job_id: int):
                     summary,
                     item_action,
                     restore_revision_id,
+                ) = claimed
+                claimed_job_id = job_id
+                rollback_through_bots = False
+            elif len(claimed) == 7:
+                (
+                    item_id,
+                    file_title,
+                    target_user,
+                    summary,
+                    item_action,
+                    restore_revision_id,
+                    rollback_through_bots,
                 ) = claimed
                 claimed_job_id = job_id
             else:
@@ -405,6 +674,7 @@ def process_rollback_job(job_id: int):
                     summary,
                     item_action,
                     restore_revision_id,
+                    rollback_through_bots,
                 ) = claimed
 
             # Claims can come from sibling jobs in the same batch, so refresh
@@ -445,6 +715,8 @@ def process_rollback_job(job_id: int):
                         int(restore_revision_id),
                         summary,
                         claimed_requested_by,
+                        batch_id=_claimed_batch_id,
+                        job_id=claimed_job_id,
                     )
                 else:
                     token = site.tokens["rollback"]
@@ -454,7 +726,15 @@ def process_rollback_job(job_id: int):
                         title=file_title,
                         user=target_user,
                         token=token,
-                        summary=_summary_with_requester(summary, claimed_requested_by),
+                        summary=_summary_with_requester(
+                            summary,
+                            claimed_requested_by,
+                            batch_id=_claimed_batch_id,
+                            job_id=claimed_job_id,
+                            title=file_title,
+                            target_user=target_user,
+                            action="rollback",
+                        ),
                         markbot=True,
                         bot=True,
                     ).submit()
@@ -468,7 +748,22 @@ def process_rollback_job(job_id: int):
 
             except Exception as exc:  # noqa: BLE001
                 err_str = _format_exception(exc)
-                if any(code in err_str for code in _ROLLBACK_NOOP_CODES):
+                if (
+                    rollback_through_bots
+                    and _looks_like_not_current_rollback(err_str)
+                    and _rollback_through_bot_edits(
+                        site,
+                        file_title,
+                        target_user,
+                        summary,
+                        claimed_requested_by,
+                        batch_id=_claimed_batch_id,
+                        job_id=claimed_job_id,
+                    )
+                ):
+                    _update_item(item_id, "completed", "Rolled back through bot edits")
+                    update_progress(claimed_job_id, "completed")
+                elif any(code in err_str for code in _ROLLBACK_NOOP_CODES):
                     # Page is already in the desired state – not a real failure.
                     _update_item(item_id, "completed", err_str)
                     update_progress(claimed_job_id, "completed")

@@ -23,6 +23,7 @@ const statusToken = ref("");
 const namespaceId = ref("");
 const namespaces = ref<Array<{ id: string; name: string }>>([]);
 const dryRun = ref(false);
+const rollbackThroughBots = ref(false);
 const createResult = ref("");
 const pollingTimer = ref<number | null>(null);
 const terminalStatuses = new Set(["completed", "failed", "canceled"]);
@@ -148,6 +149,7 @@ async function submitJob() {
     statusToken: statusToken.value,
     namespace: namespaceId.value,
     dryRun: dryRun.value,
+    rollbackThroughBots: rollbackThroughBots.value,
   });
 
   const payload = items.value
@@ -162,6 +164,7 @@ async function submitJob() {
   const { ok, result } = await createJob({
     requested_by: requestedBy.value,
     dry_run: dryRun.value,
+    rollback_through_bots: rollbackThroughBots.value,
     items: payload,
     token: statusToken.value || undefined,
   });
@@ -306,6 +309,9 @@ onBeforeUnmount(() => {
         </select>
 
         <CdxCheckbox v-model="dryRun">Dry run</CdxCheckbox>
+        <CdxCheckbox v-model="rollbackThroughBots">
+          Roll back through top bot edits
+        </CdxCheckbox>
       </div>
     </div>
 

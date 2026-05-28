@@ -965,6 +965,13 @@ def rollback_from_diff_api():
         if request.args.get("dry_run") is not None
         else payload.get("dry_run", request.form.get("dry_run"))
     )
+    rollback_through_bots_raw = (
+        request.args.get("rollback_through_bots")
+        if request.args.get("rollback_through_bots") is not None
+        else payload.get(
+            "rollback_through_bots", request.form.get("rollback_through_bots")
+        )
+    )
     limit_raw = (
         request.args.get("limit")
         if request.args.get("limit") is not None
@@ -989,6 +996,7 @@ def rollback_from_diff_api():
             return jsonify({"detail": "limit must be <= 10000"}), 400
 
     dry_run = _parse_bool(dry_run_raw, default=False)
+    rollback_through_bots = _parse_bool(rollback_through_bots_raw, default=False)
     if _local_safe_mode_enabled():
         dry_run = True
 
@@ -1061,6 +1069,7 @@ def rollback_from_diff_api():
                 "requested_by": username,
                 "dry_run": dry_run,
                 "limit": limit,
+                "rollback_through_bots": rollback_through_bots,
                 "requested_endpoint": _ENDPOINT_FROM_DIFF,
                 "approved_endpoint": _ENDPOINT_FROM_DIFF if autoapproved else None,
                 "approved_by": username if autoapproved else None,
@@ -1090,6 +1099,7 @@ def rollback_from_diff_api():
             "diff": diff,
             "dry_run": dry_run,
             "limit": limit,
+            "rollback_through_bots": rollback_through_bots,
             "request_type": _REQUEST_TYPE_DIFF,
             "requested_endpoint": _ENDPOINT_FROM_DIFF,
             "approved_endpoint": _ENDPOINT_FROM_DIFF if autoapproved else None,
@@ -1148,6 +1158,13 @@ def rollback_from_account_api():
         if request.args.get("dry_run") is not None
         else payload.get("dry_run", request.form.get("dry_run"))
     )
+    rollback_through_bots_raw = (
+        request.args.get("rollback_through_bots")
+        if request.args.get("rollback_through_bots") is not None
+        else payload.get(
+            "rollback_through_bots", request.form.get("rollback_through_bots")
+        )
+    )
     limit_raw = (
         request.args.get("limit")
         if request.args.get("limit") is not None
@@ -1162,6 +1179,7 @@ def rollback_from_account_api():
         return jsonify({"detail": "target_user is too long"}), 400
 
     dry_run = _parse_bool(dry_run_raw, default=False)
+    rollback_through_bots = _parse_bool(rollback_through_bots_raw, default=False)
     if _local_safe_mode_enabled():
         dry_run = True
 
@@ -1249,6 +1267,7 @@ def rollback_from_account_api():
                 "requested_by": username,
                 "dry_run": dry_run,
                 "limit": limit,
+                "rollback_through_bots": rollback_through_bots,
                 "requested_endpoint": _ENDPOINT_FROM_ACCOUNT,
                 "approved_endpoint": _ENDPOINT_FROM_ACCOUNT if autoapproved else None,
                 "approved_by": username if autoapproved else None,
@@ -1281,6 +1300,7 @@ def rollback_from_account_api():
             "resolved_user": target_user,
             "dry_run": dry_run,
             "limit": limit,
+            "rollback_through_bots": rollback_through_bots,
             "request_type": _REQUEST_TYPE_DIFF,
             "requested_endpoint": _ENDPOINT_FROM_ACCOUNT,
             "approved_endpoint": _ENDPOINT_FROM_ACCOUNT if autoapproved else None,
@@ -2063,6 +2083,9 @@ def create_rollback_job():
     requested_by = payload.get("requested_by") or actor
     items = payload.get("items") or payload.get("files") or []
     dry_run = _parse_bool(payload.get("dry_run", False), default=False)
+    rollback_through_bots = _parse_bool(
+        payload.get("rollback_through_bots", False), default=False
+    )
     if _local_safe_mode_enabled():
         dry_run = True
     request_type = _normalize_request_type(payload.get("request_type"))
@@ -2154,13 +2177,32 @@ def create_rollback_job():
                     if not title or not user:
                         continue
 
+                    item_rollback_through_bots = _parse_bool(
+                        item.get("rollback_through_bots", rollback_through_bots),
+                        default=rollback_through_bots,
+                    )
+
                     cursor.execute(
                         """
                         INSERT INTO rollback_job_items
-                        (job_id, file_title, target_user, summary, status)
-                        VALUES (%s, %s, %s, %s, %s)
+                        (
+                            job_id,
+                            file_title,
+                            target_user,
+                            summary,
+                            rollback_through_bots,
+                            status
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         """,
-                        (job_id, title, user, summary, item_initial_status),
+                        (
+                            job_id,
+                            title,
+                            user,
+                            summary,
+                            1 if item_rollback_through_bots else 0,
+                            item_initial_status,
+                        ),
                     )
 
         conn.commit()
@@ -2181,6 +2223,7 @@ def create_rollback_job():
             "chunks": len(job_ids),
             "request_type": request_type,
             "requested_endpoint": requested_endpoint,
+            "rollback_through_bots": rollback_through_bots,
             "approval_required": approval_required,
         }
     )
@@ -3691,10 +3734,6 @@ def _four_award_unique_hit_runs(runs: list[dict]) -> list[dict]:
 
     for run in sorted(runs, key=lambda item: int(item.get("id") or 0)):
         if _four_award_run_is_duplicate_noop(run):
-            continue
-
-        if not _four_award_run_is_historical_test(run):
-            included_ids.add(int(run.get("id") or 0))
             continue
 
         claim_keys = _four_award_review_claim_keys(run)

@@ -215,7 +215,7 @@ def test_process_rollback_job_live_run_obtains_mw_rollback_token():
         title="File:A.jpg",
         user="Vandal",
         token="TOKEN+\\",
-        summary="Custom summary; requested-by=alice",
+        summary="Custom summary; requested-by=alice; batch=12345; job=1",
         markbot=True,
         bot=True,
     )
@@ -287,6 +287,43 @@ def test_process_rollback_job_live_run_uses_default_summary_when_none():
 
     called_summary = mock_site.simple_request.call_args.kwargs["summary"]
     assert "alice" in called_summary
+    assert "batch=12345" in called_summary
+    assert "job=1" in called_summary
+
+
+def test_process_rollback_job_uses_configured_edit_summary_template():
+    import rollback_queue
+
+    job = (1, "alice", "queued", 0, 12345)
+    items = [(10, "File:A.jpg", "Vandal", "Custom summary")]
+
+    mock_site = MagicMock()
+    mock_site.tokens = {"rollback": "TOKEN+\\"}
+    mock_site.simple_request.return_value = MagicMock()
+
+    with (
+        patch("rollback_queue._fetch_job_meta", return_value=job),
+        patch("rollback_queue._count_job_items", return_value=len(items)),
+        patch("rollback_queue.claim_next_item", side_effect=[items[0], None]),
+        patch(
+            "rollback_queue._derive_job_status_from_items",
+            return_value=("completed", {"completed": 1}),
+        ),
+        patch("rollback_queue._update_job_status"),
+        patch("rollback_queue._update_item"),
+        patch("rollback_queue._bot_site", return_value=mock_site),
+        patch("rollback_queue._count_batch_jobs", return_value=1),
+        patch(
+            "rollback_queue._configured_rollback_edit_summary_template",
+            return_value="{summary} (requested by {requested_by}; batch {batch_id}; job {job_id})",
+        ),
+    ):
+        rollback_queue.process_rollback_job.run(1)
+
+    assert (
+        mock_site.simple_request.call_args.kwargs["summary"]
+        == "Custom summary (requested by alice; batch 12345; job 1)"
+    )
 
 
 def test_process_rollback_job_live_run_marks_item_completed_on_success():
@@ -353,6 +390,145 @@ def test_process_rollback_job_live_run_marks_item_failed_on_api_error():
     # Final job status should be "failed" since one item failed
     final_status = mock_update_job.call_args_list[-1].args[1]
     assert final_status == "failed"
+
+
+def test_rollback_through_bot_edits_restores_pre_vandal_parent_revision():
+    import rollback_queue
+
+    mock_site = MagicMock()
+    revisions = [
+        {"revid": 30, "parentid": 29, "user": "CleanupBot", "bot": True},
+        {"revid": 29, "parentid": 28, "user": "Vandal"},
+        {"revid": 28, "parentid": 27, "user": "HelpfulUser"},
+    ]
+
+    with (
+        patch("rollback_queue._fetch_recent_revisions", return_value=revisions),
+        patch("rollback_queue._restore_revision_text") as mock_restore,
+    ):
+        restored = rollback_queue._rollback_through_bot_edits(
+            mock_site,
+            "File:A.jpg",
+            "Vandal",
+            "cleanup",
+            "alice",
+        )
+
+    assert restored is True
+    mock_restore.assert_called_once_with(
+        mock_site,
+        "File:A.jpg",
+        28,
+        "cleanup",
+        "alice",
+        batch_id=None,
+        job_id=None,
+    )
+
+
+def test_rollback_through_bot_edits_refuses_when_nonbot_is_above_target():
+    import rollback_queue
+
+    mock_site = MagicMock()
+    revisions = [
+        {"revid": 30, "parentid": 29, "user": "HelpfulUser"},
+        {"revid": 29, "parentid": 28, "user": "Vandal"},
+    ]
+
+    with (
+        patch("rollback_queue._fetch_recent_revisions", return_value=revisions),
+        patch("rollback_queue._restore_revision_text") as mock_restore,
+    ):
+        restored = rollback_queue._rollback_through_bot_edits(
+            mock_site,
+            "File:A.jpg",
+            "Vandal",
+            "cleanup",
+            "alice",
+        )
+
+    assert restored is False
+    mock_restore.assert_not_called()
+
+
+def test_revision_is_bot_uses_configured_allowlist_when_present(monkeypatch):
+    import rollback_queue
+
+    monkeypatch.delenv("ROLLBACK_THROUGH_BOT_USERS", raising=False)
+    rollback_queue._rollback_through_bot_cache = (None, 0.0)
+
+    with (
+        patch(
+            "rollback_queue.get_runtime_config",
+            return_value={"ROLLBACK_THROUGH_BOT_USERS": "CleanupBot"},
+        ),
+        patch("rollback_queue.status_updater.is_flagged_bot") as flagged_bot,
+    ):
+        assert rollback_queue._revision_is_bot(
+            MagicMock(), {"user": "CleanupBot", "bot": False}
+        )
+        assert not rollback_queue._revision_is_bot(
+            MagicMock(), {"user": "OtherBot", "bot": True}
+        )
+
+    flagged_bot.assert_not_called()
+
+
+def test_revision_is_bot_uses_flagged_bot_when_no_allowlist(monkeypatch):
+    import rollback_queue
+
+    monkeypatch.delenv("ROLLBACK_THROUGH_BOT_USERS", raising=False)
+    rollback_queue._rollback_through_bot_cache = (None, 0.0)
+
+    with (
+        patch("rollback_queue.get_runtime_config", return_value={}),
+        patch("rollback_queue.status_updater.is_flagged_bot", return_value=True),
+    ):
+        assert rollback_queue._revision_is_bot(
+            MagicMock(), {"user": "SomeBot", "bot": False}
+        )
+
+
+def test_process_rollback_job_uses_bot_edit_fallback_on_not_current_error():
+    import rollback_queue
+
+    job = (1, "alice", "queued", 0, 12345)
+    items = [(10, "File:A.jpg", "Vandal", None, "rollback", None, 1)]
+
+    mock_site = MagicMock()
+    mock_site.tokens = {"rollback": "TOKEN+\\"}
+    mock_site.simple_request.return_value.submit.side_effect = RuntimeError(
+        "alreadyrolled: The edit is no longer the current version."
+    )
+
+    with (
+        patch("rollback_queue._fetch_job_meta", return_value=job),
+        patch("rollback_queue._count_job_items", return_value=len(items)),
+        patch("rollback_queue.claim_next_item", side_effect=[items[0], None]),
+        patch(
+            "rollback_queue._derive_job_status_from_items",
+            return_value=("completed", {"completed": 1}),
+        ),
+        patch("rollback_queue._update_job_status"),
+        patch("rollback_queue._update_item") as mock_update_item,
+        patch("rollback_queue._bot_site", return_value=mock_site),
+        patch("rollback_queue._count_batch_jobs", return_value=1),
+        patch("rollback_queue._rollback_through_bot_edits", return_value=True) as fallback,
+    ):
+        rollback_queue.process_rollback_job.run(1)
+
+    fallback.assert_called_once_with(
+        mock_site,
+        "File:A.jpg",
+        "Vandal",
+        None,
+        "alice",
+        batch_id=12345,
+        job_id=1,
+    )
+    assert mock_update_item.call_args_list[-1] == call(
+        10, "completed", "Rolled back through bot edits"
+    )
 
 
 def test_process_rollback_job_live_run_records_nonempty_error_when_exc_str_blank():

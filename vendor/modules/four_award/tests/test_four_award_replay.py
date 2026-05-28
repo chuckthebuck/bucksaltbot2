@@ -264,6 +264,27 @@ def test_placeholder_user_is_not_treated_as_real_user():
     ]
 
 
+def test_edit_summary_formatter_includes_configured_brfa_task(monkeypatch):
+    from four_award import config, wiki
+
+    monkeypatch.setattr(
+        config,
+        "EDIT_SUMMARY_SUFFIX",
+        "[[User:Example/FourAwardHelper|FourAwardHelper]]",
+    )
+    monkeypatch.setattr(
+        config,
+        "BRFA_TASK",
+        "Wikipedia:Bots/Requests for approval/ExampleBot",
+    )
+
+    assert wiki.format_edit_summary("Update Four Award records") == (
+        "Update Four Award records; "
+        "[[User:Example/FourAwardHelper|FourAwardHelper]]; "
+        "BRFA: Wikipedia:Bots/Requests for approval/ExampleBot"
+    )
+
+
 def test_one_line_article_history_params_are_split_cleanly():
     case = _successful_review_case()
     case["settings"] = {"allow_automated_approval": True}

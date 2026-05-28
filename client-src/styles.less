@@ -100,7 +100,7 @@ a {
 }
 
 .brand-text {
-    max-width: 230px;
+    max-width: min( 420px, 34vw );
     overflow: hidden;
     text-overflow: ellipsis;
 }
@@ -480,7 +480,7 @@ body {
     }
 
     .brand-text {
-        max-width: 170px;
+        max-width: min( 280px, 70vw );
     }
 
     .module-estop-header {
@@ -696,6 +696,33 @@ body {
     margin-bottom: @spacing-100;
 }
 
+.rights-flow {
+    display: grid;
+    grid-template-columns: repeat( 3, minmax( 0, 1fr ) );
+    gap: @spacing-75;
+    margin: 0 0 @spacing-100;
+    padding: 0;
+    list-style: none;
+}
+
+.rights-flow li {
+    display: grid;
+    gap: @spacing-25;
+    padding: @spacing-75;
+    border: @border-base;
+    border-radius: @border-radius-base;
+    background: @chuck-ice;
+}
+
+.rights-flow strong {
+    color: @chuck-navy;
+}
+
+.rights-flow span {
+    color: @color-subtle;
+    font-size: @font-size-small;
+}
+
 .runtime-rights-columns {
     display: grid;
     grid-template-columns: repeat( 2, minmax( 0, 1fr ) );
@@ -769,6 +796,33 @@ body {
 
 .module-rights-list code {
     max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.atom-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: @spacing-25 @spacing-50;
+}
+
+.atom-chip {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: @spacing-25 @spacing-50;
+    max-width: 100%;
+    padding: @spacing-25 @spacing-50;
+    border: @border-width-base @border-style-base @chuck-border;
+    border-radius: @border-radius-base;
+    background: @color-inverted;
+    color: @color-base;
+}
+
+.atom-chip code {
+    max-width: 100%;
+    color: @color-subtle;
     white-space: normal;
     overflow-wrap: anywhere;
     word-break: break-word;
@@ -891,6 +945,46 @@ body {
     margin-top: @spacing-25;
 }
 
+.rights-summary-card {
+    margin-top: @spacing-100;
+    padding: @spacing-100;
+    border: @border-width-base @border-style-base @chuck-border;
+    border-radius: @border-radius-base;
+    background: @chuck-ice;
+}
+
+.rights-summary-card h4 {
+    margin-top: 0;
+}
+
+.rights-summary-card dl {
+    display: grid;
+    grid-template-columns: max-content minmax( 0, 1fr );
+    gap: @spacing-50 @spacing-75;
+    margin: 0;
+    font-size: @font-size-small;
+}
+
+.rights-summary-card dt {
+    font-weight: @font-weight-bold;
+    color: @chuck-navy;
+}
+
+.rights-summary-card dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.rights-section {
+    margin-top: @spacing-75;
+}
+
+.rights-section h5 {
+    margin: 0 0 @spacing-50;
+    color: @chuck-navy;
+}
+
 .runtime-checkbox-row--disabled {
     color: @color-subtle;
 }
@@ -975,6 +1069,7 @@ body {
 
     .runtime-rights-columns,
     .runtime-user-picker,
+    .rights-flow,
     .auto-role-builder,
     .auto-role-select-row,
     .framework-group-builder,

@@ -77,30 +77,30 @@ interface GrantAdvisory {
 }
 
 const userGrantGroupFields: Array<{ key: GrantGroupKey; label: string; help: string }> = [
-  { key: "basic", label: "basic", help: "Can submit and manage their own rollback queue jobs." },
-  { key: "read_only", label: "read_only", help: "Can only view their own jobs." },
-  { key: "tester", label: "tester", help: "Can use rollback tools with tester rate limits and no cross-user moderation." },
-  { key: "viewer", label: "viewer", help: "Can view all jobs." },
+  { key: "basic", label: "Basic submitter", help: "Can submit and manage their own rollback queue jobs." },
+  { key: "read_only", label: "Read only", help: "Can only view their own jobs." },
+  { key: "tester", label: "Tester", help: "Can use rollback tools with tester rate limits and no cross-user moderation." },
+  { key: "viewer", label: "Job viewer", help: "Can view all jobs." },
   {
     key: "rollbacker",
-    label: "rollbacker",
+    label: "Rollback requester",
     help: "Can submit rollback requests for diff and account endpoints.",
   },
   {
     key: "rollbacker_dry_run",
-    label: "rollbacker_dry_run",
+    label: "Dry-run rollback requester",
     help: "Rollbacker rights with dry-run-only enforcement.",
   },
-  { key: "batch_runner", label: "batch_runner", help: "Can submit batch rollback requests." },
+  { key: "batch_runner", label: "Batch requester", help: "Can submit batch rollback requests." },
   {
     key: "jobs_moderator",
-    label: "jobs_moderator",
+    label: "Job moderator",
     help: "Can approve/review jobs and perform moderation actions.",
   },
-  { key: "config_editor", label: "config_editor", help: "Can edit runtime access configuration." },
-  { key: "rights_manager", label: "rights_manager", help: "Can manage framework groups for users." },
-  { key: "module_operator", label: "module_operator", help: "Can manage modules and module jobs." },
-  { key: "admin", label: "admin", help: "Broad rollback, jobs, and config rights." },
+  { key: "config_editor", label: "Config editor", help: "Can edit runtime access configuration." },
+  { key: "rights_manager", label: "Rights manager", help: "Can manage framework groups for users." },
+  { key: "module_operator", label: "Module operator", help: "Can manage modules and module jobs." },
+  { key: "admin", label: "Administrator", help: "Broad rollback, jobs, and config rights." },
 ];
 
 const builtInFrameworkGroupRights: Record<GrantGroupKey, GrantRightKey[]> = {
@@ -142,21 +142,21 @@ const userGrantRightSections: Array<{
   {
     title: "Rollback rights",
     fields: [
-      { key: "rollback_diff", label: "rollback_diff", help: "Use rollback-from-diff." },
+      { key: "rollback_diff", label: "Rollback from diff", help: "Use rollback-from-diff." },
       {
         key: "rollback_account",
-        label: "rollback_account",
+        label: "Rollback by account",
         help: "Use rollback-from-account.",
       },
-      { key: "rollback_batch", label: "rollback_batch", help: "Submit batch rollback requests." },
+      { key: "rollback_batch", label: "Batch rollback", help: "Submit batch rollback requests." },
       {
         key: "rollback_diff_dry_run_only",
-        label: "rollback_diff_dry_run_only",
-        help: "Enforce dry_run=true for diff/account rollback requests.",
+        label: "Dry-run only",
+        help: "Force diff/account rollback requests to preview mode.",
       },
       {
         key: "estop_rollback",
-        label: "estop_rollback",
+        label: "Emergency-stop rollback",
         help: "Emergency-stop the bundled rollback module.",
       },
     ],
@@ -164,31 +164,31 @@ const userGrantRightSections: Array<{
   {
     title: "Jobs rights",
     fields: [
-      { key: "approve_jobs", label: "approve_jobs", help: "Approve or reject pending rollback requests." },
+      { key: "approve_jobs", label: "Approve jobs", help: "Approve or reject pending rollback requests." },
       {
         key: "autoapprove_jobs",
-        label: "autoapprove_jobs",
+        label: "Auto-approve eligible jobs",
         help: "Allow test-mode requests to auto-approve when enabled.",
       },
-      { key: "force_dry_run", label: "force_dry_run", help: "Force pending requests to dry-run mode." },
-      { key: "cancel_any", label: "cancel_any", help: "Cancel regular users' jobs." },
-      { key: "retry_any", label: "retry_any", help: "Retry jobs across users." },
+      { key: "force_dry_run", label: "Force dry run", help: "Force pending requests to preview mode." },
+      { key: "cancel_any", label: "Cancel others' jobs", help: "Cancel regular users' jobs." },
+      { key: "retry_any", label: "Retry others' jobs", help: "Retry jobs across users." },
     ],
   },
   {
     title: "Administration rights",
     fields: [
-      { key: "view_all", label: "view_all", help: "Read every user's jobs." },
-      { key: "write", label: "write", help: "Submit standard rollback queue jobs." },
-      { key: "edit_config", label: "edit_config", help: "Edit runtime authz config values." },
+      { key: "view_all", label: "View all jobs", help: "Read every user's jobs." },
+      { key: "write", label: "Submit rollback jobs", help: "Submit standard rollback queue jobs." },
+      { key: "edit_config", label: "Edit config", help: "Edit runtime authz config values." },
       {
         key: "manage_user_grants",
-        label: "manage_user_grants",
-        help: "Manage user-centric grant atoms and groups.",
+        label: "Manage user rights",
+        help: "Manage user-specific rights and framework groups.",
       },
-      { key: "manage_modules", label: "manage_modules", help: "Enable, disable, and emergency-stop modules." },
-      { key: "run_module_jobs", label: "run_module_jobs", help: "Run or restart module jobs." },
-      { key: "edit_module_config", label: "edit_module_config", help: "Edit non-secret module configuration." },
+      { key: "manage_modules", label: "Manage modules", help: "Enable, disable, and emergency-stop modules." },
+      { key: "run_module_jobs", label: "Run module jobs", help: "Run or restart module jobs." },
+      { key: "edit_module_config", label: "Edit module config", help: "Edit non-secret module configuration." },
     ],
   },
 ];
@@ -196,17 +196,17 @@ const userGrantRightSections: Array<{
 const userGrantRightFields = userGrantRightSections.flatMap((section) => section.fields);
 
 const implicitFlagFields: Array<{ key: ImplicitFlagKey; label: string }> = [
-  { key: "authenticated", label: "authenticated" },
-  { key: "commons_admin", label: "commons admin (sysop)" },
-  { key: "commons_rollbacker", label: "commons rollbacker" },
+  { key: "authenticated", label: "Logged in" },
+  { key: "commons_admin", label: "Commons administrator" },
+  { key: "commons_rollbacker", label: "Commons rollbacker" },
 ];
 
 const baseAutoGrantRoleFields: Array<{ key: AutoGrantRoleKey; label: string; help: string }> = [
-  { key: "authenticated", label: "authenticated", help: "Any logged-in user." },
-  { key: "commons_admin", label: "commons admin", help: "Users in Commons sysop group." },
+  { key: "authenticated", label: "Any logged-in user", help: "Any logged-in user." },
+  { key: "commons_admin", label: "Commons administrators", help: "Users in Commons sysop group." },
   {
     key: "commons_rollbacker",
-    label: "commons rollbacker",
+    label: "Commons rollbackers",
     help: "Users in Commons rollbacker group.",
   },
 ];
@@ -223,6 +223,63 @@ const numberFields: Array<{ key: NumberConfigKey; label: string; help: string }>
     help: "0 disables tester rate limiting.",
   },
 ];
+
+const groupLabelByKey = new Map(userGrantGroupFields.map((field) => [field.key, field.label]));
+const rightLabelByKey = new Map(userGrantRightFields.map((field) => [field.key, field.label]));
+
+function titleCaseAtom(value: string): string {
+  return value
+    .replace(/^module:/, "")
+    .replace(/[_:-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function friendlyModuleLabel(moduleName: string): string {
+  if (moduleName === "four_award") return "Four Award";
+  return titleCaseAtom(moduleName);
+}
+
+function friendlyGroupLabel(group: string): string {
+  return groupLabelByKey.get(group as GrantGroupKey) || titleCaseAtom(group);
+}
+
+function friendlyRightLabel(right: string): string {
+  return rightLabelByKey.get(right as GrantRightKey) || titleCaseAtom(right);
+}
+
+function friendlyRoleLabel(role: string): string {
+  if (role === "authenticated") return "Any logged-in user";
+  if (role === "commons_admin") return "Commons administrators";
+  if (role === "commons_rollbacker") return "Commons rollbackers";
+  if (role.startsWith("project:")) {
+    const [, project, group] = role.split(":");
+    return `${titleCaseAtom(group || "group")} on ${project || "project"}`;
+  }
+  if (role.startsWith("global:")) {
+    return `Global ${titleCaseAtom(role.slice("global:".length))}`;
+  }
+  return titleCaseAtom(role);
+}
+
+function friendlyModuleRightLabel(atom: string): string {
+  const parts = atom.split(":");
+  if (parts.length === 3 && parts[0] === "module") {
+    return `${friendlyModuleLabel(parts[1])}: ${friendlyRightLabel(parts[2])}`;
+  }
+  return titleCaseAtom(atom);
+}
+
+function friendlyAtomLabel(atom: string): string {
+  if (atom.startsWith("group:")) {
+    return `Group: ${friendlyGroupLabel(atom.slice("group:".length))}`;
+  }
+  if (atom.startsWith("module:")) {
+    return friendlyModuleRightLabel(atom);
+  }
+  return friendlyRightLabel(atom);
+}
 
 function parseInitialProps(): ConfigInitialProps {
   const el = document.getElementById("runtime-config-props");
@@ -365,7 +422,7 @@ const autoGrantRoleFields = computed<Array<{ key: AutoGrantRoleKey; label: strin
     if (base) return base;
     return {
       key: role,
-      label: role,
+      label: friendlyRoleLabel(role),
       help: autoGrantRoleHelp(role),
     };
   });
@@ -410,7 +467,7 @@ const frameworkGroupFields = computed<Array<{ key: string; label: string; help: 
     const base = baseByKey.get(group as GrantGroupKey);
     return {
       key: group,
-      label: group,
+      label: base?.label || friendlyGroupLabel(group),
       help: base?.help || "Custom framework group.",
     };
   });
@@ -532,8 +589,8 @@ const autoGrantModuleRightRows = computed(() => {
     for (const right of rights) {
       rows.push({
         key: `module:${moduleName}:${right}`,
-        label: `module:${moduleName}:${right}`,
-        help: `Grant ${right} for ${moduleName}.`,
+        label: friendlyModuleRightLabel(`module:${moduleName}:${right}`),
+        help: `Grant ${friendlyRightLabel(right)} for ${friendlyModuleLabel(moduleName)}.`,
         moduleName,
       });
     }
@@ -644,7 +701,7 @@ function collectGrantAdvisories(rights: Set<GrantRightKey>): GrantAdvisory[] {
       key: "approve-without-view",
       title: "Approve without view-all",
       detail:
-        "Approvers normally need broad request visibility. Without view_all, review screens may be incomplete or confusing.",
+        "Approvers normally need broad request visibility. Without View all jobs, review screens may be incomplete or confusing.",
     });
   }
 
@@ -688,6 +745,41 @@ const selectedAutoGrantAdvisories = computed(() => {
 const selectedFrameworkGroupAdvisories = computed(() =>
   collectGrantAdvisories(checkedRights(frameworkGroupRightChecks.value))
 );
+
+const selectedUserGroups = computed(() =>
+  groupRows.value
+    .filter((field) => userGroupChecks.value[field.key])
+    .map((field) => field.key)
+    .sort()
+);
+
+const selectedUserDirectRights = computed(() =>
+  userGrantRightFields
+    .filter((field) => userRightChecks.value[field.key])
+    .map((field) => field.key)
+    .sort()
+);
+
+const selectedUserEffectiveRights = computed(() => {
+  const rights = checkedRights(userRightChecks.value);
+  for (const right of expandCheckedGroups(userGroupChecks.value)) {
+    rights.add(right);
+  }
+  return [...rights].sort();
+});
+
+const selectedUserGrantAtomsPreview = computed(() => [
+  ...selectedUserGroups.value.map((group) => `group:${group}`),
+  ...selectedUserDirectRights.value,
+]);
+
+function summarizeGroups(values: string[], emptyText: string): string {
+  return values.length ? values.map(friendlyGroupLabel).join(", ") : emptyText;
+}
+
+function summarizeRights(values: string[], emptyText: string): string {
+  return values.length ? values.map(friendlyRightLabel).join(", ") : emptyText;
+}
 
 function clearAutoGrantChecks(): void {
   autoGrantGroupChecks.value = Object.fromEntries(
@@ -821,7 +913,7 @@ function addAutoGrantRole(): void {
   newAutoGrantGroup.value = "";
   loadSelectedAutoGrantRoleChecks();
   errorMessage.value = "";
-  successMessage.value = `Added auto-grant role ${role}.`;
+  successMessage.value = `Added auto-grant role ${friendlyRoleLabel(role)}.`;
 }
 
 function removeSelectedAutoGrantRole(): void {
@@ -919,7 +1011,7 @@ function addFrameworkGroup(): void {
   newFrameworkGroup.value = "";
   loadSelectedFrameworkGroupChecks();
   errorMessage.value = "";
-  successMessage.value = `Added framework group ${group}.`;
+  successMessage.value = `Added framework group ${friendlyGroupLabel(group)}.`;
 }
 
 function removeSelectedFrameworkGroup(): void {
@@ -1203,7 +1295,7 @@ onMounted(() => {
       type="warning"
       class="top-message"
     >
-      You can view grants, but need manage_user_grants to edit user-centric grants.
+      You can view grants, but need Manage user rights to edit user-specific grants.
     </CdxMessage>
 
     <CdxMessage v-if="errorMessage" type="error" class="top-message">
@@ -1219,9 +1311,15 @@ onMounted(() => {
     <section v-if="!loading" class="runtime-config-card runtime-rights-editor">
       <h3>User rights editor</h3>
       <p class="runtime-config-help">
-        Edit rights in a Special:ChangeUserRights style flow: pick a user, review implicit groups,
-        toggle grant groups/rights, and save.
+        Start here for normal access changes. Load a user, pick framework groups,
+        review the effective rights, then save. Use direct rights only when no
+        group matches the job.
       </p>
+      <ol class="rights-flow">
+        <li><strong>Load</strong><span>Find the Wikimedia account and refresh live wiki groups.</span></li>
+        <li><strong>Grant</strong><span>Prefer framework groups; they bundle common permissions.</span></li>
+        <li><strong>Review</strong><span>Check the effective rights summary before saving.</span></li>
+      </ol>
 
       <div class="runtime-user-picker">
         <CdxField>
@@ -1252,7 +1350,13 @@ onMounted(() => {
 
       <div v-if="userGrantLoaded" class="runtime-rights-columns">
         <div>
-          <h4>Project groups (live)</h4>
+          <h4>{{ selectedGrantUser }}</h4>
+          <p class="runtime-config-help">
+            Live wiki groups are read-only here. They may trigger auto grants, but
+            they are not changed by saving Chuckbot framework rights.
+          </p>
+
+          <h4>Live wiki groups</h4>
           <dl class="project-groups-list">
             <template v-for="(groups, project) in projectGroups" :key="project">
               <dt>{{ project }}</dt>
@@ -1267,23 +1371,74 @@ onMounted(() => {
             {{ globalGroups.length ? globalGroups.join(", ") : "No global groups found." }}
           </p>
 
-          <h4>Automatic eligibility</h4>
+          <h4>Automatic grant eligibility</h4>
           <dl class="implicit-status-list">
             <template v-for="flag in implicitFlagStatusRows" :key="flag.key">
               <dt>{{ flag.label }}</dt>
               <dd>{{ flag.enabled ? "Yes" : "No" }}</dd>
             </template>
           </dl>
+
+          <section class="rights-summary-card" aria-label="Selected user rights summary">
+            <h4>What will be saved</h4>
+            <dl>
+              <dt>Framework groups</dt>
+              <dd>{{ summarizeGroups(selectedUserGroups, "No explicit groups selected.") }}</dd>
+              <dt>Direct rights</dt>
+              <dd>{{ summarizeRights(selectedUserDirectRights, "No direct rights selected.") }}</dd>
+              <dt>Effective rights</dt>
+              <dd>{{ summarizeRights(selectedUserEffectiveRights, "No framework rights selected.") }}</dd>
+              <dt>Saved permissions</dt>
+              <dd>
+                <span v-if="selectedUserGrantAtomsPreview.length" class="atom-chip-list">
+                  <span
+                    v-for="atom in selectedUserGrantAtomsPreview"
+                    :key="atom"
+                    class="atom-chip"
+                  >
+                    <span>{{ friendlyAtomLabel(atom) }}</span>
+                    <code>{{ atom }}</code>
+                  </span>
+                </span>
+                <span v-else>No permissions will be stored for this user.</span>
+              </dd>
+            </dl>
+          </section>
         </div>
 
         <div>
-          <h4>Groups you can change</h4>
+          <h4>Recommended: framework groups</h4>
+          <p class="runtime-config-help">
+            Groups are easier to audit than one-off rights. Most users should
+            only need one or two of these.
+          </p>
           <UnifiedTable
             :rows="groupRows"
             :columns="groupColumns"
             row-key="key"
             table-class="runtime-rights-table"
           />
+
+          <details class="advanced-config-json">
+            <summary>Advanced direct rights</summary>
+            <p class="runtime-config-help">
+              Direct rights are saved on this user only. Prefer editing a group
+              when several people need the same capability.
+            </p>
+            <section
+              v-for="section in userGrantRightSections"
+              :key="section.title"
+              class="rights-section"
+            >
+              <h5>{{ section.title }}</h5>
+              <UnifiedTable
+                :rows="rightsRowsForSection(section.title)"
+                :columns="rightColumns"
+                row-key="key"
+                table-class="runtime-rights-table"
+              />
+            </section>
+          </details>
 
           <ul v-if="selectedUserGrantAdvisories.length" class="grant-advisories">
             <li v-for="advisory in selectedUserGrantAdvisories" :key="advisory.key">
@@ -1308,7 +1463,7 @@ onMounted(() => {
               :disabled="!canManageUserGrants || userGrantSaving"
               @click="() => void saveSelectedUserGrants()"
             >
-              {{ userGrantSaving ? "Saving..." : "Save user groups" }}
+              {{ userGrantSaving ? "Saving..." : "Save user rights" }}
             </CdxButton>
           </div>
         </div>
@@ -1317,17 +1472,19 @@ onMounted(() => {
 
     <div v-if="!loading" class="runtime-config-grid runtime-config-grid--numbers">
       <section class="runtime-config-card">
-        <h3>Framework groups by user</h3>
+        <h3>Bulk user grants JSON</h3>
         <p class="runtime-config-help">
-          MediaWiki-style user rights storage: usernames map to framework groups,
-          and groups provide rights. Prefer editing this through the user rights
-          editor above.
+          The editor above writes this map. Use the JSON only for bulk cleanup or
+          migration work.
         </p>
-        <textarea
-          v-model="grantsJsonText"
-          :disabled="!canEditConfig"
-          rows="8"
-        />
+        <details class="advanced-config-json">
+          <summary>Edit raw user grant map</summary>
+          <textarea
+            v-model="grantsJsonText"
+            :disabled="!canEditConfig"
+            rows="8"
+          />
+        </details>
       </section>
 
       <section class="runtime-config-card">
@@ -1507,7 +1664,7 @@ onMounted(() => {
             <input
               v-model="newFrameworkGroup"
               :disabled="!canEditConfig || saving"
-              placeholder="four_award_operator"
+              placeholder="Four Award operator"
               type="text"
               @keyup.enter="addFrameworkGroup"
             >
@@ -1594,18 +1751,24 @@ onMounted(() => {
       <section class="runtime-config-card">
         <h3>Module-declared rights</h3>
         <p class="runtime-config-help">
-          Modules publish their framework rights here. Grant them with atoms like
-          <code>module:four_award:run_jobs</code>; project/global roles only decide
-          who receives those atoms.
+          Modules publish their framework rights here. Project/global roles only
+          decide who receives those rights.
         </p>
         <div v-if="Object.keys(moduleRights).length === 0" class="runtime-config-help">
           No modules currently declare rights.
         </div>
         <dl v-else class="module-rights-list">
           <template v-for="(rights, moduleName) in moduleRights" :key="moduleName">
-            <dt>{{ moduleName }}</dt>
+            <dt>{{ friendlyModuleLabel(moduleName) }}</dt>
             <dd>
-              <code v-for="right in rights" :key="right">module:{{ moduleName }}:{{ right }}</code>
+              <span
+                v-for="right in rights"
+                :key="right"
+                class="atom-chip"
+              >
+                <span>{{ friendlyModuleRightLabel(`module:${moduleName}:${right}`) }}</span>
+                <code>module:{{ moduleName }}:{{ right }}</code>
+              </span>
             </dd>
           </template>
         </dl>

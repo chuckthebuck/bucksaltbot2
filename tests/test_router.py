@@ -1494,7 +1494,7 @@ def test_four_award_view_jobs_shows_runs_tab_without_module_management(client):
     assert "Jobs YAML" not in html
 
 
-def test_four_award_unique_hit_runs_hide_duplicate_historical_claims():
+def test_four_award_unique_hit_runs_hide_duplicate_claims_across_triggers():
     import router.routes as routes
 
     runs = [
@@ -1540,7 +1540,7 @@ def test_four_award_unique_hit_runs_hide_duplicate_historical_claims():
         },
     ]
 
-    assert [run["id"] for run in routes._four_award_unique_hit_runs(runs)] == [3, 2, 1]
+    assert [run["id"] for run in routes._four_award_unique_hit_runs(runs)] == [3, 1]
 
 
 def test_four_award_runs_api_can_return_non_unique_larger_history(client):

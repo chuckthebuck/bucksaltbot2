@@ -230,6 +230,7 @@ def init_db():
                     summary TEXT NULL,
                     item_action VARCHAR(32) NOT NULL DEFAULT 'rollback',
                     restore_revision_id BIGINT NULL,
+                    rollback_through_bots TINYINT(1) NOT NULL DEFAULT 0,
                     status VARCHAR(255) NOT NULL DEFAULT 'queued',
                     attempts INT NOT NULL DEFAULT 0,
                     error TEXT NULL,
@@ -257,6 +258,12 @@ def init_db():
                 "rollback_job_items",
                 "restore_revision_id",
                 "restore_revision_id BIGINT NULL",
+            )
+            _ensure_column(
+                cursor,
+                "rollback_job_items",
+                "rollback_through_bots",
+                "rollback_through_bots TINYINT(1) NOT NULL DEFAULT 0",
             )
             cursor.execute(
                 """

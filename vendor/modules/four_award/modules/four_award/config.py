@@ -19,6 +19,10 @@ RECORDS_PAGE = os.getenv("FOUR_AWARD_RECORDS_PAGE", "Wikipedia:Four Award/Record
 LEADERBOARD_PAGE = os.getenv("FOUR_AWARD_LEADERBOARD_PAGE", "Wikipedia:Four Award/Leaderboard")
 BOT_MARKER_PREFIX = "FourAwardBot"
 EDIT_TAG_LINK = "[[User:Alachuckthebuck/FourAwardHelper|FourAwardHelper]]"
+DEFAULT_BRFA_TASK = os.getenv("FOUR_AWARD_BRFA_TASK", "").strip()
+DEFAULT_EDIT_SUMMARY_SUFFIX = os.getenv("FOUR_AWARD_EDIT_SUMMARY_SUFFIX", EDIT_TAG_LINK).strip()
+BRFA_TASK = DEFAULT_BRFA_TASK
+EDIT_SUMMARY_SUFFIX = DEFAULT_EDIT_SUMMARY_SUFFIX
 
 # Default to dry-run so framework/module config has to opt into live writes.
 ENABLED = os.getenv("FOUR_AWARD_ENABLED", "1") == "1"

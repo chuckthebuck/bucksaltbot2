@@ -21,6 +21,7 @@ const errors = ref<string[]>([]);
 const result = ref("");
 
 const dryRun = ref(false);
+const rollbackThroughBots = ref(false);
 const importUser = ref("");
 const batchNumber = ref("");
 
@@ -220,6 +221,7 @@ async function submit() {
     body: JSON.stringify({
       requested_by: props.username,
       dry_run: dryRun.value,
+      rollback_through_bots: rollbackThroughBots.value,
       batch_id: batchId,
       request_type: "batch",
       items
@@ -290,6 +292,11 @@ async function submit() {
     <label style="display:flex; align-items:center; gap:8px">
       <input type="checkbox" v-model="dryRun">
       Dry run (no actual rollback)
+    </label>
+
+    <label style="display:flex; align-items:center; gap:8px">
+      <input type="checkbox" v-model="rollbackThroughBots">
+      Roll back through top bot edits
     </label>
 
     <br>

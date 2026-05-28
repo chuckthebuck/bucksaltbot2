@@ -296,6 +296,19 @@ function syncModuleConfigText() {
   moduleConfigText.value = JSON.stringify(moduleConfigDraft.value, null, 2);
 }
 
+function moduleConfigString(key: string): string {
+  const value = moduleConfigDraft.value[key];
+  return typeof value === "string" ? value : "";
+}
+
+function setModuleConfigString(key: string, value: string) {
+  moduleConfigDraft.value = {
+    ...moduleConfigDraft.value,
+    [key]: value,
+  };
+  syncModuleConfigText();
+}
+
 function dryRunEditCount(run: ModuleRunItem): number {
   return run.result?.dry_run_edits?.length ?? 0;
 }
@@ -542,6 +555,53 @@ onMounted(() => {
             Non-secret module settings stored by the framework. Module-specific
             menus live in the module UI when the module provides one.
           </p>
+
+          <section
+            v-if="selectedModuleData.name === 'rollback'"
+            class="structured-config"
+          >
+            <h4>Rollback edit summaries</h4>
+            <label class="config-field wide">
+              <span>Summary template</span>
+              <textarea
+                :value="moduleConfigString('edit_summary_template')"
+                placeholder="{summary}; requested-by={requested_by}; batch={batch_id}; job={job_id}"
+                rows="3"
+                @input="(event) => setModuleConfigString('edit_summary_template', (event.target as HTMLTextAreaElement).value)"
+              ></textarea>
+              <small>
+                Available fields: summary, requested_by, batch_id, job_id, title,
+                target_user, action, revision_id.
+              </small>
+            </label>
+          </section>
+
+          <section
+            v-if="selectedModuleData.name === 'four_award'"
+            class="structured-config"
+          >
+            <h4>Four Award edit summaries</h4>
+            <div class="config-grid">
+              <label class="config-field">
+                <span>Tool summary suffix</span>
+                <input
+                  :value="moduleConfigString('edit_summary_suffix')"
+                  placeholder="[[User:Alachuckthebuck/FourAwardHelper|FourAwardHelper]]"
+                  type="text"
+                  @input="(event) => setModuleConfigString('edit_summary_suffix', (event.target as HTMLInputElement).value)"
+                >
+              </label>
+              <label class="config-field">
+                <span>BRFA task</span>
+                <input
+                  :value="moduleConfigString('brfa_task')"
+                  placeholder="Wikipedia:Bots/Requests for approval/..."
+                  type="text"
+                  @input="(event) => setModuleConfigString('brfa_task', (event.target as HTMLInputElement).value)"
+                >
+              </label>
+            </div>
+          </section>
 
           <details class="advanced-config" open>
             <summary>Advanced JSON</summary>
@@ -977,6 +1037,7 @@ h3 {
   }
 
   input,
+  textarea,
   select {
     width: 100%;
     box-sizing: border-box;
@@ -993,6 +1054,15 @@ h3 {
       border-color: #315fa8;
       box-shadow: 0 0 0 2px rgba(49, 95, 168, 0.14);
     }
+  }
+
+  textarea {
+    min-height: 84px;
+    resize: vertical;
+  }
+
+  small {
+    color: #54595d;
   }
 }
 

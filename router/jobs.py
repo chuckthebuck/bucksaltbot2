@@ -221,6 +221,7 @@ def create_rollback_jobs_from_diff(
     requested_by,
     dry_run=False,
     limit=None,
+    rollback_through_bots=False,
 ):
     oldid = _extract_oldid(diff)
     diff_metadata = _fetch_diff_author_and_timestamp_via_router(oldid)
@@ -269,9 +270,10 @@ def create_rollback_jobs_from_diff(
                             summary,
                             item_action,
                             restore_revision_id,
+                            rollback_through_bots,
                             status
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             job_id,
@@ -280,6 +282,7 @@ def create_rollback_jobs_from_diff(
                             summary or None,
                             item.get("item_action", "rollback"),
                             item.get("restore_revision_id"),
+                            1 if rollback_through_bots else 0,
                             "queued",
                         ),
                     )
@@ -320,6 +323,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
 
     requested_by = payload.get("requested_by")
     dry_run = bool(payload.get("dry_run", False))
+    rollback_through_bots = bool(payload.get("rollback_through_bots", False))
     summary = payload.get("summary") or ""
     diff = payload.get("diff")
     limit = payload.get("limit")
@@ -411,9 +415,10 @@ def resolve_diff_rollback_job_impl(job_id: int):
                                 summary,
                                 item_action,
                                 restore_revision_id,
+                                rollback_through_bots,
                                 status
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 target_job_id,
@@ -422,6 +427,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                                 summary or None,
                                 item.get("item_action", "rollback"),
                                 item.get("restore_revision_id"),
+                                1 if rollback_through_bots else 0,
                                 "queued",
                             ),
                         )

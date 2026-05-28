@@ -21,6 +21,7 @@ const props = JSON.parse(
 const diff = ref("");
 const summary = ref("");
 const dryRun = ref(Boolean(props.from_diff_dry_run_only));
+const rollbackThroughBots = ref(false);
 const limit = ref(String(props.default_limit ?? 100));
 
 const loading = ref(false);
@@ -76,6 +77,7 @@ async function submit() {
         diff: trimmedDiff,
         summary: trimmedSummary,
         dry_run: dryRun.value,
+        rollback_through_bots: rollbackThroughBots.value,
         limit: trimmedLimit ? Number(trimmedLimit) : undefined
       })
     });
@@ -143,6 +145,10 @@ async function submit() {
 
       <CdxCheckbox v-model="dryRun" :disabled="loading || props.from_diff_dry_run_only">
         Dry run (do not execute live rollback)
+      </CdxCheckbox>
+
+      <CdxCheckbox v-model="rollbackThroughBots" :disabled="loading">
+        Roll back through top bot edits
       </CdxCheckbox>
 
       <CdxButton
