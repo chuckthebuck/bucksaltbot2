@@ -5,6 +5,11 @@ import {
   CdxTextArea,
   CdxMessage
 } from "@wikimedia/codex";
+import {
+  parseQuarryText,
+  parseQuarryJson,
+  quarryResultUrl
+} from "./batchImport";
 import { loadDraft, saveDraft } from "./draft";
 
 /* ---------------- props ---------------- */
@@ -23,6 +28,7 @@ const result = ref("");
 const dryRun = ref(false);
 const rollbackThroughBots = ref(false);
 const importUser = ref("");
+const quarryInput = ref("");
 const batchNumber = ref("");
 
 const draftKey = `buckbot:batchDraft:${props.username ?? "anon"}`;
@@ -143,7 +149,45 @@ async function loadContribs() {
   }
 }
 
-/* ---------------- JSON upload ---------------- */
+/* ---------------- Quarry import ---------------- */
+
+function setImportedItems(items: any[], emptyMessage: string) {
+  if (!items.length) {
+    errors.value = [emptyMessage];
+    return;
+  }
+
+  parsed.value = items;
+  errors.value = [];
+}
+
+async function loadQuarry() {
+  const url = quarryResultUrl(quarryInput.value);
+
+  if (!url) {
+    errors.value = [
+      "Enter a Quarry query URL, run URL, query ID, query:ID, or run:ID"
+    ];
+    return;
+  }
+
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) {
+      throw new Error(`HTTP ${r.status}`);
+    }
+
+    const data = await r.json();
+    setImportedItems(
+      parseQuarryJson(data),
+      "No rollback items found. Quarry output needs title/file and user columns."
+    );
+  } catch {
+    errors.value = ["Failed to fetch or parse Quarry results"];
+  }
+}
+
+/* ---------------- file upload ---------------- */
 
 function handleFile(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0];
@@ -153,21 +197,13 @@ function handleFile(e: Event) {
 
   reader.onload = () => {
     try {
-      const json = JSON.parse(reader.result as string);
-
-      if (!Array.isArray(json.items)) {
-        throw new Error();
-      }
-
-      parsed.value = json.items.map((i: any) => ({
-        ...i,
-        selected: true
-      }));
-
-      errors.value = [];
+      setImportedItems(
+        parseQuarryText(reader.result as string),
+        "No rollback items found in uploaded file"
+      );
 
     } catch {
-      errors.value = ["Invalid JSON file"];
+      errors.value = ["Invalid uploaded file"];
     }
   };
 
@@ -254,11 +290,26 @@ async function submit() {
 
     <!-- file upload -->
     <label>
-      Upload JSON:
-      <input type="file" accept=".json" @change="handleFile">
+      Upload Quarry/JSON/CSV:
+      <input type="file" accept=".json,.csv,.tsv,text/csv,text/tab-separated-values,application/json" @change="handleFile">
     </label>
 
     <br><br>
+
+    <!-- quarry import -->
+    <div>
+      <input
+        v-model="quarryInput"
+        placeholder="Import from Quarry query/run URL or ID"
+        style="padding:6px; width:320px"
+      />
+
+      <CdxButton type="button" @click.prevent="loadQuarry">
+        Import Quarry
+      </CdxButton>
+    </div>
+
+    <br>
 
     <!-- contrib import -->
     <div>

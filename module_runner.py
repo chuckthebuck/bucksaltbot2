@@ -119,7 +119,14 @@ def run_module_job(
     if not record.enabled:
         raise ValueError(f"Module is disabled: {module_name}")
 
-    job = next((j for j in record.definition.cron_jobs if j.name == job_name), None)
+    job = next(
+        (
+            j
+            for j in (*record.definition.cron_jobs, *record.definition.worker_jobs)
+            if j.name == job_name
+        ),
+        None,
+    )
     if job is None:
         raise ValueError(f"Unknown module job: {module_name}/{job_name}")
     if not job.enabled:

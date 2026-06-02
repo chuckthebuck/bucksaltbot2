@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 TOOLFORGE_DEFAULT_HOST = "tools.db.svc.wikimedia.cloud"
-LOCAL_DEFAULT_HOST = "127.0.0.1"
+LOCAL_DEFAULT_HOST = None
 
 
 def load_cnf():
@@ -44,20 +44,28 @@ def _default_host() -> str:
     return LOCAL_DEFAULT_HOST
 
 
+def _env(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 cnf = load_cnf()
 
 if cnf.has_section("client"):
     user = cnf.get("client", "user")
     password = cnf.get("client", "password")
-    host = os.environ.get("TOOL_TOOLSDB_HOST", TOOLFORGE_DEFAULT_HOST)
+    host = _env("TOOL_TOOLSDB_HOST") or TOOLFORGE_DEFAULT_HOST
 else:
-    user = os.environ.get("TOOL_TOOLSDB_USER")
-    password = os.environ.get("TOOL_TOOLSDB_PASSWORD")
-    host = os.environ.get("TOOL_TOOLSDB_HOST", _default_host())
+    user = _env("TOOL_TOOLSDB_USER")
+    password = _env("TOOL_TOOLSDB_PASSWORD")
+    host = _env("TOOL_TOOLSDB_HOST") or _default_host()
 
 config = {
     "host": host,
     "user": user,
     "password": password,
-    "database": os.environ.get("TOOL_TOOLSDB_DATABASE"),
+    "database": _env("TOOL_TOOLSDB_DATABASE"),
 }

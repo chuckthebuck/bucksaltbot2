@@ -119,7 +119,6 @@ Required for production:
 export ENABLE_MODULE_LOADING=1
 export TOOL_DATA_DIR=/data/project/buckbot          # Toolforge standard
 export NOTDEV=1                                     # Production flag
-export BUCKBOT_HTTP_USER_AGENT="Buckbot/4.0 (https://github.com/chuckthebuck/bucksaltbot2; User:Alachuckthebuck)"
 ```
 
 Optional:
@@ -127,8 +126,11 @@ Optional:
 ```bash
 export CELERY_BROKER_URL=redis://broker:6379/9
 export CELERY_RESULT_BACKEND=redis://broker:6379/9
-export FOUR_AWARD_HTTP_USER_AGENT="FourAwardHelper/0.1 (https://github.com/chuckthebuck/module4awardhelper; User:Alachuckthebuck)"
 ```
+
+Framework and module User-Agent defaults include the deployed release version.
+Set `BUCKBOT_HTTP_USER_AGENT` or a module-specific `*_HTTP_USER_AGENT` only when
+the deployment needs to replace the full identity string.
 
 ### 8. Deployment Steps
 

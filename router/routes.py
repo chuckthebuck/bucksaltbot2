@@ -138,6 +138,7 @@ class _LazyTask:
 
 process_rollback_job = _LazyTask("process_rollback_job")
 resolve_diff_rollback_job = _LazyTask("resolve_diff_rollback_job")
+process_module_job_run = _LazyTask("process_module_job_run")
 
 
 def _load_diff_payload(*a, **kw):
@@ -3536,6 +3537,7 @@ def module_jobs_api(module_name: str):
         {
             "module": module_name,
             "jobs": list_module_cron_jobs(module_name),
+            "worker_jobs": [job.as_dict() for job in record.definition.worker_jobs],
             "runs": list_module_job_runs(module_name),
         }
     )
@@ -4065,7 +4067,14 @@ def module_job_run_now_api(module_name: str, job_name: str):
     if not record.enabled:
         return jsonify({"detail": "Module is disabled"}), 403
 
-    job = next((j for j in record.definition.cron_jobs if j.name == job_name), None)
+    job = next(
+        (
+            j
+            for j in (*record.definition.cron_jobs, *record.definition.worker_jobs)
+            if j.name == job_name
+        ),
+        None,
+    )
     if job is None:
         return jsonify({"detail": "Job not found"}), 404
     if not job.enabled:
@@ -4079,6 +4088,7 @@ def module_job_run_now_api(module_name: str, job_name: str):
         triggered_by=username,
         payload=payload,
     )
+    process_module_job_run.delay(run_id)
 
     return jsonify(
         {
@@ -4086,10 +4096,7 @@ def module_job_run_now_api(module_name: str, job_name: str):
             "job": job_name,
             "run_id": run_id,
             "status": "queued",
-            "detail": (
-                "Run has been queued in Chuck the Buckbot Framework. "
-                "The external job launcher is responsible for starting it."
-            ),
+            "detail": "Run has been queued in Chuck the Buckbot Framework.",
         }
     ), 202
 
@@ -4128,6 +4135,7 @@ def module_job_run_restart_api(run_id: int):
         triggered_by=username,
         payload=run.get("payload") or {},
     )
+    process_module_job_run.delay(new_run_id)
     return jsonify(
         {
             "previous_run_id": run_id,

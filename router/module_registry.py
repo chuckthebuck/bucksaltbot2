@@ -51,6 +51,20 @@ class ModuleCronJob:
 
 
 @dataclass(frozen=True)
+class ModuleWorkerJob:
+    """Declarative queue-backed worker job entry from a module manifest."""
+
+    name: str
+    handler: str
+    timeout_seconds: int = 300
+    enabled: bool = True
+    concurrency_policy: str = "forbid"
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class ModuleFrontend:
     """Packaged browser assets for a module-owned UI."""
 
@@ -81,6 +95,7 @@ class ModuleDefinition:
     entry_point: str
     ui_enabled: bool = False
     cron_jobs: tuple[ModuleCronJob, ...] = ()
+    worker_jobs: tuple[ModuleWorkerJob, ...] = ()
     buildpacks: tuple[str, ...] = ()
     oauth_consumer_mode: str = "default"
     oauth_consumer_key_env: str | None = None
@@ -100,7 +115,7 @@ class ModuleDefinition:
 
     @property
     def exposes_module_surface(self) -> bool:
-        return self.ui_enabled or bool(self.cron_jobs)
+        return self.ui_enabled or bool(self.cron_jobs) or bool(self.worker_jobs)
 
     @property
     def has_custom_buildpacks(self) -> bool:
@@ -114,6 +129,7 @@ class ModuleDefinition:
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["cron_jobs"] = [job.as_dict() for job in self.cron_jobs]
+        payload["worker_jobs"] = [job.as_dict() for job in self.worker_jobs]
         payload["frontend"] = self.frontend.as_dict() if self.frontend else None
         return payload
 
@@ -304,6 +320,59 @@ def _parse_cron_jobs(raw_jobs: Any) -> tuple[ModuleCronJob, ...]:
     return tuple(jobs)
 
 
+def _parse_worker_jobs(raw_jobs: Any) -> tuple[ModuleWorkerJob, ...]:
+    if raw_jobs in (None, ""):
+        return ()
+    if not isinstance(raw_jobs, list):
+        raise ValueError("worker jobs must be a list")
+
+    jobs: list[ModuleWorkerJob] = []
+    for index, raw_job in enumerate(raw_jobs, start=1):
+        if not isinstance(raw_job, dict):
+            raise ValueError(f"worker job {index} must be an object")
+
+        name = str(raw_job.get("name") or raw_job.get("job_id") or "").strip()
+        handler = str(raw_job.get("handler") or "").strip()
+        timeout_seconds = _coerce_positive_int(
+            raw_job.get("timeout_seconds"),
+            field_name=f"worker job {index} timeout_seconds",
+            default=300,
+        )
+        enabled = _coerce_bool(
+            raw_job.get("enabled", True),
+            field_name=f"worker job {index} enabled",
+        )
+        concurrency_policy = (
+            str(raw_job.get("concurrency_policy") or "forbid").strip().lower()
+        )
+
+        if not name:
+            raise ValueError(f"worker job {index} requires a name")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", name):
+            raise ValueError(
+                f"worker job {index} name must contain only lowercase letters, numbers, hyphens, and underscores"
+            )
+        if not handler:
+            raise ValueError(f"worker job {index} requires a handler")
+        _validate_import_path(handler, field_name=f"worker job {index} handler")
+        if concurrency_policy not in {"allow", "forbid", "replace"}:
+            raise ValueError(
+                f"worker job {index} concurrency_policy must be allow, forbid, or replace"
+            )
+
+        jobs.append(
+            ModuleWorkerJob(
+                name=name,
+                handler=handler,
+                timeout_seconds=timeout_seconds,
+                enabled=enabled,
+                concurrency_policy=concurrency_policy,
+            )
+        )
+
+    return tuple(jobs)
+
+
 def _parse_buildpacks(raw_buildpacks: Any) -> tuple[str, ...]:
     if raw_buildpacks in (None, ""):
         return ()
@@ -420,14 +489,17 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
         field_name="ui",
     )
     cron_jobs = _parse_cron_jobs(raw.get("jobs", raw.get("cron_jobs", raw.get("cron"))))
+    worker_jobs = _parse_worker_jobs(raw.get("worker_jobs", raw.get("queue_jobs")))
     buildpacks = _parse_buildpacks(raw.get("buildpacks"))
     rights = _parse_module_rights(
         raw.get("rights", raw.get("module_rights", raw.get("capabilities")))
     )
     frontend = _parse_frontend(raw.get("frontend", raw.get("ui_frontend")))
 
-    if not ui_enabled and not cron_jobs:
-        raise ValueError("module must declare either a UI or at least one cron job")
+    if not ui_enabled and not cron_jobs and not worker_jobs:
+        raise ValueError(
+            "module must declare a UI, at least one cron job, or at least one worker job"
+        )
     if frontend and not ui_enabled:
         raise ValueError("frontend assets require ui=true")
 
@@ -458,6 +530,7 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
         entry_point=entry_point,
         ui_enabled=ui_enabled,
         cron_jobs=cron_jobs,
+        worker_jobs=worker_jobs,
         buildpacks=buildpacks,
         oauth_consumer_mode=oauth_consumer_mode,
         oauth_consumer_key_env=oauth_consumer_key_env,

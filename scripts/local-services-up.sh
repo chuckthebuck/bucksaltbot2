@@ -5,10 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
 cd "$REPO_ROOT"
-load_local_env
-apply_local_service_defaults
-ensure_venv
-require_cmd docker
+prepare_canary
+ensure_docker_daemon
 
 read -r -a COMPOSE <<<"$(compose_cmd)" || die "Missing docker compose or docker-compose"
 

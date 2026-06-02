@@ -119,9 +119,16 @@ which tests touch app routes.
 For a full MacBook rehearsal without live wiki edits:
 
 ```bash
-bash scripts/local-services-up.sh
 bash scripts/run-local-full.sh
 ```
+
+`run-local-full.sh` prepares `.env`, creates local data directories, starts
+Docker Redis/MariaDB if they are not already reachable, and then starts the app
+processes.
+
+On macOS, if Docker is installed but the daemon is not running, the canary
+helpers try to open Docker Desktop and wait for it. Set
+`CANARY_START_DOCKER_DESKTOP=0` to disable that behavior.
 
 Open:
 
@@ -144,6 +151,19 @@ This runs:
 - Flask/Gunicorn locally from `.venv`.
 - Celery rollback worker locally from `.venv`.
 - Module job controller locally from `.venv`.
+
+For just the web process:
+
+```bash
+bash scripts/canary-run-web.sh
+```
+
+For a quick local service check:
+
+```bash
+bash scripts/canary-doctor.sh status
+bash scripts/canary-doctor.sh up
+```
 
 `.env.example` sets `CHUCKBOT_LOCAL_SAFE_MODE=1`. In that mode:
 
@@ -184,10 +204,18 @@ Open:
 http://127.0.0.1:8000/dev-login?user=chuckbot
 ```
 
-The app detects Toolforge by the real Toolforge DB config path
-`~/replica.my.cnf`, `TOOL_DATA_DIR/replica.my.cnf`, or the
-`TOOL_TOOLSDB_USER` / `TOOL_TOOLSDB_PASSWORD` environment variables. On
-Toolforge the default DB host is `tools.db.svc.wikimedia.cloud`. In local safe
-mode, local env vars such as `TOOL_TOOLSDB_HOST`, `TOOL_TOOLSDB_USER`,
-`TOOL_TOOLSDB_PASSWORD`, and `TOOL_TOOLSDB_DATABASE` control the database
-connection.
+The canary scripts load `.env` and then apply local Docker defaults. From the
+host-run canary scripts, MariaDB is expected on `127.0.0.1:3306` after
+`scripts/local-services-up.sh` starts the Docker service. Inside Docker Compose,
+the DB host is `mariadb`.
+
+Ad-hoc Python imports do not start canary services. For module manifest checks
+that should not need a DB, use:
+
+```bash
+python3 scripts/check-module-manifest.py vendor/modules/chuck_file_changer/modules/chuck_file_changer/module.toml
+```
+
+Runtime DB config still comes from `~/replica.my.cnf`,
+`TOOL_DATA_DIR/replica.my.cnf`, or local env vars such as `TOOL_TOOLSDB_HOST`,
+`TOOL_TOOLSDB_USER`, `TOOL_TOOLSDB_PASSWORD`, and `TOOL_TOOLSDB_DATABASE`.

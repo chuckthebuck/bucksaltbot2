@@ -28,6 +28,7 @@ from rollback_queue import (  # noqa: F401
     process_rollback_job,
     resolve_diff_rollback_job_task as resolve_diff_rollback_job,
 )
+from module_tasks import process_module_job_run  # noqa: F401
 from toolsdb import get_conn, get_runtime_config  # noqa: F401
 
 from router.authz import (  # noqa: F401

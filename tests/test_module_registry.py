@@ -77,6 +77,32 @@ def test_parse_module_definition_accepts_human_readable_handler_job():
     assert job.concurrency_policy == "forbid"
 
 
+def test_parse_module_definition_accepts_worker_job():
+    import router.module_registry as registry
+
+    definition = registry.parse_module_definition(
+        {
+            "name": "file_changer",
+            "repo": "https://example.invalid/file-changer",
+            "entry_point": "modules.file_changer.service:run",
+            "ui": True,
+            "worker_jobs": [
+                {
+                    "name": "file-change",
+                    "handler": "modules.file_changer.service:run",
+                    "timeout_seconds": 900,
+                }
+            ],
+        }
+    )
+
+    assert definition.cron_jobs == ()
+    assert len(definition.worker_jobs) == 1
+    assert definition.worker_jobs[0].name == "file-change"
+    assert definition.worker_jobs[0].handler == "modules.file_changer.service:run"
+    assert definition.worker_jobs[0].timeout_seconds == 900
+
+
 def test_parse_module_definition_accepts_module_rights():
     import router.module_registry as registry
 
@@ -210,7 +236,7 @@ def test_parse_module_definition_rejects_file_entry_point():
 def test_parse_module_definition_rejects_api_only_module():
     import router.module_registry as registry
 
-    with pytest.raises(ValueError, match="either a UI or at least one cron job"):
+    with pytest.raises(ValueError, match="UI, at least one cron job, or at least one worker job"):
         registry.parse_module_definition(
             {
                 "name": "api_only",

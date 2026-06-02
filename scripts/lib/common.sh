@@ -66,6 +66,33 @@ load_local_env() {
 	fi
 }
 
+prepare_local_env() {
+	if [[ ! -f "$REPO_ROOT/.env" && -f "$REPO_ROOT/.env.example" ]]; then
+		info "Creating .env from .env.example"
+		cp "$REPO_ROOT/.env.example" "$REPO_ROOT/.env"
+	fi
+
+	for key in TOOL_TOOLSDB_HOST TOOL_TOOLSDB_DATABASE CHUCKBOT_LOCAL_SAFE_MODE LIVE_TEST_DISABLE_STATUS_UPDATES; do
+		if [[ -f "$REPO_ROOT/.env" ]] && ! grep -qE "^${key}=" "$REPO_ROOT/.env"; then
+			local value
+			value="$(grep -E "^${key}=" "$REPO_ROOT/.env.example" | tail -1 || true)"
+			if [[ -n "$value" ]]; then
+				info "Adding missing $key to .env"
+				printf '\n%s\n' "$value" >> "$REPO_ROOT/.env"
+			fi
+		fi
+	done
+
+	mkdir -p "$REPO_ROOT/data/logs" "$REPO_ROOT/data/pywikibot"
+}
+
+prepare_canary() {
+	prepare_local_env
+	load_local_env
+	apply_local_service_defaults
+	ensure_venv
+}
+
 apply_local_service_defaults() {
 	export TOOL_REDIS_URI="${TOOL_REDIS_URI:-redis://localhost:6379/0}"
 	export CELERY_BROKER_URL="${CELERY_BROKER_URL:-redis://localhost:6379/9}"
@@ -92,6 +119,32 @@ compose_cmd() {
 	else
 		return 1
 	fi
+}
+
+docker_daemon_ready() {
+	command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
+}
+
+ensure_docker_daemon() {
+	require_cmd docker
+	if docker_daemon_ready; then
+		return 0
+	fi
+
+	if [[ "$(uname -s)" == "Darwin" && "${CANARY_START_DOCKER_DESKTOP:-1}" == "1" ]]; then
+		info "Docker daemon is not running; opening Docker Desktop"
+		open -a Docker >/dev/null 2>&1 || true
+		local deadline=$((SECONDS + ${CANARY_DOCKER_WAIT_SECONDS:-120}))
+		while (( SECONDS < deadline )); do
+			if docker_daemon_ready; then
+				info "Docker daemon is ready"
+				return 0
+			fi
+			sleep 2
+		done
+	fi
+
+	die "Docker daemon is not running. Start Docker Desktop, or set LOCAL_SERVICES_AUTO_START=0 and provide Redis/MariaDB yourself."
 }
 
 wait_for_tcp() {
@@ -190,6 +243,20 @@ PY
 
 local_services_ready() {
 	wait_for_redis 1 >/dev/null 2>&1 && wait_for_mysql 1 >/dev/null 2>&1
+}
+
+print_local_service_status() {
+	if wait_for_redis 1 >/dev/null 2>&1; then
+		info "Redis is reachable at ${TOOL_REDIS_URI:-redis://localhost:6379/0}"
+	else
+		info "Redis is not reachable at ${TOOL_REDIS_URI:-redis://localhost:6379/0}"
+	fi
+
+	if wait_for_mysql 1 >/dev/null 2>&1; then
+		info "MariaDB is reachable at ${TOOL_TOOLSDB_USER:-user}@${TOOL_TOOLSDB_HOST:-127.0.0.1}/${TOOL_TOOLSDB_DATABASE:-chuckbot_local}"
+	else
+		info "MariaDB is not reachable at ${TOOL_TOOLSDB_USER:-user}@${TOOL_TOOLSDB_HOST:-127.0.0.1}/${TOOL_TOOLSDB_DATABASE:-chuckbot_local}"
+	fi
 }
 
 ensure_local_services() {

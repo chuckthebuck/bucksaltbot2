@@ -36,9 +36,9 @@ FOUR_AWARD_ENABLE_ARTICLE_HISTORY=1
 
 HTTP identity:
 
-```bash
-FOUR_AWARD_HTTP_USER_AGENT="FourAwardHelper/0.1 (https://github.com/chuckthebuck/module4awardhelper; User:Alachuckthebuck)"
-```
+The default User-Agent includes the module release version from package
+metadata. Set `FOUR_AWARD_HTTP_USER_AGENT` only when a deployment needs to
+replace the full identity string.
 
 This is intentionally separate from `BUCKBOT_HTTP_USER_AGENT`, so the framework
 and each module can identify their own Wikimedia API traffic independently.

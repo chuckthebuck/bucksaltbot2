@@ -5,9 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
 cd "$REPO_ROOT"
-load_local_env
-apply_local_service_defaults
-ensure_venv
+prepare_canary
 require_cmd npm
 ensure_local_services
 

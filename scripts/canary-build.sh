@@ -53,6 +53,9 @@ if missing:
     )
 PY
 
+info "Canary: checking vendored module autoversioning"
+python3 scripts/check-module-autoversioning.py
+
 info "Canary: generating frontend module registry"
 npm run modules:frontend
 

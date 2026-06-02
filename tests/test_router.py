@@ -1408,6 +1408,51 @@ def test_cancel_job_returns_403_when_owned_by_different_user(client):
     assert resp.status_code == 403
 
 
+def test_module_worker_run_now_enqueues_celery_task(client):
+    import router.module_registry as registry
+
+    _set_session(client, "operator")
+    record = registry.ModuleRecord(
+        definition=registry.parse_module_definition(
+            {
+                "name": "chuck_file_changer",
+                "repo": "https://example.invalid/chuck-file-changer",
+                "entry_point": "chuck_file_changer.service:run_file_change",
+                "ui": True,
+                "worker_jobs": [
+                    {
+                        "name": "file-change",
+                        "handler": "chuck_file_changer.service:run_file_change",
+                    }
+                ],
+            }
+        ),
+        enabled=True,
+    )
+
+    with (
+        patch("router.routes._can_run_module_jobs", return_value=True),
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes.create_module_job_run", return_value=55) as create_run,
+        patch("router.routes.process_module_job_run") as task,
+    ):
+        task.delay = MagicMock()
+        resp = client.post(
+            "/api/v1/modules/chuck_file_changer/jobs/file-change/runs",
+            json={"source_text": "File:Example.jpg"},
+        )
+
+    assert resp.status_code == 202
+    create_run.assert_called_once_with(
+        "chuck_file_changer",
+        "file-change",
+        trigger_type="manual",
+        triggered_by="operator",
+        payload={"source_text": "File:Example.jpg"},
+    )
+    task.delay.assert_called_once_with(55)
+
+
 def test_module_registry_api_lists_loaded_modules(client):
     import router.module_registry as registry
 

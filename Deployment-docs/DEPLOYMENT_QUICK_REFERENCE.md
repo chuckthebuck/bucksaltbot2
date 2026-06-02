@@ -39,9 +39,11 @@ still needs `jobs.yaml` loaded explicitly.
 ENABLE_MODULE_LOADING=1
 TOOL_DATA_DIR=/data/project/buckbot
 NOTDEV=1
-BUCKBOT_HTTP_USER_AGENT="Buckbot/4.0 (https://github.com/chuckthebuck/bucksaltbot2; User:Alachuckthebuck)"
-FOUR_AWARD_HTTP_USER_AGENT="FourAwardHelper/0.1 (https://github.com/chuckthebuck/module4awardhelper; User:Alachuckthebuck)"
 ```
+
+Framework and module User-Agent defaults derive their version from the deployed
+release. Set the `*_HTTP_USER_AGENT` variables only when a deployment needs a
+full custom override.
 
 See [ENVIRONMENT.md](ENVIRONMENT.md) for the full environment-variable map.
 

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
+from importlib import metadata
 import os
+from pathlib import Path
+import tomllib
 
 WIKI_CODE = os.getenv("FOUR_AWARD_WIKI_CODE", "en")
 WIKI_FAMILY = os.getenv("FOUR_AWARD_WIKI_FAMILY", "wikipedia")
@@ -10,10 +14,42 @@ WIKI_API_URL = os.getenv(
     "FOUR_AWARD_WIKI_API_URL",
     f"https://{WIKI_CODE}.wikipedia.org/w/api.php",
 )
-HTTP_USER_AGENT = os.getenv(
-    "FOUR_AWARD_HTTP_USER_AGENT",
-    "FourAwardHelper/0.1 (User:Alachuckthebuck; https://github.com/chuckthebuck/module4awardhelper)",
-)
+PACKAGE_NAME = "chuck-the-4awardhelper"
+REPOSITORY_URL = "https://github.com/chuckthebuck/module4awardhelper"
+DEFAULT_VERSION = "0.0.0"
+
+
+def _pyproject_version() -> str | None:
+    for parent in Path(__file__).resolve().parents:
+        pyproject = parent / "pyproject.toml"
+        if not pyproject.exists():
+            continue
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        version = data.get("project", {}).get("version")
+        if isinstance(version, str) and version.strip():
+            return version.strip()
+    return None
+
+
+@lru_cache(maxsize=1)
+def module_version() -> str:
+    local_version = _pyproject_version()
+    if local_version:
+        return local_version
+    try:
+        return metadata.version(PACKAGE_NAME)
+    except metadata.PackageNotFoundError:
+        return DEFAULT_VERSION
+
+
+def default_http_user_agent() -> str:
+    return (
+        f"FourAwardHelper/{module_version()} "
+        f"(User:Alachuckthebuck; {REPOSITORY_URL})"
+    )
+
+
+HTTP_USER_AGENT = os.getenv("FOUR_AWARD_HTTP_USER_AGENT", "").strip() or default_http_user_agent()
 FOUR_PAGE = os.getenv("FOUR_AWARD_PAGE", "Wikipedia:Four Award")
 RECORDS_PAGE = os.getenv("FOUR_AWARD_RECORDS_PAGE", "Wikipedia:Four Award/Records")
 LEADERBOARD_PAGE = os.getenv("FOUR_AWARD_LEADERBOARD_PAGE", "Wikipedia:Four Award/Leaderboard")

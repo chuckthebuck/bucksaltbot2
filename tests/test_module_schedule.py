@@ -32,3 +32,9 @@ def test_human_schedule_to_cron_interval_hours():
     from router.module_schedule import human_schedule_to_cron
 
     assert human_schedule_to_cron("every 6 hours") == "0 */6 * * *"
+
+
+def test_human_schedule_to_cron_every_24_hours_is_daily_midnight():
+    from router.module_schedule import human_schedule_to_cron
+
+    assert human_schedule_to_cron("every 24 hours") == "0 0 * * *"

@@ -58,6 +58,8 @@ def human_schedule_to_cron(schedule_text: str) -> str:
     match = re.fullmatch(r"every (\d+) hours?", text)
     if match:
         hours = int(match.group(1))
+        if hours == 24:
+            return "0 0 * * *"
         if hours <= 0 or hours > 23:
             raise ValueError("hour interval must be between 1 and 23")
         return f"0 */{hours} * * *"

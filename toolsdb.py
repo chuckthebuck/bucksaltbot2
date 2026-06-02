@@ -25,6 +25,21 @@ def _db_name() -> str:
 
 
 def _connect(database=None):
+    missing = [
+        name
+        for name, value in (
+            ("TOOL_TOOLSDB_HOST", config.get("host")),
+            ("TOOL_TOOLSDB_USER", _db_user()),
+            ("TOOL_TOOLSDB_PASSWORD", config.get("password")),
+        )
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            "ToolsDB is not configured; set "
+            + ", ".join(missing)
+            + " or run the local Docker services."
+        )
     return sql.connections.Connection(
         user=_db_user(),
         password=config["password"],

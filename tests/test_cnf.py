@@ -34,7 +34,7 @@ def test_toolforge_env_credentials_default_to_toolsdb_host(monkeypatch, tmp_path
     assert cnf.config["user"] == "s12345"
 
 
-def test_local_safe_mode_defaults_to_localhost(monkeypatch, tmp_path):
+def test_local_safe_mode_requires_explicit_host(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("TOOL_TOOLSDB_HOST", raising=False)
     monkeypatch.setenv("CHUCKBOT_LOCAL_SAFE_MODE", "1")
@@ -43,7 +43,19 @@ def test_local_safe_mode_defaults_to_localhost(monkeypatch, tmp_path):
 
     cnf = _load_real_cnf_module()
 
-    assert cnf.config["host"] == "127.0.0.1"
+    assert cnf.config["host"] is None
+
+
+def test_local_safe_mode_uses_explicit_host(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("CHUCKBOT_LOCAL_SAFE_MODE", "1")
+    monkeypatch.setenv("TOOL_TOOLSDB_HOST", "db.example.invalid")
+    monkeypatch.setenv("TOOL_TOOLSDB_USER", "user")
+    monkeypatch.setenv("TOOL_TOOLSDB_PASSWORD", "password")
+
+    cnf = _load_real_cnf_module()
+
+    assert cnf.config["host"] == "db.example.invalid"
 
 
 def test_replica_cnf_uses_toolforge_host(monkeypatch, tmp_path):

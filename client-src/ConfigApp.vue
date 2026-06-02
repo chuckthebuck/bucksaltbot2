@@ -69,7 +69,7 @@ type ImplicitFlagKey =
   | "commons_rollbacker";
 
 type AutoGrantRoleKey = string;
-type ConfigTabKey = "groups" | "auto_grants" | "module_rights" | "advanced";
+type ConfigTabKey = "users" | "groups" | "auto_grants" | "module_rights" | "advanced";
 
 interface GrantAdvisory {
   key: string;
@@ -313,7 +313,7 @@ const errorMessage = ref("");
 const successMessage = ref("");
 const canEditConfig = ref(initialProps.can_edit_config);
 const canManageUserGrants = ref(initialProps.can_edit_config);
-const activeConfigTab = ref<ConfigTabKey>("groups");
+const activeConfigTab = ref<ConfigTabKey>("users");
 const moduleRights = ref<Record<string, string[]>>({});
 const projectGroupOptions = ref<Record<string, string[]>>({});
 const globalGroupOptions = ref<string[]>([]);
@@ -1383,7 +1383,53 @@ onMounted(() => {
 
     <div v-if="loading">Loading runtime config...</div>
 
-    <section v-if="!loading" class="runtime-config-card runtime-rights-editor">
+    <div
+      v-if="!loading"
+      class="runtime-tablist runtime-config-level-tabs"
+      role="tablist"
+      aria-label="Runtime config sections"
+    >
+      <button
+        type="button"
+        :class="{ 'is-active': activeConfigTab === 'users' }"
+        @click="activeConfigTab = 'users'"
+      >
+        User grants
+      </button>
+      <button
+        type="button"
+        :class="{ 'is-active': activeConfigTab === 'groups' }"
+        @click="activeConfigTab = 'groups'"
+      >
+        Framework groups
+      </button>
+      <button
+        type="button"
+        :class="{ 'is-active': activeConfigTab === 'auto_grants' }"
+        @click="activeConfigTab = 'auto_grants'"
+      >
+        Wiki auto-grants
+      </button>
+      <button
+        type="button"
+        :class="{ 'is-active': activeConfigTab === 'module_rights' }"
+        @click="activeConfigTab = 'module_rights'"
+      >
+        Module grant list
+      </button>
+      <button
+        type="button"
+        :class="{ 'is-active': activeConfigTab === 'advanced' }"
+        @click="activeConfigTab = 'advanced'"
+      >
+        Advanced JSON
+      </button>
+    </div>
+
+    <section
+      v-if="!loading && activeConfigTab === 'users'"
+      class="runtime-config-card runtime-rights-editor"
+    >
       <h3>User rights editor</h3>
       <p class="runtime-config-help">
         Start here for normal access changes. Load a user, pick framework groups,
@@ -1545,47 +1591,10 @@ onMounted(() => {
       </div>
     </section>
 
-    <section v-if="!loading" class="runtime-config-card runtime-management-panel">
-      <div class="runtime-management-header">
-        <div>
-          <h3>Access management</h3>
-          <p class="runtime-config-help">
-            Group definitions, wiki-derived auto grants, and raw config are split
-            out here so the user editor can stay focused.
-          </p>
-        </div>
-        <div class="runtime-tablist" role="tablist" aria-label="Access management sections">
-          <button
-            type="button"
-            :class="{ 'is-active': activeConfigTab === 'groups' }"
-            @click="activeConfigTab = 'groups'"
-          >
-            Framework groups
-          </button>
-          <button
-            type="button"
-            :class="{ 'is-active': activeConfigTab === 'auto_grants' }"
-            @click="activeConfigTab = 'auto_grants'"
-          >
-            Wiki auto-grants
-          </button>
-          <button
-            type="button"
-            :class="{ 'is-active': activeConfigTab === 'module_rights' }"
-            @click="activeConfigTab = 'module_rights'"
-          >
-            Module grant list
-          </button>
-          <button
-            type="button"
-            :class="{ 'is-active': activeConfigTab === 'advanced' }"
-            @click="activeConfigTab = 'advanced'"
-          >
-            Advanced JSON
-          </button>
-        </div>
-      </div>
-
+    <section
+      v-if="!loading && activeConfigTab !== 'users'"
+      class="runtime-config-card runtime-management-panel"
+    >
       <section v-if="activeConfigTab === 'groups'" class="runtime-management-section">
         <h3>Chuckbot framework groups</h3>
         <p class="runtime-config-help">
