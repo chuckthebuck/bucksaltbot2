@@ -1,0 +1,35 @@
+name = "chuck_file_changer"
+repo = "https://github.com/chuckthebuck/chuck-file-changer"
+entry_point = "chuck_file_changer.service:run_file_change"
+ui = true
+redis_namespace = "chuck_file_changer"
+title = "Chuck the File Changer"
+oauth_consumer_mode = "default"
+# Commons-scoped module. Runtime edits target commons.wikimedia.org only.
+# Override CHUCK_FILE_CHANGER_USER_AGENT if deployment needs a different
+# identifying User-Agent.
+# Framework-generated rights:
+# - module:chuck_file_changer:view
+# - module:chuck_file_changer:estop
+#
+# Module-declared rights:
+# - manage: module administrator access; also allowed to apply changes
+# - run_jobs: run module jobs
+# - edit_config: edit module runtime config
+# - apply_changes: use the live apply endpoint
+rights = ["manage", "run_jobs", "edit_config", "apply_changes"]
+
+[frontend]
+script = "chuck_file_changer:static/chuck-file-changer-app.js"
+styles = ["chuck_file_changer:static/style.css"]
+props_id = "chuck-file-changer-props"
+mount_id = "chuck-file-changer-app"
+docs = "chuck_file_changer:docs/chuck_file_changer.md"
+bundled = true
+
+[[worker_jobs]]
+name = "file-change"
+handler = "chuck_file_changer.service:run_file_change"
+concurrency_policy = "forbid"
+timeout_seconds = 900
+enabled = true

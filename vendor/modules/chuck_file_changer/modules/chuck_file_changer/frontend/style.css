@@ -1,0 +1,122 @@
+.cfc {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.cfc-toolbar,
+.cfc-actions,
+.cfc-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.cfc-segmented {
+  display: inline-flex;
+  border: 1px solid #a2a9b1;
+}
+
+.cfc button,
+.cfc select,
+.cfc input,
+.cfc textarea {
+  font: inherit;
+}
+
+.cfc button {
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid #a2a9b1;
+  background: #fff;
+  cursor: pointer;
+}
+
+.cfc button.active,
+.cfc button.primary {
+  border-color: #36c;
+  background: #36c;
+  color: #fff;
+}
+
+.cfc button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cfc-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr);
+  gap: 16px;
+}
+
+.cfc-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cfc label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.cfc input,
+.cfc textarea,
+.cfc select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #a2a9b1;
+  background: #fff;
+  color: #202122;
+}
+
+.cfc textarea {
+  min-height: 120px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.cfc-summary span {
+  padding: 4px 8px;
+  border: 1px solid #c8ccd1;
+  background: #f8f9fa;
+}
+
+.cfc-item {
+  padding: 12px 0;
+  border-top: 1px solid #eaecf0;
+}
+
+.cfc-item header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cfc pre {
+  overflow: auto;
+  padding: 8px;
+  background: #f8f9fa;
+  border: 1px solid #eaecf0;
+  font-size: 12px;
+}
+
+.cfc-error {
+  color: #b32424;
+}
+
+.cfc-run-status {
+  color: #54595d;
+}
+
+@media (max-width: 760px) {
+  .cfc-grid {
+    grid-template-columns: 1fr;
+  }
+}

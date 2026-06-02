@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chuck-file-changer"
+version = "0.1.1"
+description = "Chuck the File Changer module for Chuck the Buckbot Framework"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "Flask>=3.1",
+  "pywikibot>=11.2",
+  "requests>=2.33",
+]
+
+[tool.setuptools]
+packages = ["chuck_file_changer"]
+include-package-data = true
+
+[tool.setuptools.package-dir]
+chuck_file_changer = "modules/chuck_file_changer"
+
+[tool.setuptools.package-data]
+chuck_file_changer = [
+  "static/*.js",
+  "static/*.css",
+  "docs/*.md",
+]
+
+[project.entry-points."chuck_buckbot.modules"]
+chuck_file_changer = "chuck_file_changer.manifest:module_manifest"
