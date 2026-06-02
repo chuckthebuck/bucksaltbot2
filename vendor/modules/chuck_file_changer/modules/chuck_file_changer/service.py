@@ -78,6 +78,8 @@ def run_file_change(ctx: Any | None = None, payload: dict[str, Any] | None = Non
     summary = default_summary(operation)
 
     for target in targets[:max_pages]:
+        if ctx is not None and hasattr(ctx, "check_cancelled"):
+            ctx.check_cancelled()
         try:
             old_text = wiki.get_text(target.title)
             item = plan_target(target, operation, old_text)

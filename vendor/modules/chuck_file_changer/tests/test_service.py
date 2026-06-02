@@ -54,6 +54,40 @@ def test_run_file_change_saves_when_apply_and_not_dry_run():
     assert wiki.saved[0][1] == "new text"
 
 
+def test_run_file_change_checks_cancellation_between_targets():
+    wiki = FakeWiki()
+    wiki.pages["File:Two.jpg"] = "old text"
+
+    class Context:
+        def __init__(self):
+            self.checks = 0
+
+        def check_cancelled(self):
+            self.checks += 1
+            if self.checks == 2:
+                raise RuntimeError("stopped")
+
+    ctx = Context()
+
+    try:
+        run_file_change(
+            ctx,
+            {
+                "source_text": "One.jpg\nTwo.jpg",
+                "mode": "replace",
+                "find": "old",
+                "replace": "new",
+                "wiki_client": wiki,
+            },
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "stopped"
+    else:
+        raise AssertionError("expected cancellation exception")
+
+    assert ctx.checks == 2
+
+
 def test_quarry_fetch_uses_module_user_agent(monkeypatch):
     import chuck_file_changer.service as service
 

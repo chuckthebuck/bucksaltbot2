@@ -34,18 +34,37 @@ def test_framework_release_workflow_tags_framework_versions():
     assert "chore(release): framework-v${VERSION}" in workflow
 
 
-def test_four_award_module_versions_match():
+def test_vendored_module_versions_match_package_metadata():
+    module_roots = [
+        path
+        for path in (ROOT / "vendor/modules").iterdir()
+        if (path / "pyproject.toml").exists()
+    ]
+    assert module_roots
+
+    for module_root in module_roots:
+        package_path = module_root / "package.json"
+        if not package_path.exists():
+            continue
+
+        pyproject = (module_root / "pyproject.toml").read_text(encoding="utf-8")
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+
+        match = re.search(r'(?m)^version\s*=\s*"(\d+\.\d+\.\d+)"\s*$', pyproject)
+        assert match is not None, module_root
+        version = match.group(1)
+
+        assert package["version"] == version
+
+
+def test_four_award_subtree_records_snapshot_commit():
     module_root = ROOT / "vendor/modules/four_award"
     pyproject = (module_root / "pyproject.toml").read_text(encoding="utf-8")
-    package = json.loads((module_root / "package.json").read_text(encoding="utf-8"))
     subtree = (module_root / "SUBTREE.md").read_text(encoding="utf-8")
 
     match = re.search(r'(?m)^version\s*=\s*"(\d+\.\d+\.\d+)"\s*$', pyproject)
     assert match is not None
-    version = match.group(1)
-
-    assert package["version"] == version
-    assert f"Module version: `{version}`" in subtree
+    assert "Snapshot commit:" in subtree
 
 
 def test_four_award_release_workflow_tags_module_versions():

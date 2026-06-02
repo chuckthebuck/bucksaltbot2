@@ -58,7 +58,7 @@ class ModuleRunContext:
 
     def check_cancelled(self) -> None:
         run = get_module_job_run(self.run_id)
-        if run and run.get("status") == "cancel_requested":
+        if run and run.get("status") in {"cancel_requested", "canceled"}:
             raise ModuleRunCancelled(f"Run {self.run_id} was canceled")
 
     def site(self, code: str = "commons", family: str = "commons"):
@@ -148,6 +148,16 @@ def run_module_job(
             trigger_type=trigger_type,
             triggered_by=triggered_by,
         )
+    else:
+        existing_run = get_module_job_run(run_id) or {}
+        if existing_run.get("status") in {"cancel_requested", "canceled"}:
+            update_module_job_run(
+                run_id,
+                status="canceled",
+                error=f"Run {run_id} was canceled",
+                exit_code=130,
+            )
+            return 130
 
     logger = _build_logger(f"module.{module_name}.{job_name}")
     update_module_job_run(run_id, status="running")

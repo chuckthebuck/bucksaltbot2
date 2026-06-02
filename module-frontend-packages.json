@@ -4,6 +4,11 @@
       "name": "four_award",
       "enabled": true,
       "import": "../vendor/modules/four_award/modules/four_award/frontend/entry.ts"
+    },
+    {
+      "name": "chuck_file_changer",
+      "enabled": true,
+      "import": "../vendor/modules/chuck_file_changer/modules/chuck_file_changer/frontend/entry.ts"
     }
   ]
 }

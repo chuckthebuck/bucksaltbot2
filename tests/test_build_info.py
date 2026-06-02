@@ -15,17 +15,37 @@ def test_deployment_build_info_includes_framework_and_four_award():
     assert modules["four_award"].commit == "b777437"
 
 
-def test_module_build_info_reads_subtree_metadata(tmp_path):
+def test_module_build_info_reads_pyproject_and_manifest_metadata(tmp_path):
     module_root = tmp_path / "example"
     module_root.mkdir()
+    (module_root / "pyproject.toml").write_text(
+        "\n".join(
+            [
+                "[project]",
+                'version = "1.2.3"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    manifest_root = module_root / "modules" / "example_module"
+    manifest_root.mkdir(parents=True)
+    (manifest_root / "module.toml").write_text(
+        "\n".join(
+            [
+                'name = "example_module"',
+                'repo = "https://example.invalid/example"',
+                'entry_point = "example.service:run"',
+                "ui = true",
+            ]
+        ),
+        encoding="utf-8",
+    )
     (module_root / "SUBTREE.md").write_text(
         "\n".join(
             [
                 "# Vendored Module Snapshot",
                 "",
                 "- Snapshot commit: `abc1234`",
-                "- Module version: `1.2.3`",
-                "- Framework module name: `example_module`",
             ]
         ),
         encoding="utf-8",
@@ -37,3 +57,21 @@ def test_module_build_info_reads_subtree_metadata(tmp_path):
     assert info.name == "example_module"
     assert info.version == "1.2.3"
     assert info.commit == "abc1234"
+
+
+def test_module_build_info_does_not_use_subtree_version(tmp_path):
+    module_root = tmp_path / "example"
+    module_root.mkdir()
+    (module_root / "pyproject.toml").write_text(
+        "\n".join(["[project]", 'version = "2.0.0"']),
+        encoding="utf-8",
+    )
+    (module_root / "SUBTREE.md").write_text(
+        "\n".join(["- Module version: `1.0.0`", "- Framework module name: `example`"]),
+        encoding="utf-8",
+    )
+
+    info = _module_build_info(module_root)
+
+    assert info is not None
+    assert info.version == "2.0.0"

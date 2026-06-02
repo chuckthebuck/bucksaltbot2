@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -91,13 +92,25 @@ def _pyproject_version(module_root: Path) -> str | None:
     return None
 
 
+def _module_manifest_name(module_root: Path) -> str | None:
+    for manifest in sorted((module_root / "modules").glob("*/module.toml")):
+        try:
+            payload = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        name = payload.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return None
+
+
 def _module_build_info(module_root: Path) -> ComponentBuildInfo | None:
     subtree = _read_text(module_root / "SUBTREE.md")
-    if not subtree:
+    version = _pyproject_version(module_root)
+    if not subtree and version is None:
         return None
 
-    name = _subtree_value(subtree, "Framework module name") or module_root.name
-    version = _subtree_value(subtree, "Module version") or _pyproject_version(module_root)
+    name = _module_manifest_name(module_root) or _subtree_value(subtree, "Framework module name") or module_root.name
     commit = _subtree_value(subtree, "Snapshot commit")
     return ComponentBuildInfo(name=name, version=version, commit=commit)
 

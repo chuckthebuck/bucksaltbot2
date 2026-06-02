@@ -49,3 +49,49 @@ def test_run_module_job_executes_worker_job_handler():
         exit_code=0,
         result={"run_id": 123, "payload": {"x": 1}},
     )
+
+
+def test_run_module_job_does_not_revive_canceled_worker_run():
+    import module_runner
+    import router.module_registry as registry
+
+    definition = registry.parse_module_definition(
+        {
+            "name": "chuck_file_changer",
+            "repo": "https://example.invalid/chuck-file-changer",
+            "entry_point": "chuck_file_changer.service:run_file_change",
+            "ui": True,
+            "worker_jobs": [
+                {
+                    "name": "file-change",
+                    "handler": "chuck_file_changer.service:run_file_change",
+                }
+            ],
+        }
+    )
+    record = registry.ModuleRecord(definition=definition, enabled=True)
+
+    with (
+        patch("module_runner.ensure_pywikibot_env"),
+        patch("module_runner._bootstrap_local_registry"),
+        patch("module_runner.get_module_definition", return_value=record),
+        patch("module_runner.get_module_job_run", return_value={"status": "canceled"}),
+        patch("module_runner._import_handler") as import_handler,
+        patch("module_runner.update_module_job_run") as update_run,
+    ):
+        exit_code = module_runner.run_module_job(
+            "chuck_file_changer",
+            "file-change",
+            run_id=123,
+            trigger_type="manual",
+            triggered_by="Alice",
+        )
+
+    assert exit_code == 130
+    import_handler.assert_not_called()
+    update_run.assert_called_once_with(
+        123,
+        status="canceled",
+        error="Run 123 was canceled",
+        exit_code=130,
+    )
