@@ -5,3 +5,4 @@
 # registered into the framework registry.
 rollback
 four_award
+chuck_file_changer
