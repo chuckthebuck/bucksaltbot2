@@ -8,7 +8,7 @@ mwoauth==0.4.0
 pytest==9.0.3
 PyMySQL==1.2.0
 python-dotenv==1.2.2
-pywikibot==11.3.0
+pywikibot==11.4.1
 redis==8.0.0
 requests==2.34.2
 -r requirements-modules.txt
