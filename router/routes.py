@@ -297,10 +297,17 @@ def _can_edit_module_config(username: str | None, module_name: str) -> bool:
 
 def _vendored_module_resource(module_name: str | None, resource_path: str):
     module_key = str(module_name or "").strip()
-    if not module_key or not resource_path or ".." in Path(resource_path).parts:
+    resource_candidate = Path(resource_path)
+    if (
+        not module_key
+        or not resource_path
+        or resource_candidate.is_absolute()
+        or ".." in resource_candidate.parts
+    ):
         return None
 
     vendored_root = Path(app.root_path) / "vendor" / "modules" / module_key
+    vendored_root_resolved = vendored_root.resolve()
     candidates = [
         vendored_root / "modules" / module_key / resource_path,
         vendored_root / resource_path,
@@ -308,7 +315,9 @@ def _vendored_module_resource(module_name: str | None, resource_path: str):
     for candidate in candidates:
         try:
             resolved = candidate.resolve()
-            if resolved.is_file() and resolved.is_relative_to(vendored_root.resolve()):
+            if not resolved.is_relative_to(vendored_root_resolved):
+                continue
+            if resolved.is_file():
                 return resolved
         except OSError:
             continue
