@@ -333,6 +333,9 @@ def _module_resource_response(resource_spec: str, module_name: str | None = None
     package, _, resource_path = spec.partition(":")
     if not package or not resource_path:
         abort(404)
+    normalized_module_name = str(module_name or "").strip()
+    if normalized_module_name and not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", normalized_module_name):
+        abort(404)
     resource = None
     try:
         packaged = resources.files(package).joinpath(resource_path)
@@ -342,7 +345,7 @@ def _module_resource_response(resource_spec: str, module_name: str | None = None
         resource = None
 
     if resource is None:
-        resource = _vendored_module_resource(module_name, resource_path)
+        resource = _vendored_module_resource(normalized_module_name or None, resource_path)
 
     if resource is None:
         abort(404)
