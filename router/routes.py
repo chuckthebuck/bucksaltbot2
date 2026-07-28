@@ -3,8 +3,9 @@
 import logging
 import mimetypes
 import os
-import sys as _sys
+import re
 import secrets
+import sys as _sys
 import time
 from importlib import resources, util as importlib_util
 from pathlib import Path
@@ -300,6 +301,7 @@ def _vendored_module_resource(module_name: str | None, resource_path: str):
     resource_candidate = Path(resource_path)
     if (
         not module_key
+        or not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", module_key)
         or not resource_path
         or resource_candidate.is_absolute()
         or ".." in resource_candidate.parts
