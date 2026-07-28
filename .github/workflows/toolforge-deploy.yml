@@ -41,11 +41,19 @@ jobs:
         with:
           host: login.toolforge.org
           username: ${{ secrets.TOOLFORGE_USERNAME }}
-          key: ${{ secrets.TOOLFORGE_PRIVATE_KEY }}
+          key: ${{ secrets.TOOLFORGE_DEPLOY_PRIVATE_KEY }}
+          request_pty: true
           envs: DEPLOY_BRANCH,BUILDPACK_CHANNEL
           script: |
+            case "$DEPLOY_BRANCH" in
+              *[!A-Za-z0-9._/-]*)
+                echo "Invalid deploy branch: $DEPLOY_BRANCH" >&2
+                exit 2
+                ;;
+            esac
+
             become buckbot bash -lc '
               set -euo pipefail
               cd /data/project/buckbot
-              REPO_DIR=/data/project/buckbot BRANCH="$DEPLOY_BRANCH" BUILDPACK_CHANNEL="$BUILDPACK_CHANNEL" bash scripts/toolforge-deploy-new-version.sh
-            '
+              REPO_DIR=/data/project/buckbot BRANCH="$1" BUILDPACK_CHANNEL="$2" bash scripts/toolforge-deploy-new-version.sh
+            ' -- "$DEPLOY_BRANCH" "$BUILDPACK_CHANNEL"

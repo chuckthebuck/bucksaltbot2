@@ -246,6 +246,22 @@ git subtree pull \
 Use the GitHub URL and a tag for the final shared release snapshot. Toolforge
 deploys the framework repo snapshot; it does not fetch module code separately.
 
+### Toolforge GitHub Actions Deploy Key
+
+The Toolforge deploy workflow uses a dedicated SSH key instead of your normal
+Toolforge login key. Store the private key in the repository secret
+`TOOLFORGE_DEPLOY_PRIVATE_KEY`, and keep `TOOLFORGE_USERNAME` set to the
+Toolforge shell username that can `become buckbot`.
+
+Add the matching public key to Toolforge for that shell account:
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519_toolforge_github_deploy.pub login.toolforge.org
+```
+
+The key comment should make its purpose obvious, for example
+`github-actions-buckbot-toolforge-deploy`.
+
 For 4Award changes developed directly in the vendored framework copy, use the
 checked backport helper before pushing to the module repo:
 
