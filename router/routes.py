@@ -3,8 +3,9 @@
 import logging
 import mimetypes
 import os
-import sys as _sys
+import re
 import secrets
+import sys as _sys
 import time
 from importlib import resources, util as importlib_util
 from pathlib import Path
@@ -297,10 +298,18 @@ def _can_edit_module_config(username: str | None, module_name: str) -> bool:
 
 def _vendored_module_resource(module_name: str | None, resource_path: str):
     module_key = str(module_name or "").strip()
-    if not module_key or not resource_path or ".." in Path(resource_path).parts:
+    resource_candidate = Path(resource_path)
+    if (
+        not module_key
+        or not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", module_key)
+        or not resource_path
+        or resource_candidate.is_absolute()
+        or ".." in resource_candidate.parts
+    ):
         return None
 
     vendored_root = Path(app.root_path) / "vendor" / "modules" / module_key
+    vendored_root_resolved = vendored_root.resolve()
     candidates = [
         vendored_root / "modules" / module_key / resource_path,
         vendored_root / resource_path,
@@ -308,7 +317,9 @@ def _vendored_module_resource(module_name: str | None, resource_path: str):
     for candidate in candidates:
         try:
             resolved = candidate.resolve()
-            if resolved.is_file() and resolved.is_relative_to(vendored_root.resolve()):
+            if not resolved.is_relative_to(vendored_root_resolved):
+                continue
+            if resolved.is_file():
                 return resolved
         except OSError:
             continue
@@ -322,6 +333,9 @@ def _module_resource_response(resource_spec: str, module_name: str | None = None
     package, _, resource_path = spec.partition(":")
     if not package or not resource_path:
         abort(404)
+    normalized_module_name = str(module_name or "").strip()
+    if normalized_module_name and not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", normalized_module_name):
+        abort(404)
     resource = None
     try:
         packaged = resources.files(package).joinpath(resource_path)
@@ -331,7 +345,7 @@ def _module_resource_response(resource_spec: str, module_name: str | None = None
         resource = None
 
     if resource is None:
-        resource = _vendored_module_resource(module_name, resource_path)
+        resource = _vendored_module_resource(normalized_module_name or None, resource_path)
 
     if resource is None:
         abort(404)
