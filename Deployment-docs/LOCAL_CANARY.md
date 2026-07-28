@@ -99,8 +99,13 @@ bash scripts/canary-build.sh
 
 The default canary checks:
 
+- `python -m framework_selftest` passes without requiring Redis, ToolsDB, or
+  Toolforge.
 - Python dependencies are installed in `.venv`.
-- Enabled modules have either local manifests or installed package entry points.
+- Enabled modules have local or vendored manifests.
+- Enabled module handler modules are resolvable from installed or vendored
+  source.
+- Enabled module frontend assets and docs exist.
 - `module-frontend-packages.json` generates `client-src/moduleRegistry.generated.ts`.
 - The production Vite build succeeds.
 - Focused module/registry/jobs-yaml tests pass.
@@ -113,6 +118,23 @@ CANARY_FULL_TESTS=1 bash scripts/canary-build.sh
 
 That still ignores `tests/live`. It may require local Redis/MySQL depending on
 which tests touch app routes.
+
+For a service-aware self-test after local Redis/MariaDB are running:
+
+```bash
+python -m framework_selftest --services
+```
+
+On Toolforge, startup self-test is opt-in:
+
+```bash
+BUCKBOT_STARTUP_SELFTEST=1
+BUCKBOT_STARTUP_SELFTEST_SERVICES=1
+BUCKBOT_STARTUP_SELFTEST_STRICT=1
+```
+
+Leave `BUCKBOT_STARTUP_SELFTEST_SERVICES=0` for a static/package startup check
+that does not touch Redis or ToolsDB.
 
 ## Run Web Canary
 
