@@ -33,9 +33,6 @@ jobs:
       DEPLOY_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref_name }}
       BUILDPACK_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.buildpack_channel || 'latest' }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
       - name: Deploy Buckbot on Toolforge
         uses: appleboy/ssh-action@551964ebda1034f0b5449d74db25c42e371ca1f7
         with:
