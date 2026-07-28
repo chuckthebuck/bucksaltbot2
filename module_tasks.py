@@ -21,3 +21,10 @@ def process_module_job_run(run_id: int) -> None:
         trigger_type=run.get("trigger_type") or "manual",
         triggered_by=run.get("triggered_by"),
     )
+
+
+@shared_task(name="buckbot.process_chuck_file_change_job", ignore_result=True)
+def process_chuck_file_change_job(job_id: int) -> None:
+    from chuck_file_changer.queue import process_file_change_job
+
+    process_file_change_job(int(job_id))

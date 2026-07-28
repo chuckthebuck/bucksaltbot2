@@ -55,19 +55,15 @@ def _can_apply(username: str) -> bool:
     return _has_right(username, "apply_changes") or _has_right(username, "manage")
 
 
-def _enqueue_file_change(payload: dict, *, username: str):
-    from module_tasks import process_module_job_run
-    from router.module_registry import create_module_job_run
+def _enqueue_file_change_batch(payload: dict, *, username: str) -> dict:
+    from module_tasks import process_chuck_file_change_job
 
-    run_id = create_module_job_run(
-        MODULE_NAME,
-        JOB_NAME,
-        trigger_type="manual",
-        triggered_by=username,
-        payload=payload,
-    )
-    process_module_job_run.delay(run_id)
-    return run_id
+    from .queue import enqueue_file_change_batch
+
+    queued = enqueue_file_change_batch(payload, username=username)
+    for job_id in queued["job_ids"]:
+        process_chuck_file_change_job.delay(job_id)
+    return queued
 
 
 @blueprint.get("/api/auth")
@@ -125,8 +121,8 @@ def preview_api():
     payload["dry_run"] = True
     payload["apply"] = False
     try:
-        run_id = _enqueue_file_change(payload, username=username or "")
-        return jsonify({"run_id": run_id, "status": "queued", "job": JOB_NAME}), 202
+        queued = _enqueue_file_change_batch(payload, username=username or "")
+        return jsonify({"status": "queued", "job": JOB_NAME, **queued}), 202
     except Exception as exc:
         return jsonify({"detail": str(exc)}), 400
 
@@ -142,8 +138,8 @@ def apply_api():
     payload = request.get_json(silent=True) or {}
     payload["apply"] = True
     try:
-        run_id = _enqueue_file_change(payload, username=username or "")
-        return jsonify({"run_id": run_id, "status": "queued", "job": JOB_NAME}), 202
+        queued = _enqueue_file_change_batch(payload, username=username or "")
+        return jsonify({"status": "queued", "job": JOB_NAME, **queued}), 202
     except Exception as exc:
         return jsonify({"detail": str(exc)}), 400
 
@@ -154,10 +150,10 @@ def job_status_api(run_id: int):
     if denied:
         return denied
 
-    from router.module_registry import get_module_job_run
+    from .queue import get_file_change_job
 
-    run = get_module_job_run(run_id)
-    if run is None or run.get("module_name") != MODULE_NAME:
+    run = get_file_change_job(run_id)
+    if run is None:
         return jsonify({"detail": "Run not found"}), 404
     if run.get("triggered_by") and run.get("triggered_by") != username and not _has_right(username or "", "manage"):
         return jsonify({"detail": "Forbidden"}), 403

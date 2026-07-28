@@ -1,11 +1,26 @@
 from chuck_file_changer.models import FileChangeOperation, FileChangeTarget
-from chuck_file_changer.planner import apply_operation, plan_target
+from chuck_file_changer.planner import apply_operation, operation_from_payload, plan_target
 
 
 def test_replace_operation_changes_text():
     operation = FileChangeOperation(mode="replace", find="old", replace="new")
 
     assert apply_operation("old text", operation) == "new text"
+
+
+def test_regex_replace_supports_vfc_style_pattern_and_references():
+    operation = operation_from_payload(
+        {
+            "mode": "replace",
+            "find": r"/\{\{Coord\|([^|]+)\|([^}]+)\}\}/",
+            "replace": r"{{Object location dec|$1|$2}}",
+            "use_regex": True,
+        }
+    )
+
+    assert apply_operation("{{Coord|1.23|4.56}}", operation) == (
+        "{{Object location dec|1.23|4.56}}"
+    )
 
 
 def test_plan_target_reports_unchanged_when_find_is_missing():

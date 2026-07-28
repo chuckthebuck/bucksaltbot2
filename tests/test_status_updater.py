@@ -1,6 +1,7 @@
 """Tests for status_updater.py."""
 
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
@@ -37,6 +38,16 @@ def test_generated_pywikibot_config_supports_commons_and_enwiki():
     assert "usernames['wikipedia']['*'] = 'Chuckbot'" in config
     assert "authenticate['commons.wikimedia.org'] = _oauth" in config
     assert "authenticate['en.wikipedia.org'] = _oauth" in config
+
+
+def test_pywikibot_template_supports_commons_and_enwiki():
+    template = Path("user-config.tmpl").read_text(encoding="utf-8")
+
+    assert "usernames['commons']['*'] = 'Chuckbot'" in template
+    assert "usernames['wikipedia']['en'] = 'Chuckbot'" in template
+    assert "usernames['wikipedia']['*'] = 'Chuckbot'" in template
+    assert "authenticate['commons.wikimedia.org'] = info" in template
+    assert "authenticate['en.wikipedia.org'] = info" in template
 
 
 # ── is_large_job ──────────────────────────────────────────────────────────────

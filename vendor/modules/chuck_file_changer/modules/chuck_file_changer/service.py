@@ -8,7 +8,8 @@ import requests
 from .config import COMMONS_SITE_CODE, COMMONS_SITE_FAMILY, http_headers, user_agent
 from .models import FileChangePlanItem
 from .planner import default_summary, operation_from_payload, plan_target
-from .quarry import parse_targets_text, quarry_result_url
+from .quarry import parse_targets_text, quarry_result_url, targets_from_records
+from .source import has_vfc_source, resolve_vfc_source
 from .wiki import WikiClient
 
 
@@ -36,8 +37,14 @@ def _bool_value(value: Any, default: bool) -> bool:
 
 
 def targets_from_payload(payload: dict[str, Any]) -> tuple[list, str | None]:
+    if isinstance(payload.get("targets"), list):
+        return targets_from_records(payload["targets"]), payload.get("source_url")
+
     source_text = str(payload.get("targets_text") or payload.get("source_text") or "")
     quarry_input = str(payload.get("quarry") or payload.get("quarry_url") or "").strip()
+
+    if has_vfc_source(payload):
+        return resolve_vfc_source(payload)
 
     if quarry_input:
         url = quarry_result_url(quarry_input)
@@ -48,6 +55,20 @@ def targets_from_payload(payload: dict[str, Any]) -> tuple[list, str | None]:
         return parse_targets_text(response.text), url
 
     return parse_targets_text(source_text), None
+
+
+def edit_summary_for_target(base_summary: str, target) -> str:
+    """Render simple per-target summary variables used by generated batches."""
+    title = str(getattr(target, "title", "") or "")
+    page_name = title.split(":", 1)[1] if ":" in title else title
+    summary_hint = str(getattr(target, "summary_hint", "") or "")
+    rendered = str(base_summary or "").replace("%FULLPAGENAME%", title)
+    rendered = rendered.replace("%FULLPAGENAMEE%", title.replace(" ", "_"))
+    rendered = rendered.replace("%PAGENAME%", page_name)
+    rendered = rendered.replace("%SUMMARY_HINT%", summary_hint)
+    if "%SUMMARY_HINT%" not in str(base_summary or "") and summary_hint:
+        rendered = f"{rendered}: {summary_hint}" if rendered else summary_hint
+    return rendered.strip() or "Updating file page text with Chuck the File Changer"
 
 
 def run_file_change(ctx: Any | None = None, payload: dict[str, Any] | None = None):
@@ -84,7 +105,7 @@ def run_file_change(ctx: Any | None = None, payload: dict[str, Any] | None = Non
             old_text = wiki.get_text(target.title)
             item = plan_target(target, operation, old_text)
             if item.changed and not dry_run:
-                wiki.save_text(target.title, item.new_text, summary)
+                wiki.save_text(target.title, item.new_text, edit_summary_for_target(summary, target))
                 saved += 1
             planned.append(item)
         except Exception as exc:

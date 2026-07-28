@@ -46,6 +46,18 @@ def test_init_db_creates_module_registry_and_cron_tables():
     assert "module_cron_jobs" in executed
 
 
+def test_init_db_creates_chuck_file_change_tables():
+    """init_db creates module-owned file changer queue tables."""
+    mock_conn, mock_cursor = _make_mock_conn()
+    with patch("pymysql.connections.Connection", return_value=mock_conn):
+        import toolsdb
+
+        toolsdb.init_db()
+    executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
+    assert "chuck_file_change_jobs" in executed
+    assert "chuck_file_change_job_items" in executed
+
+
 def test_init_db_sets_item_status_default_and_attempts_column():
     """init_db ensures queued default status and attempts tracking exist."""
     mock_conn, mock_cursor = _make_mock_conn()

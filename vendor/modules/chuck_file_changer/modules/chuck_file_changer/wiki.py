@@ -27,4 +27,4 @@ class WikiClient:
             return
         page = pywikibot.Page(self.site, title)
         page.text = text
-        page.save(summary=summary, minor=False)
+        page.save(summary=summary, minor=False, bot=True)

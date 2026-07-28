@@ -1,0 +1,43 @@
+name: Update Vendored Modules
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 9 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Update vendored modules
+        run: npm run modules:update
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: automation/update-vendored-modules
+          delete-branch: true
+          title: "Update vendored modules"
+          commit-message: "Update vendored modules"
+          labels: dependencies,modules
+          body: |
+            Weekly vendored module update.
+
+            This runs `npm run modules:update`, which refreshes the configured
+            module snapshots under `vendor/modules`, updates npm dependencies,
+            and regenerates the static frontend module registry.

@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -37,3 +38,15 @@ def test_process_module_job_run_skips_missing_run():
         module_tasks.process_module_job_run.run(404)
 
     run_module_job.assert_not_called()
+
+
+def test_process_chuck_file_change_job_dispatches_queue_processor(monkeypatch):
+    monkeypatch.syspath_prepend(
+        str(Path(__file__).resolve().parents[1] / "vendor/modules/chuck_file_changer/modules")
+    )
+    import module_tasks
+
+    with patch("chuck_file_changer.queue.process_file_change_job") as process_job:
+        module_tasks.process_chuck_file_change_job.run(42)
+
+    process_job.assert_called_once_with(42)

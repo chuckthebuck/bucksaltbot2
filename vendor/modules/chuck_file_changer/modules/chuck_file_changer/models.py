@@ -21,6 +21,7 @@ class FileChangeOperation:
     prepend: str = ""
     append: str = ""
     edit_summary: str = ""
+    use_regex: bool = False
 
     def as_dict(self) -> dict[str, str]:
         return asdict(self)

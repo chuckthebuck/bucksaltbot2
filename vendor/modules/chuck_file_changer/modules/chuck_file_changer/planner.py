@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import difflib
+import re
 
 from .models import FileChangeOperation, FileChangePlanItem, FileChangeTarget
 
 
 VALID_MODES = {"replace", "prepend", "append"}
+_REGEX_LITERAL_RE = re.compile(r"^/(.*)/([a-z]*)$", re.S)
 
 
 def operation_from_payload(payload: dict) -> FileChangeOperation:
@@ -20,6 +22,7 @@ def operation_from_payload(payload: dict) -> FileChangeOperation:
         prepend=str(payload.get("prepend") or ""),
         append=str(payload.get("append") or ""),
         edit_summary=str(payload.get("edit_summary") or "").strip(),
+        use_regex=_bool_value(payload.get("use_regex"), False),
     )
 
     if mode == "replace" and not operation.find:
@@ -32,8 +35,47 @@ def operation_from_payload(payload: dict) -> FileChangeOperation:
     return operation
 
 
+def _bool_value(value, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    return default
+
+
+def _compile_pattern(pattern: str) -> re.Pattern:
+    flags = 0
+    source = pattern
+    literal = _REGEX_LITERAL_RE.match(pattern)
+    if literal:
+        source = literal.group(1)
+        flag_text = literal.group(2)
+        if "i" in flag_text:
+            flags |= re.I
+        if "m" in flag_text:
+            flags |= re.M
+        if "s" in flag_text:
+            flags |= re.S
+    return re.compile(source, flags)
+
+
+def _python_replacement(text: str) -> str:
+    return re.sub(r"\$(\d+)", r"\\\1", text)
+
+
 def apply_operation(text: str, operation: FileChangeOperation) -> str:
     if operation.mode == "replace":
+        if operation.use_regex:
+            return _compile_pattern(operation.find).sub(
+                _python_replacement(operation.replace),
+                text,
+            )
         return text.replace(operation.find, operation.replace)
     if operation.mode == "prepend":
         prefix = operation.prepend

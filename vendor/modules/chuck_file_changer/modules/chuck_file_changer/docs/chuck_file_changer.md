@@ -1,18 +1,19 @@
 # Chuck the File Changer
 
-Chuck the File Changer performs large-scale file page text changes from a
-manual list or a Quarry result set. It is designed for Commons file pages and
-defaults to dry-run previews.
+Chuck the File Changer performs large-scale file page text changes from manual
+lists, Quarry result sets, and VisualFileChange-style source discovery. It is
+designed for Commons file pages and defaults to dry-run previews.
 
 The module is scoped to `commons.wikimedia.org` and uses a module-specific
 user-agent for Quarry requests and Pywikibot edits. Set
 `CHUCK_FILE_CHANGER_USER_AGENT` only if a deployment needs to override the
 default identity.
 
-Runs are submitted to the Chuck the Buckbot Framework module job queue as the
-`file-change` worker job. The shared Celery worker executes the job, using the
-same worker system as rollback. This module does not define a Toolforge cron
-schedule and does not run its own worker implementation.
+Runs are stored in the module-owned `chuck_file_change_jobs` and
+`chuck_file_change_job_items` tables. Large target sets are chunked into one
+job row per chunk, and the shared Celery worker executes
+`buckbot.process_chuck_file_change_job` for each queued row. Redis stores
+best-effort progress snapshots under `chuck_file_changer:job:<id>`.
 
 ## Sources
 
@@ -27,11 +28,22 @@ Quarry sources can be a query URL, run URL, query ID, `query:ID`, or `run:ID`.
 The result must include a recognizable title column such as `img_name`,
 `page_title`, `file_title`, `file`, or `title`.
 
+VFC-style sources are resolved through the Commons API before chunking:
+
+- `user`: uploader uploads from `list=logevents`.
+- `category`: file members from `list=categorymembers`.
+- `page`: images used on a page or gallery from `prop=images`.
+- `search`: file namespace search from `list=search`.
+
 ## Operations
 
 - `replace`: exact text replacement.
+- `replace` with `use_regex`: regular-expression replacement.
 - `prepend`: add text before existing page text.
 - `append`: add text after existing page text.
+
+Custom edit summaries support `%FULLPAGENAME%`, `%FULLPAGENAMEE%`,
+`%PAGENAME%`, and `%SUMMARY_HINT%`.
 
 Always preview before applying. The apply endpoint requires
 `module:chuck_file_changer:apply_changes` or `module:chuck_file_changer:manage`.
@@ -59,8 +71,8 @@ The custom module API enforces authz itself:
 - `POST /chuck_file_changer/api/apply` requires
   `module:chuck_file_changer:apply_changes` or
   `module:chuck_file_changer:manage` and queues a live apply job.
-- `GET /chuck_file_changer/api/jobs/<run_id>` returns framework job-run status
-  and results for this module.
+- `GET /chuck_file_changer/api/jobs/<run_id>` returns module job status,
+  Redis progress, target item rows, and final results for this module.
 
 Example grant configuration:
 

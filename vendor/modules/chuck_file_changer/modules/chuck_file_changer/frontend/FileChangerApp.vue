@@ -25,6 +25,8 @@ interface RunResult {
 interface QueuedRun {
   id?: number;
   run_id?: number;
+  run_ids?: number[];
+  chunks?: number;
   status: string;
   error?: string | null;
   result?: RunResult | null;
@@ -34,18 +36,25 @@ const props = JSON.parse(
   document.getElementById("chuck-file-changer-props")?.textContent || "{}"
 );
 
-const sourceMode = ref<"manual" | "quarry">("manual");
+type SourceMode = "manual" | "quarry" | "user" | "category" | "page" | "search";
+
+const sourceMode = ref<SourceMode>("manual");
 const targetsText = ref("");
 const quarry = ref("");
+const sourceTarget = ref("");
+const sourceLimit = ref(5000);
+const sourceSort = ref("newest");
 const mode = ref<Mode>("replace");
 const find = ref("");
 const replace = ref("");
 const prepend = ref("");
 const append = ref("");
 const editSummary = ref("");
+const useRegex = ref(false);
 const result = ref<RunResult | null>(null);
 const runStatus = ref("");
 const runId = ref<number | null>(null);
+const runIds = ref<number[]>([]);
 const error = ref("");
 const busy = ref(false);
 const canApplyRight = ref(false);
@@ -53,6 +62,30 @@ const canApplyRight = ref(false);
 const canApply = computed(() =>
   Boolean(canApplyRight.value || props?.can_manage)
 );
+const sourceCount = computed(() =>
+  sourceMode.value === "manual"
+    ? targetsText.value.split(/\r?\n/).filter((line) => line.trim()).length
+    : 0
+);
+const sourceTargetLabel = computed(() => {
+  if (sourceMode.value === "user") return "Uploader";
+  if (sourceMode.value === "category") return "Category";
+  if (sourceMode.value === "page") return "Page or gallery";
+  if (sourceMode.value === "search") return "Search query";
+  return "Source";
+});
+const sourceTargetPlaceholder = computed(() => {
+  if (sourceMode.value === "user") return "ExampleUser";
+  if (sourceMode.value === "category") return "Category:Files uploaded by ExampleUser";
+  if (sourceMode.value === "page") return "Commons:Example gallery";
+  if (sourceMode.value === "search") return 'insource:"{{Species gallery}}"';
+  return "";
+});
+const operationLabel = computed(() => {
+  if (mode.value === "replace") return useRegex.value ? "Regex replace" : "Find/replace";
+  if (mode.value === "prepend") return "Prepend text";
+  return "Append text";
+});
 
 onMounted(async () => {
   try {
@@ -70,12 +103,19 @@ function payload(apply: boolean) {
   return {
     source_text: sourceMode.value === "manual" ? targetsText.value : "",
     quarry: sourceMode.value === "quarry" ? quarry.value : "",
+    source_mode: ["user", "category", "page", "search"].includes(sourceMode.value)
+      ? sourceMode.value
+      : "",
+    source_target: sourceTarget.value,
+    source_limit: sourceLimit.value,
+    source_sort: sourceSort.value,
     mode: mode.value,
     find: find.value,
     replace: replace.value,
     prepend: prepend.value,
     append: append.value,
     edit_summary: editSummary.value,
+    use_regex: useRegex.value,
     dry_run: !apply,
     apply,
   };
@@ -87,6 +127,7 @@ async function run(apply: boolean) {
   result.value = null;
   runStatus.value = "";
   runId.value = null;
+  runIds.value = [];
 
   try {
     const response = await fetch(
@@ -101,9 +142,12 @@ async function run(apply: boolean) {
     if (!response.ok) {
       throw new Error(data?.detail || `HTTP ${response.status}`);
     }
-    runId.value = Number(data?.run_id);
+    runIds.value = Array.isArray(data?.run_ids)
+      ? data.run_ids.map((id: unknown) => Number(id)).filter((id: number) => Number.isFinite(id))
+      : [Number(data?.run_id)].filter((id: number) => Number.isFinite(id));
+    runId.value = runIds.value[0] || null;
     runStatus.value = String(data?.status || "queued");
-    await pollRun(runId.value);
+    await pollRuns(runIds.value);
   } catch (exc) {
     error.value = exc instanceof Error ? exc.message : "Request failed";
   } finally {
@@ -111,69 +155,150 @@ async function run(apply: boolean) {
   }
 }
 
-async function pollRun(id: number) {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    const response = await fetch(`/chuck_file_changer/api/jobs/${encodeURIComponent(id)}`, {
-      cache: "no-store",
-    });
-    const data = (await response.json()) as QueuedRun;
-    if (!response.ok) {
-      throw new Error((data as any)?.detail || `HTTP ${response.status}`);
+function mergeResults(results: RunResult[]): RunResult {
+  return {
+    dry_run: results.every((item) => item.dry_run),
+    target_count: results.reduce((sum, item) => sum + Number(item.target_count || 0), 0),
+    planned_count: results.reduce((sum, item) => sum + Number(item.planned_count || 0), 0),
+    changed_count: results.reduce((sum, item) => sum + Number(item.changed_count || 0), 0),
+    saved_count: results.reduce((sum, item) => sum + Number(item.saved_count || 0), 0),
+    error_count: results.reduce((sum, item) => sum + Number(item.error_count || 0), 0),
+    source_url: results.find((item) => item.source_url)?.source_url || null,
+    items: results.flatMap((item) => item.items || []),
+  };
+}
+
+async function pollRuns(ids: number[]) {
+  const completed = new Map<number, RunResult>();
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    for (const id of ids) {
+      if (completed.has(id)) continue;
+      const data = await fetchRun(id);
+      if (data.status === "completed" && data.result) {
+        completed.set(id, data.result);
+        continue;
+      }
+      if (data.status === "failed" || data.status === "canceled") {
+        throw new Error(data.error || `Run ${id} ${data.status}`);
+      }
     }
 
-    runStatus.value = data.status;
-    if (data.status === "completed" && data.result) {
-      result.value = data.result;
+    runStatus.value = `${completed.size}/${ids.length} completed`;
+    if (completed.size === ids.length) {
+      result.value = mergeResults(ids.map((id) => completed.get(id)!));
+      runStatus.value = "completed";
       return;
-    }
-    if (data.status === "failed" || data.status === "canceled") {
-      throw new Error(data.error || `Run ${data.status}`);
     }
     await new Promise((resolve) => window.setTimeout(resolve, 1000));
   }
-  throw new Error("Run is still pending after 120 seconds");
+  throw new Error("Run is still pending after 240 seconds");
 }
+
+async function fetchRun(id: number): Promise<QueuedRun> {
+  const response = await fetch(`/chuck_file_changer/api/jobs/${encodeURIComponent(id)}`, {
+    cache: "no-store",
+  });
+  const data = (await response.json()) as QueuedRun;
+  if (!response.ok) {
+    throw new Error((data as any)?.detail || `HTTP ${response.status}`);
+  }
+  return data;
+}
+
 </script>
 
 <template>
   <main class="cfc">
-    <section class="cfc-toolbar">
-      <div class="cfc-segmented" role="group" aria-label="Source">
-        <button :class="{ active: sourceMode === 'manual' }" @click="sourceMode = 'manual'">Manual</button>
-        <button :class="{ active: sourceMode === 'quarry' }" @click="sourceMode = 'quarry'">Quarry</button>
+    <section class="cfc-header">
+      <div>
+        <h1>Chuck the File Changer</h1>
+        <p>{{ operationLabel }} · Commons file pages · queued module run</p>
       </div>
-
-      <select v-model="mode" aria-label="Operation">
-        <option value="replace">Find/replace</option>
-        <option value="prepend">Prepend</option>
-        <option value="append">Append</option>
-      </select>
+      <div class="cfc-status-pill" :class="{ live: canApply }">
+        {{ canApply ? "Live apply enabled" : "Preview only" }}
+      </div>
     </section>
 
     <section class="cfc-grid">
       <div class="cfc-panel">
+        <header>
+          <h2>Source</h2>
+          <span v-if="sourceMode === 'manual'">{{ sourceCount }} rows</span>
+        </header>
+        <div class="cfc-segmented" role="group" aria-label="Source">
+          <button :class="{ active: sourceMode === 'manual' }" @click="sourceMode = 'manual'">Manual list</button>
+          <button :class="{ active: sourceMode === 'quarry' }" @click="sourceMode = 'quarry'">Quarry</button>
+          <button :class="{ active: sourceMode === 'user' }" @click="sourceMode = 'user'">Uploader</button>
+          <button :class="{ active: sourceMode === 'category' }" @click="sourceMode = 'category'">Category</button>
+          <button :class="{ active: sourceMode === 'page' }" @click="sourceMode = 'page'">Page</button>
+          <button :class="{ active: sourceMode === 'search' }" @click="sourceMode = 'search'">Search</button>
+        </div>
+
         <label v-if="sourceMode === 'manual'">
           Targets
           <textarea
             v-model="targetsText"
-            rows="12"
+            rows="14"
             placeholder="File:Example.jpg&#10;Example2.jpg|Uploader|Optional note"
           />
         </label>
 
-        <label v-else>
+        <label v-else-if="sourceMode === 'quarry'">
           Quarry source
           <input
             v-model="quarry"
             placeholder="Query URL, run URL, query ID, query:ID, or run:ID"
           />
         </label>
+
+        <div v-else class="cfc-source-form">
+          <label>
+            {{ sourceTargetLabel }}
+            <input
+              v-model="sourceTarget"
+              :placeholder="sourceTargetPlaceholder"
+            />
+          </label>
+          <div class="cfc-source-options">
+            <label>
+              Limit
+              <input v-model.number="sourceLimit" type="number" min="1" max="50000" step="100" />
+            </label>
+            <label>
+              Sort
+              <select v-model="sourceSort" aria-label="Source sort">
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="name_asc">Name A-Z</option>
+                <option value="name_desc">Name Z-A</option>
+              </select>
+            </label>
+          </div>
+        </div>
       </div>
 
       <div class="cfc-panel">
+        <header>
+          <h2>Action</h2>
+          <span>{{ operationLabel }}</span>
+        </header>
+
+        <label>
+          Operation
+          <select v-model="mode" aria-label="Operation">
+            <option value="replace">Find/replace</option>
+            <option value="prepend">Prepend text</option>
+            <option value="append">Append text</option>
+          </select>
+        </label>
+
         <label v-if="mode === 'replace'">
           Find
           <textarea v-model="find" rows="5" />
+        </label>
+        <label v-if="mode === 'replace'" class="cfc-check">
+          <input v-model="useRegex" type="checkbox" />
+          <span>Regular expression</span>
         </label>
         <label v-if="mode === 'replace'">
           Replace with
@@ -189,18 +314,25 @@ async function pollRun(id: number) {
         </label>
         <label>
           Edit summary
-          <input v-model="editSummary" placeholder="Optional custom summary" />
+          <input v-model="editSummary" placeholder="Optional custom summary; supports %FULLPAGENAME%, %FULLPAGENAMEE%, %PAGENAME%, %SUMMARY_HINT%" />
         </label>
       </div>
     </section>
 
-    <section class="cfc-actions">
-      <button :disabled="busy" @click="run(false)">Preview dry run</button>
-      <button class="primary" :disabled="busy || !canApply" @click="run(true)">Apply changes</button>
+    <section class="cfc-queue">
+      <div>
+        <h2>Queue</h2>
+        <p v-if="runIds.length > 1">{{ runIds.length }} chunks · {{ runStatus }}</p>
+        <p v-else-if="runId">Run #{{ runId }} · {{ runStatus }}</p>
+        <p v-else>Ready</p>
+      </div>
+      <div class="cfc-actions">
+        <button :disabled="busy" @click="run(false)">Preview</button>
+        <button class="primary" :disabled="busy || !canApply" @click="run(true)">Apply</button>
+      </div>
     </section>
 
     <p v-if="error" class="cfc-error">{{ error }}</p>
-    <p v-if="runId" class="cfc-run-status">Run #{{ runId }}: {{ runStatus }}</p>
 
     <section v-if="result" class="cfc-results">
       <div class="cfc-summary">
