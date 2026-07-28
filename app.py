@@ -155,6 +155,21 @@ if os.getenv("ENABLE_MODULE_LOADING", "0") == "1":
         registered_blueprints,
     )
 
+if os.getenv("BUCKBOT_STARTUP_SELFTEST", "0") == "1":
+    from framework_selftest import run_selftest  # noqa: E402
+
+    startup_selftest = run_selftest(
+        include_services=os.getenv("BUCKBOT_STARTUP_SELFTEST_SERVICES", "0") == "1"
+    )
+    startup_selftest_strict = os.getenv("BUCKBOT_STARTUP_SELFTEST_STRICT", "1") == "1"
+    if startup_selftest.exit_code(strict=startup_selftest_strict) != 0:
+        failures = [
+            f"{check.name}: {check.message}"
+            for check in startup_selftest.checks
+            if not check.ok
+        ]
+        raise RuntimeError("Buckbot startup self-test failed: " + "; ".join(failures))
+
 CORS(
     flask_app,
     resources={

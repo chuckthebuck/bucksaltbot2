@@ -33,19 +33,24 @@ jobs:
       DEPLOY_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref_name }}
       BUILDPACK_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.buildpack_channel || 'latest' }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
       - name: Deploy Buckbot on Toolforge
         uses: appleboy/ssh-action@551964ebda1034f0b5449d74db25c42e371ca1f7
         with:
           host: login.toolforge.org
           username: ${{ secrets.TOOLFORGE_USERNAME }}
-          key: ${{ secrets.TOOLFORGE_PRIVATE_KEY }}
+          key: ${{ secrets.TOOLFORGE_DEPLOY_PRIVATE_KEY }}
+          request_pty: true
           envs: DEPLOY_BRANCH,BUILDPACK_CHANNEL
           script: |
+            case "$DEPLOY_BRANCH" in
+              *[!A-Za-z0-9._/-]*)
+                echo "Invalid deploy branch: $DEPLOY_BRANCH" >&2
+                exit 2
+                ;;
+            esac
+
             become buckbot bash -lc '
               set -euo pipefail
               cd /data/project/buckbot
-              REPO_DIR=/data/project/buckbot BRANCH="$DEPLOY_BRANCH" BUILDPACK_CHANNEL="$BUILDPACK_CHANNEL" bash scripts/toolforge-deploy-new-version.sh
-            '
+              REPO_DIR=/data/project/buckbot BRANCH="$1" BUILDPACK_CHANNEL="$2" bash scripts/toolforge-deploy-new-version.sh
+            ' -- "$DEPLOY_BRANCH" "$BUILDPACK_CHANNEL"

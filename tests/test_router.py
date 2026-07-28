@@ -2285,49 +2285,65 @@ def test_goto_runtime_config_tab_returns_403_for_non_bot_admin(client):
     assert resp.status_code == 403
 
 
-# ── EXTRA_AUTHORIZED_USERS ────────────────────────────────────────────────────
+# ── Explicit Runtime Grants ───────────────────────────────────────────────────
 
 
-def test_is_authorized_returns_true_for_extra_authorized_user():
-    """A user listed in EXTRA_AUTHORIZED_USERS is authorized."""
+def test_is_authorized_returns_true_for_basic_runtime_grant():
+    """A user with a basic runtime grant is authorized."""
     import router
 
-    with patch.object(router, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
-        with patch("router.is_maintainer", return_value=False):
-            assert router.is_authorized("TestUser") is True
+    cfg = router._runtime_authz_defaults()
+    cfg["ROLLBACK_CONTROL_JSON"] = {"TestUser": ["group:basic"]}
+
+    with (
+        patch("router._effective_runtime_authz_config", return_value=cfg),
+        patch("router.is_maintainer", return_value=False),
+    ):
+        assert router.is_authorized("TestUser") is True
 
 
-def test_is_authorized_extra_authorized_user_is_case_insensitive():
-    """EXTRA_AUTHORIZED_USERS matching is case-insensitive."""
+def test_is_authorized_runtime_grant_normalizes_username_first_letter():
+    """Runtime grant username matching follows MediaWiki first-letter normalization."""
     import router
 
-    with patch.object(router, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
-        with patch("router.is_maintainer", return_value=False):
-            assert router.is_authorized("TESTUSER") is True
-            assert router.is_authorized("testuser") is True
-            assert router.is_authorized("TestUser") is True
+    cfg = router._runtime_authz_defaults()
+    cfg["ROLLBACK_CONTROL_JSON"] = {"Testuser": ["group:basic"]}
+
+    with (
+        patch("router._effective_runtime_authz_config", return_value=cfg),
+        patch("router.is_maintainer", return_value=False),
+    ):
+        assert router.is_authorized("testuser") is True
+        assert router.is_authorized("Testuser") is True
 
 
 def test_is_authorized_returns_false_for_unknown_user():
     """A user not in any authorized list or group is denied."""
     import router
 
-    with patch.object(router, "EXTRA_AUTHORIZED_USERS", set()):
-        with patch("router.is_maintainer", return_value=False):
-            with patch("router.get_user_groups", return_value=[]):
-                assert router.is_authorized("nobody") is False
+    cfg = router._runtime_authz_defaults()
+    cfg["ROLLBACK_CONTROL_JSON"] = {}
+
+    with (
+        patch("router._effective_runtime_authz_config", return_value=cfg),
+        patch("router.is_maintainer", return_value=False),
+    ):
+        assert router.is_authorized("nobody") is False
 
 
-def test_extra_authorized_user_is_not_granted_maintainer_status():
-    """EXTRA_AUTHORIZED_USERS grants authorization only, not maintainer rights."""
+def test_basic_runtime_grant_is_not_granted_maintainer_status():
+    """A basic runtime grant authorizes app use, not maintainer rights."""
     import router
     from app import is_maintainer
 
-    with patch.object(router, "EXTRA_AUTHORIZED_USERS", {"testuser"}):
-        # The user is authorized …
-        with patch("router.is_maintainer", return_value=False):
-            assert router.is_authorized("testuser") is True
-        # … but is_maintainer is not affected by EXTRA_AUTHORIZED_USERS.
+    cfg = router._runtime_authz_defaults()
+    cfg["ROLLBACK_CONTROL_JSON"] = {"Testuser": ["group:basic"]}
+
+    with (
+        patch("router._effective_runtime_authz_config", return_value=cfg),
+        patch("router.is_maintainer", return_value=False),
+    ):
+        assert router.is_authorized("testuser") is True
         assert is_maintainer("testuser") is False
 
 
@@ -3160,7 +3176,7 @@ def test_get_runtime_authz_api_returns_config_for_bot_admin(client):
     assert data["can_edit"] is False
     assert "config" in data
     assert "RATE_LIMIT_JOBS_PER_HOUR" in data["config"]
-    assert "USERS_GRANTED_FROM_DIFF" in data["config"]
+    assert "ROLLBACK_CONTROL_JSON" in data["config"]
 
 
 def test_update_runtime_authz_api_returns_403_for_non_chuckbot_bot_admin(client):
@@ -3204,7 +3220,10 @@ def test_update_runtime_authz_api_persists_for_chuckbot(client):
             "/api/v1/config/authz",
             json={
                 "config": {
-                    "EXTRA_AUTHORIZED_USERS": ["TestBot", "AnotherBot"],
+                    "ROLLBACK_CONTROL_JSON": {
+                        "TestBot": ["group:basic"],
+                        "AnotherBot": ["group:basic"],
+                    },
                     "RATE_LIMIT_JOBS_PER_HOUR": 42,
                 }
             },
@@ -3213,7 +3232,8 @@ def test_update_runtime_authz_api_persists_for_chuckbot(client):
     assert resp.status_code == 200
     mock_persist.assert_called_once()
     persisted_updates = mock_persist.call_args.args[0]
-    assert persisted_updates["EXTRA_AUTHORIZED_USERS"] == ["anotherbot", "testbot"]
+    assert persisted_updates["ROLLBACK_CONTROL_JSON"]["AnotherBot"] == ["group:basic"]
+    assert persisted_updates["ROLLBACK_CONTROL_JSON"]["TestBot"] == ["group:basic"]
     assert persisted_updates["RATE_LIMIT_JOBS_PER_HOUR"] == 42
 
 
@@ -3232,20 +3252,21 @@ def test_update_runtime_authz_api_normalizes_quoted_and_prefixed_usernames(clien
             "/api/v1/config/authz",
             json={
                 "config": {
-                    "EXTRA_AUTHORIZED_USERS": [
-                        '"Chaotic enby"',
-                        "User:Luni_Zunie",
-                    ]
+                    "ROLLBACK_CONTROL_JSON": {
+                        '"Chaotic enby"': ["group:basic"],
+                        "User:Luni_Zunie": ["group:basic"],
+                    }
                 }
             },
         )
 
     assert resp.status_code == 200
     persisted_updates = mock_persist.call_args.args[0]
-    assert persisted_updates["EXTRA_AUTHORIZED_USERS"] == ["chaotic enby", "luni zunie"]
+    assert persisted_updates["ROLLBACK_CONTROL_JSON"]["Chaotic enby"] == ["group:basic"]
+    assert persisted_updates["ROLLBACK_CONTROL_JSON"]["Luni Zunie"] == ["group:basic"]
 
 
-def test_update_runtime_authz_api_accepts_user_grants_json(client):
+def test_update_runtime_authz_api_accepts_rollback_control_json(client):
     import router
 
     _set_session(client, "chuckbot")
@@ -3260,7 +3281,7 @@ def test_update_runtime_authz_api_accepts_user_grants_json(client):
             "/api/v1/config/authz",
             json={
                 "config": {
-                    "USER_GRANTS_JSON": {
+                    "ROLLBACK_CONTROL_JSON": {
                         "Alice": ["group:operator"],
                         "Bob": ["from_diff_dry_run_only"],
                     }
@@ -3270,16 +3291,16 @@ def test_update_runtime_authz_api_accepts_user_grants_json(client):
 
     assert resp.status_code == 200
     persisted_updates = mock_persist.call_args.args[0]
-    assert persisted_updates["USER_GRANTS_JSON"]["alice"] == ["group:operator"]
-    assert persisted_updates["USER_GRANTS_JSON"]["bob"] == ["from_diff_dry_run_only"]
+    assert persisted_updates["ROLLBACK_CONTROL_JSON"]["Alice"] == ["group:operator"]
+    assert persisted_updates["ROLLBACK_CONTROL_JSON"]["Bob"] == ["from_diff_dry_run_only"]
 
 
 def test_user_permissions_supports_user_centric_view_all_right():
     import router
 
     cfg = router._runtime_authz_defaults()
-    cfg["USER_GRANTS_JSON"] = {
-        "alice": ["view_all"],
+    cfg["ROLLBACK_CONTROL_JSON"] = {
+        "Alice": ["view_all"],
     }
 
     with (
@@ -3289,7 +3310,6 @@ def test_user_permissions_supports_user_centric_view_all_right():
     ):
         perms = router._user_permissions("alice")
 
-    assert "read_all" in perms
     assert "view_all" in perms
 
 
@@ -3297,8 +3317,8 @@ def test_user_permissions_supports_group_based_user_centric_grants():
     import router
 
     cfg = router._runtime_authz_defaults()
-    cfg["USER_GRANTS_JSON"] = {
-        "alice": ["group:operator"],
+    cfg["ROLLBACK_CONTROL_JSON"] = {
+        "Alice": ["group:operator"],
     }
 
     with (
@@ -3308,9 +3328,9 @@ def test_user_permissions_supports_group_based_user_centric_grants():
     ):
         perms = router._user_permissions("alice")
 
-    assert "read_all" in perms
-    assert "from_diff" in perms
-    assert "batch" in perms
+    assert "view_all" in perms
+    assert "rollback_diff" in perms
+    assert "rollback_batch" in perms
     assert "cancel_any" in perms
     assert "retry_any" in perms
 
@@ -3360,8 +3380,8 @@ def test_get_runtime_authz_user_grants_returns_payload_for_bot_admin(client):
 
     _set_session(client, "chuckbot")
     cfg = router._runtime_authz_defaults()
-    cfg["USER_GRANTS_JSON"] = {
-        "alice": ["group:operator", "from_diff_dry_run_only"],
+    cfg["ROLLBACK_CONTROL_JSON"] = {
+        "Alice": ["group:operator", "from_diff_dry_run_only"],
     }
 
     with (
@@ -3373,7 +3393,7 @@ def test_get_runtime_authz_user_grants_returns_payload_for_bot_admin(client):
 
     assert resp.status_code == 200
     data = resp.get_json()
-    assert data["normalized_username"] == "alice"
+    assert data["normalized_username"] == "Alice"
     assert "operator" in data["groups"]
     assert "from_diff_dry_run_only" in data["rights"]
 
@@ -3383,8 +3403,8 @@ def test_update_runtime_authz_user_grants_updates_single_user(client):
 
     _set_session(client, "chuckbot")
     cfg = router._runtime_authz_defaults()
-    cfg["USER_GRANTS_JSON"] = {
-        "alice": ["group:viewer"],
+    cfg["ROLLBACK_CONTROL_JSON"] = {
+        "Alice": ["group:viewer"],
     }
 
     with (
@@ -3403,8 +3423,8 @@ def test_update_runtime_authz_user_grants_updates_single_user(client):
 
     assert resp.status_code == 200
     persisted_updates = mock_persist.call_args.args[0]
-    assert "USER_GRANTS_JSON" in persisted_updates
-    assert persisted_updates["USER_GRANTS_JSON"]["alice"] == [
+    assert "ROLLBACK_CONTROL_JSON" in persisted_updates
+    assert persisted_updates["ROLLBACK_CONTROL_JSON"]["Alice"] == [
         "from_diff_dry_run_only",
         "group:operator",
     ]

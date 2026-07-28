@@ -25,11 +25,13 @@ def test_resolve_pywikibot_dir_falls_back_from_unwritable_home(monkeypatch):
     monkeypatch.setenv("HOME", "/data/project/buckbot")
 
     attempted: list[str] = []
+    original_mkdir = pywikibot_env.Path.mkdir
 
     def fake_mkdir(path_obj, parents=False, exist_ok=False):
         attempted.append(str(path_obj))
         if str(path_obj).startswith("/data/project"):
             raise PermissionError("denied")
+        return original_mkdir(path_obj, parents=parents, exist_ok=exist_ok)
 
     with patch("pywikibot_env.Path.mkdir", new=fake_mkdir):
         resolved = pywikibot_env.resolve_pywikibot_dir()

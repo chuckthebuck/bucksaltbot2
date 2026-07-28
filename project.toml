@@ -1,6 +1,6 @@
 [project]
-id = "org.toolforge.matchandsplit"
-name = "matchandsplit"
+id = "org.toolforge.buckbot"
+name = "buckbot"
 
 [[build.buildpacks]]
 id = "heroku/python"

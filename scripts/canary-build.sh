@@ -12,46 +12,8 @@ require_cmd npm
 info "Canary: Python version"
 run_python --version
 
-info "Canary: checking installed framework dependencies"
-run_python - <<'PY'
-missing = []
-for module_name in ("flask", "mwoauth", "requests", "pytest"):
-    try:
-        __import__(module_name)
-    except ModuleNotFoundError:
-        missing.append(module_name)
-
-if missing:
-    raise SystemExit(
-        "Missing Python dependencies in .venv: "
-        + ", ".join(missing)
-        + "\nRun: bash scripts/install-framework.sh && bash scripts/install-modules.sh"
-    )
-PY
-
-info "Canary: validating module pins and enabled module names"
-ENABLE_MODULE_LOADING=0 run_python - <<'PY'
-from pathlib import Path
-from router.module_registry import (
-    discover_installed_module_definitions,
-    discover_module_definitions,
-    load_enabled_module_names,
-)
-
-enabled = load_enabled_module_names()
-local = {definition.name: definition for definition in discover_module_definitions(Path("modules"))}
-installed = {definition.name: definition for definition in discover_installed_module_definitions()}
-available = set(local) | set(installed)
-missing = sorted(enabled - available)
-
-print("Enabled:", ", ".join(sorted(enabled)) or "(none)")
-print("Available:", ", ".join(sorted(available)) or "(none)")
-
-if missing:
-    raise SystemExit(
-        "Missing enabled module package/manifest: " + ", ".join(missing)
-    )
-PY
+info "Canary: framework self-test without external services"
+ENABLE_MODULE_LOADING=0 run_python -m framework_selftest
 
 info "Canary: checking vendored module autoversioning"
 python3 scripts/check-module-autoversioning.py
