@@ -1,0 +1,51 @@
+name: Toolforge deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy.
+        default: main
+        type: string
+      buildpack_channel:
+        description: Toolforge buildpack channel.
+        type: choice
+        options:
+          - latest
+          - default
+          - deprecated
+        default: latest
+
+concurrency:
+  group: toolforge-deploy
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref_name }}
+      BUILDPACK_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.buildpack_channel || 'latest' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Deploy Buckbot on Toolforge
+        uses: appleboy/ssh-action@551964ebda1034f0b5449d74db25c42e371ca1f7
+        with:
+          host: login.toolforge.org
+          username: ${{ secrets.TOOLFORGE_USERNAME }}
+          key: ${{ secrets.TOOLFORGE_PRIVATE_KEY }}
+          envs: DEPLOY_BRANCH,BUILDPACK_CHANNEL
+          script: |
+            become buckbot bash -lc '
+              set -euo pipefail
+              cd /data/project/buckbot
+              REPO_DIR=/data/project/buckbot BRANCH="$DEPLOY_BRANCH" BUILDPACK_CHANNEL="$BUILDPACK_CHANNEL" bash scripts/toolforge-deploy-new-version.sh
+            '

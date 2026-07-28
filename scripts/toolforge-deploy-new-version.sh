@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="$HOME"
+REPO_DIR="${REPO_DIR:-$HOME}"
 REPO_URL="https://github.com/chuckthebuck/bucksaltbot2"
 BRANCH="${BRANCH:-main}"
 BUILDPACK_CHANNEL="${BUILDPACK_CHANNEL:-latest}"

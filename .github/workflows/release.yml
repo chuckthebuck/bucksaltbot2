@@ -39,6 +39,7 @@ jobs:
         shell: bash
         run: |
           latest_tag="$(git tag --list 'framework-v*' --sort=-v:refname | head -n 1)"
+          echo "latest_tag=${latest_tag}" >> "$GITHUB_OUTPUT"
 
           if [[ "$FORCE_RELEASE" == "true" ]]; then
             echo "release_needed=true" >> "$GITHUB_OUTPUT"
@@ -96,9 +97,15 @@ jobs:
         shell: bash
         run: |
           source version.env
+          release_notes_args=(--generate-notes)
+          if [[ -n "${{ steps.release_check.outputs.latest_tag }}" ]]; then
+            release_notes_args+=(--notes-start-tag "${{ steps.release_check.outputs.latest_tag }}")
+          fi
+
           gh release create "framework-v${VERSION}" \
             --title "framework-v${VERSION}" \
-            --notes "Automated nightly framework release for framework-v${VERSION}."
+            --notes "Automated nightly framework release for framework-v${VERSION}." \
+            "${release_notes_args[@]}"
 
       - name: Report skipped release
         if: ${{ steps.release_check.outputs.release_needed != 'true' }}

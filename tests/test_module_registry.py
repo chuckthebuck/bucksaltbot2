@@ -7,6 +7,82 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+def _module_run_row(run_id: int, result_json: str) -> tuple:
+    return (
+        run_id,
+        "four_award",
+        "sync",
+        "completed",
+        "schedule",
+        None,
+        None,
+        None,
+        None,
+        0,
+        None,
+        "{}",
+        result_json,
+        None,
+    )
+
+
+def test_list_module_job_runs_non_blank_pages_until_requested_hits():
+    import router.module_registry as registry
+
+    class FakeCursor:
+        def __init__(self, pages):
+            self.pages = pages
+            self.executed = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def execute(self, query, params):
+            self.executed.append((query, params))
+
+        def fetchall(self):
+            return self.pages.pop(0)
+
+    class FakeConn:
+        def __init__(self, pages):
+            self.cursor_obj = FakeCursor(pages)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def cursor(self):
+            return self.cursor_obj
+
+    pages = [
+        [
+            _module_run_row(4, '{"run_kind": "empty", "has_nominations": false}'),
+            _module_run_row(3, '{"has_nominations": true, "nomination_count": 1}'),
+        ],
+        [
+            _module_run_row(2, '{"run_kind": "empty", "has_nominations": false}'),
+            _module_run_row(1, '{"dry_run_edits": [{"title": "Wikipedia:Four Award"}]}'),
+        ],
+    ]
+    conn = FakeConn(pages)
+
+    with patch("router.module_registry.get_conn", return_value=conn):
+        runs = registry.list_module_job_runs(
+            "four_award",
+            limit=2,
+            non_blank=True,
+            scan_limit=4,
+        )
+
+    assert [run["id"] for run in runs] == [3, 1]
+    assert [params[-2:] for _, params in conn.cursor_obj.executed] == [(2, 0), (2, 2)]
+
+
 def test_parse_module_definition_accepts_ui_module():
     import router.module_registry as registry
 

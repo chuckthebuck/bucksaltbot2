@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -30,6 +31,10 @@ MODULE_ENTRY_POINT_GROUP = "chuck_buckbot.modules"
 ENABLED_MODULES_FILENAME = "enabled-modules.txt"
 GENERATED_MODULE_RIGHTS = ("view", "estop")
 LOGGER = logging.getLogger(__name__)
+MODULE_RUN_SCAN_LIMIT_MAX = 50000
+MODULE_RUN_SCAN_THROTTLE_AFTER = 1000
+MODULE_RUN_SCAN_THROTTLE_SECONDS = 0.05
+MODULE_RUN_CACHE_TTL_SECONDS = 86400
 
 
 @dataclass(frozen=True)
@@ -1183,6 +1188,7 @@ def update_module_job_run(
     set_finished = status in {"completed", "failed", "canceled"}
     result_json = json.dumps(result, sort_keys=True) if result is not None else None
 
+    updated_module_name = ""
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -1214,7 +1220,16 @@ def update_module_job_run(
                     run_id,
                 ),
             )
+            cursor.execute(
+                "SELECT module_name FROM module_job_runs WHERE id=%s",
+                (run_id,),
+            )
+            row = cursor.fetchone()
+            updated_module_name = str(row[0] or "") if row else ""
         conn.commit()
+
+    if status == "completed" and updated_module_name == "four_award":
+        refresh_module_job_run_hit_cache(updated_module_name)
 
 
 def list_module_job_runs(
@@ -1223,6 +1238,7 @@ def list_module_job_runs(
     job_name: str | None = None,
     limit: int = 50,
     non_blank: bool = False,
+    scan_limit: int = 1000,
 ) -> list[dict[str, Any]]:
     """Return recent tracked runs for managed module jobs."""
     conditions = []
@@ -1242,44 +1258,70 @@ def list_module_job_runs(
     """
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
-    query += " ORDER BY id DESC LIMIT %s"
     requested_limit = max(1, min(int(limit), 1000))
-    fetch_limit = min(1000, max(requested_limit, requested_limit * 10)) if non_blank else requested_limit
-    params.append(fetch_limit)
+    requested_scan_limit = _module_run_scan_limit(scan_limit, requested_limit)
 
+    runs: list[dict[str, Any]] = []
+    offset = 0
     with get_conn() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(query, tuple(params))
-            rows = cursor.fetchall()
+        while offset < requested_scan_limit:
+            fetch_limit = requested_limit
+            if non_blank:
+                fetch_limit = min(requested_limit, requested_scan_limit - offset)
+            page_params = [*params, fetch_limit, offset]
+            with conn.cursor() as cursor:
+                cursor.execute(query + " ORDER BY id DESC LIMIT %s OFFSET %s", tuple(page_params))
+                rows = cursor.fetchall()
+            if not rows:
+                break
+            for row in rows:
+                run = {
+                    "id": int(row[0]),
+                    "module_name": row[1],
+                    "job_name": row[2],
+                    "status": row[3],
+                    "trigger_type": row[4],
+                    "triggered_by": row[5],
+                    "k8s_job_name": row[6],
+                    "started_at": str(row[7]) if row[7] is not None else None,
+                    "finished_at": str(row[8]) if row[8] is not None else None,
+                    "exit_code": row[9],
+                    "error": row[10],
+                    "payload": json.loads(row[11] or "{}"),
+                    "result": json.loads(row[12] or "{}"),
+                    "created_at": str(row[13]) if row[13] is not None else None,
+                }
+                if not non_blank or _module_run_is_non_blank(run):
+                    runs.append(run)
+                    if len(runs) >= requested_limit:
+                        return runs
+            if not non_blank or len(rows) < fetch_limit:
+                break
+            offset += len(rows)
+            _throttle_module_run_scan(offset, requested_scan_limit)
+    return runs
 
-    runs = [
-        {
-            "id": int(row[0]),
-            "module_name": row[1],
-            "job_name": row[2],
-            "status": row[3],
-            "trigger_type": row[4],
-            "triggered_by": row[5],
-            "k8s_job_name": row[6],
-            "started_at": str(row[7]) if row[7] is not None else None,
-            "finished_at": str(row[8]) if row[8] is not None else None,
-            "exit_code": row[9],
-            "error": row[10],
-            "payload": json.loads(row[11] or "{}"),
-            "result": json.loads(row[12] or "{}"),
-            "created_at": str(row[13]) if row[13] is not None else None,
-        }
-        for row in rows
-    ]
-    if non_blank:
-        runs = [run for run in runs if _module_run_is_non_blank(run)]
-    return runs[:requested_limit]
+
+def _module_run_scan_limit(scan_limit: int | None, requested_limit: int) -> int:
+    if scan_limit is None:
+        return MODULE_RUN_SCAN_LIMIT_MAX
+    return max(requested_limit, min(int(scan_limit), MODULE_RUN_SCAN_LIMIT_MAX))
+
+
+def _throttle_module_run_scan(scanned: int, scan_limit: int) -> None:
+    if scan_limit <= MODULE_RUN_SCAN_THROTTLE_AFTER:
+        return
+    if scanned < MODULE_RUN_SCAN_THROTTLE_AFTER:
+        return
+    time.sleep(MODULE_RUN_SCAN_THROTTLE_SECONDS)
 
 
 def _module_run_is_non_blank(run: dict[str, Any]) -> bool:
     result = run.get("result")
     if not isinstance(result, dict) or not result:
         return run.get("status") not in {"completed", "succeeded"}
+    if result.get("run_kind") == "duplicate_noop":
+        return False
     if result.get("has_nominations") is True:
         return True
     try:
@@ -1291,6 +1333,61 @@ def _module_run_is_non_blank(run: dict[str, Any]) -> bool:
     if isinstance(edits, list) and edits:
         return True
     return result.get("run_kind") != "empty" and result.get("has_nominations") is not False
+
+
+def module_job_run_hit_cache_key(module_name: str) -> str:
+    return f"module_runs:{module_name}:non_blank_hits"
+
+
+def refresh_module_job_run_hit_cache(
+    module_name: str,
+    *,
+    hits: int = 50,
+    scan_limit: int | None = MODULE_RUN_SCAN_LIMIT_MAX,
+) -> dict[str, Any]:
+    """Refresh a best-effort cache of recent non-blank module job runs."""
+    requested_hits = max(1, min(int(hits), 100))
+    requested_scan_limit = _module_run_scan_limit(scan_limit, requested_hits)
+    runs = list_module_job_runs(
+        module_name,
+        limit=requested_hits,
+        non_blank=True,
+        scan_limit=requested_scan_limit,
+    )
+    payload = {
+        "module": module_name,
+        "runs": runs,
+        "hits": requested_hits,
+        "scan_limit": requested_scan_limit,
+        "returned": len(runs),
+        "scan_capped": len(runs) < requested_hits,
+        "refreshed_at": int(time.time()),
+    }
+    try:
+        from redis_state import r
+
+        r.set(
+            module_job_run_hit_cache_key(module_name),
+            json.dumps(payload, sort_keys=True),
+            ex=MODULE_RUN_CACHE_TTL_SECONDS,
+        )
+    except Exception:
+        LOGGER.exception("Failed to refresh module run hit cache for %s", module_name)
+    return payload
+
+
+def get_module_job_run_hit_cache(module_name: str) -> dict[str, Any] | None:
+    """Return the cached recent non-blank runs payload, if available."""
+    try:
+        from redis_state import r
+
+        raw = r.get(module_job_run_hit_cache_key(module_name))
+        if not raw:
+            return None
+        payload = json.loads(raw)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def request_module_job_run_cancel(run_id: int) -> None:

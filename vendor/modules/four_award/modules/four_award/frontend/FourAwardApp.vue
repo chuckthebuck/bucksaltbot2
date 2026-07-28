@@ -42,15 +42,9 @@ const nonBlankOnly = ref(false);
 const uniqueOnly = ref(true);
 const runLimit = ref(50);
 const apiReturned = ref(0);
-
-function runHasNonBlankResult(run: ModuleRunItem): boolean {
-  const result = run.result;
-  if (!result) return run.status !== "succeeded";
-  if (result.has_nominations === true) return true;
-  if (Number(result.nomination_count || 0) > 0) return true;
-  if (Array.isArray(result.dry_run_edits) && result.dry_run_edits.length > 0) return true;
-  return result.run_kind !== "empty" && result.has_nominations !== false;
-}
+const apiScanned = ref(0);
+const apiScanLimit = ref(1000);
+const apiScanCapped = ref(false);
 
 function runResultLabel(run: ModuleRunItem): string {
   const result = run.result;
@@ -67,8 +61,9 @@ function runResultLabel(run: ModuleRunItem): string {
   return result.run_kind || "Result";
 }
 
-const displayedRuns = computed(() =>
-  nonBlankOnly.value ? runs.value.filter(runHasNonBlankResult) : runs.value
+const displayedRuns = computed(() => runs.value);
+const loadedRunsLabel = computed(() =>
+  nonBlankOnly.value ? "meaningful runs" : "runs"
 );
 
 const selectedRun = computed(
@@ -103,6 +98,8 @@ async function loadRuns(): Promise<void> {
     const data = await fetchFourAwardRuns({
       unique: uniqueOnly.value,
       limit: runLimit.value,
+      nonBlank: nonBlankOnly.value,
+      scanLimit: 50000,
     });
     jobs.value = data.jobs.map((job) => ({
       name: job.name,
@@ -110,6 +107,9 @@ async function loadRuns(): Promise<void> {
     }));
     runs.value = data.runs;
     apiReturned.value = data.returned || data.runs.length;
+    apiScanned.value = data.scanned;
+    apiScanLimit.value = data.scan_limit;
+    apiScanCapped.value = data.scan_capped;
     if (!selectedJob.value) {
       selectedJob.value = jobs.value.find((job) => job.enabled)?.name || jobs.value[0]?.name || "";
     }
@@ -135,7 +135,7 @@ async function reloadRunsWithCurrentFilters(): Promise<void> {
 }
 
 async function loadMoreRuns(): Promise<void> {
-  runLimit.value = Math.min(runLimit.value + 50, 1000);
+  runLimit.value = Math.min(runLimit.value + 50, nonBlankOnly.value ? 100 : 1000);
   await loadRuns();
 }
 
@@ -241,7 +241,12 @@ onMounted(() => {
         <div class="four-award-runs-header">
           <h3>Recent Runs</h3>
           <label class="four-award-filter">
-            <input v-model="nonBlankOnly" type="checkbox">
+            <input
+              v-model="nonBlankOnly"
+              type="checkbox"
+              :disabled="loading"
+              @change="reloadRunsWithCurrentFilters"
+            >
             <span>Non-blank only</span>
           </label>
           <label class="four-award-filter">
@@ -255,7 +260,11 @@ onMounted(() => {
           </label>
         </div>
         <p class="help-text">
-          Showing {{ displayedRuns.length }} of {{ runs.length }} loaded runs.
+          Showing {{ displayedRuns.length }} loaded runs.
+          <template v-if="nonBlankOnly">
+            Scanned {{ apiScanned }} of {{ apiScanLimit }} allowed rows.
+            <span v-if="apiScanCapped">Raise the scan cap to find more hits.</span>
+          </template>
         </p>
         <table class="four-award-runs">
           <thead>
@@ -294,13 +303,13 @@ onMounted(() => {
         <div class="four-award-load-more">
           <CdxButton
             weight="quiet"
-            :disabled="loading || runLimit >= 1000"
+            :disabled="loading || runLimit >= (nonBlankOnly ? 100 : 1000)"
             @click="loadMoreRuns"
           >
             Load 50 more
           </CdxButton>
           <span class="help-text">
-            Loaded {{ apiReturned }} runs from the latest {{ runLimit }} checked.
+            Loaded {{ apiReturned }} {{ loadedRunsLabel }}.
           </span>
         </div>
       </div>

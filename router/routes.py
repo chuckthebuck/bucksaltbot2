@@ -74,10 +74,12 @@ from router.module_registry import (
     create_module_job_run,
     get_module_config,
     get_module_definition,
+    get_module_job_run_hit_cache,
     get_module_job_run,
     list_module_cron_jobs,
     list_module_definitions,
     list_module_job_runs,
+    refresh_module_job_run_hit_cache,
     request_module_job_run_cancel,
     set_module_enabled,
     update_module_cron_job,
@@ -3730,6 +3732,23 @@ def _four_award_run_is_duplicate_noop(run: dict) -> bool:
     return True
 
 
+def _four_award_run_has_value(run: dict) -> bool:
+    result = run.get("result")
+    if not isinstance(result, dict) or not result:
+        return run.get("status") not in {"completed", "succeeded"}
+    if result.get("has_nominations") is True:
+        return True
+    try:
+        if int(result.get("nomination_count") or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    edits = result.get("dry_run_edits")
+    if isinstance(edits, list) and edits:
+        return True
+    return result.get("run_kind") != "empty" and result.get("has_nominations") is not False
+
+
 def _four_award_unique_hit_runs(runs: list[dict]) -> list[dict]:
     seen_claims: set[tuple[str, tuple[str, ...]]] = set()
     included_ids: set[int] = set()
@@ -3866,13 +3885,79 @@ def four_award_runs_api():
         "no",
         "off",
     }
+    non_blank_only = str(request.args.get("non_blank", "0")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    use_cache = str(request.args.get("cache", "1")).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    refresh_cache = str(request.args.get("refresh", "0")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     try:
         limit = int(request.args.get("limit", "50"))
     except (TypeError, ValueError):
         limit = 50
     limit = max(1, min(limit, 1000))
-    raw_runs = list_module_job_runs("four_award", limit=limit)
-    runs = _four_award_unique_hit_runs(raw_runs) if unique_only else raw_runs
+    try:
+        hits = int(request.args.get("hits", str(limit)))
+    except (TypeError, ValueError):
+        hits = limit
+    hits = max(1, min(hits, 100))
+    raw_scan_limit = str(request.args.get("scan_limit", "1000")).strip().lower()
+    if raw_scan_limit in {"", "0", "all", "none", "unlimited"}:
+        scan_limit = 50000
+    else:
+        try:
+            scan_limit = int(raw_scan_limit)
+        except (TypeError, ValueError):
+            scan_limit = 1000
+    requested_scan_limit = max(hits, min(scan_limit, 50000))
+    cache_hit = False
+    cache_payload = None
+
+    if non_blank_only and use_cache and hits <= 50 and requested_scan_limit >= 50000:
+        cache_payload = (
+            refresh_module_job_run_hit_cache("four_award")
+            if refresh_cache
+            else get_module_job_run_hit_cache("four_award")
+        )
+
+    if cache_payload:
+        raw_runs = list(cache_payload.get("runs") or [])
+        runs = _four_award_unique_hit_runs(raw_runs) if unique_only else raw_runs
+        runs = runs[:hits]
+        scanned = int(cache_payload.get("scan_limit") or len(raw_runs))
+        scan_limit = int(cache_payload.get("scan_limit") or requested_scan_limit)
+        scan_capped = bool(cache_payload.get("scan_capped"))
+        cache_hit = True
+    elif non_blank_only:
+        raw_runs = list_module_job_runs(
+            "four_award",
+            limit=hits,
+            non_blank=True,
+            scan_limit=requested_scan_limit,
+        )
+        runs = _four_award_unique_hit_runs(raw_runs) if unique_only else raw_runs
+        runs = [run for run in runs if _four_award_run_has_value(run)][:hits]
+        scanned = requested_scan_limit if len(runs) < hits else len(raw_runs)
+        scan_limit = requested_scan_limit
+        scan_capped = scanned >= requested_scan_limit and len(runs) < hits
+    else:
+        raw_runs = list_module_job_runs("four_award", limit=limit)
+        runs = _four_award_unique_hit_runs(raw_runs) if unique_only else raw_runs
+        scanned = len(raw_runs)
+        scan_limit = requested_scan_limit
+        scan_capped = False
 
     return jsonify(
         {
@@ -3880,6 +3965,13 @@ def four_award_runs_api():
             "jobs": list_module_cron_jobs("four_award"),
             "runs": runs,
             "limit": limit,
+            "hits": hits,
+            "non_blank": non_blank_only,
+            "requested_scan_limit": requested_scan_limit,
+            "scan_limit": scan_limit,
+            "scanned": scanned,
+            "scan_capped": scan_capped,
+            "cache": cache_hit,
             "unique": unique_only,
             "returned": len(runs),
             "can_run": _four_award_run_allowed(username),

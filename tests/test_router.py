@@ -1615,6 +1615,213 @@ def test_four_award_runs_api_can_return_non_unique_larger_history(client):
     assert [run["id"] for run in data["runs"]] == [2, 1]
 
 
+def test_four_award_runs_api_can_request_meaningful_hits(client):
+    _set_session(client, "viewer")
+    record = SimpleNamespace(enabled=True)
+    runs = [
+        {
+            "id": 5,
+            "status": "completed",
+            "trigger_type": "schedule",
+            "payload": {},
+            "result": {"run_kind": "empty", "has_nominations": False},
+        },
+        {
+            "id": 4,
+            "status": "completed",
+            "trigger_type": "schedule",
+            "payload": {},
+            "result": {"run_kind": "reviewed", "has_nominations": True, "nomination_count": 1},
+        },
+        {
+            "id": 3,
+            "status": "completed",
+            "trigger_type": "schedule",
+            "payload": {},
+            "result": {"run_kind": "empty", "has_nominations": False},
+        },
+        {
+            "id": 2,
+            "status": "completed",
+            "trigger_type": "schedule",
+            "payload": {},
+            "result": {"dry_run_edits": [{"title": "Wikipedia:Four Award"}]},
+        },
+        {
+            "id": 1,
+            "status": "completed",
+            "trigger_type": "schedule",
+            "payload": {},
+            "result": {"run_kind": "reviewed", "has_nominations": True, "nomination_count": 1},
+        },
+    ]
+
+    with (
+        patch("router.routes._four_award_operator_allowed", return_value=True),
+        patch("router.routes._four_award_run_allowed", return_value=False),
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes.list_module_cron_jobs", return_value=[]),
+        patch("router.routes.list_module_job_runs", return_value=runs) as list_runs,
+    ):
+        resp = client.get("/api/v1/four-award/runs?hits=2&non_blank=1&scan_limit=5")
+
+    assert resp.status_code == 200
+    list_runs.assert_called_once_with(
+        "four_award",
+        limit=2,
+        non_blank=True,
+        scan_limit=5,
+    )
+    data = resp.get_json()
+    assert data["hits"] == 2
+    assert data["non_blank"] is True
+    assert data["requested_scan_limit"] == 5
+    assert data["scan_limit"] == 5
+    assert data["scanned"] == 5
+    assert data["scan_capped"] is False
+    assert data["returned"] == 2
+    assert [run["id"] for run in data["runs"]] == [4, 2]
+
+
+def test_four_award_runs_api_reports_capped_meaningful_scan(client):
+    _set_session(client, "viewer")
+    record = SimpleNamespace(enabled=True)
+    runs = [
+        {
+            "id": 3,
+            "status": "completed",
+            "trigger_type": "schedule",
+            "payload": {},
+            "result": {"run_kind": "empty", "has_nominations": False},
+        },
+        {
+            "id": 2,
+            "status": "completed",
+            "trigger_type": "schedule",
+            "payload": {},
+            "result": {"run_kind": "reviewed", "has_nominations": True, "nomination_count": 1},
+        },
+        {
+            "id": 1,
+            "status": "completed",
+            "trigger_type": "schedule",
+            "payload": {},
+            "result": {"run_kind": "empty", "has_nominations": False},
+        },
+    ]
+
+    with (
+        patch("router.routes._four_award_operator_allowed", return_value=True),
+        patch("router.routes._four_award_run_allowed", return_value=False),
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes.list_module_cron_jobs", return_value=[]),
+        patch("router.routes.list_module_job_runs", return_value=runs),
+    ):
+        resp = client.get("/api/v1/four-award/runs?hits=2&non_blank=1&scan_limit=3")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["scanned"] == 3
+    assert data["requested_scan_limit"] == 3
+    assert data["scan_limit"] == 3
+    assert data["returned"] == 1
+    assert data["scan_capped"] is True
+    assert [run["id"] for run in data["runs"]] == [2]
+
+
+def test_four_award_runs_api_clamps_scan_limit_when_history_is_smaller(client):
+    _set_session(client, "viewer")
+    record = SimpleNamespace(enabled=True)
+    runs = [
+        {
+            "id": 3,
+            "status": "completed",
+            "trigger_type": "schedule",
+            "payload": {},
+            "result": {"run_kind": "empty", "has_nominations": False},
+        },
+        {
+            "id": 2,
+            "status": "completed",
+            "trigger_type": "schedule",
+            "payload": {},
+            "result": {"run_kind": "reviewed", "has_nominations": True, "nomination_count": 1},
+        },
+        {
+            "id": 1,
+            "status": "completed",
+            "trigger_type": "schedule",
+            "payload": {},
+            "result": {"run_kind": "empty", "has_nominations": False},
+        },
+    ]
+
+    with (
+        patch("router.routes._four_award_operator_allowed", return_value=True),
+        patch("router.routes._four_award_run_allowed", return_value=False),
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes.list_module_cron_jobs", return_value=[]),
+        patch("router.routes.list_module_job_runs", return_value=runs) as list_runs,
+    ):
+        resp = client.get("/api/v1/four-award/runs?hits=2&non_blank=1&scan_limit=100")
+
+    assert resp.status_code == 200
+    list_runs.assert_called_once_with(
+        "four_award",
+        limit=2,
+        non_blank=True,
+        scan_limit=100,
+    )
+    data = resp.get_json()
+    assert data["requested_scan_limit"] == 100
+    assert data["scan_limit"] == 100
+    assert data["scanned"] == 100
+    assert data["returned"] == 1
+    assert data["scan_capped"] is True
+    assert [run["id"] for run in data["runs"]] == [2]
+
+
+def test_four_award_runs_api_uses_cached_meaningful_hits(client):
+    _set_session(client, "viewer")
+    record = SimpleNamespace(enabled=True)
+    cached_runs = [
+        {
+            "id": 7,
+            "status": "completed",
+            "trigger_type": "schedule",
+            "payload": {},
+            "result": {"has_nominations": True, "nomination_count": 1},
+        }
+    ]
+
+    with (
+        patch("router.routes._four_award_operator_allowed", return_value=True),
+        patch("router.routes._four_award_run_allowed", return_value=False),
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes.list_module_cron_jobs", return_value=[]),
+        patch(
+            "router.routes.get_module_job_run_hit_cache",
+            return_value={
+                "runs": cached_runs,
+                "hits": 50,
+                "scan_limit": 50000,
+                "returned": 1,
+                "scan_capped": False,
+            },
+        ),
+        patch("router.routes.list_module_job_runs") as list_runs,
+    ):
+        resp = client.get("/api/v1/four-award/runs?hits=50&non_blank=1&scan_limit=50000&unique=0")
+
+    assert resp.status_code == 200
+    list_runs.assert_not_called()
+    data = resp.get_json()
+    assert data["cache"] is True
+    assert data["scan_limit"] == 50000
+    assert data["returned"] == 1
+    assert [run["id"] for run in data["runs"]] == [7]
+
+
 def test_four_award_test_run_rejects_duplicate_historical_claim(client):
     _set_session(client, "viewer")
     record = SimpleNamespace(
