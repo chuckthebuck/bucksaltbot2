@@ -53,6 +53,29 @@ def test_register_enabled_modules_registers_blueprint_with_module_prefix():
     app.register_blueprint.assert_called_once_with(blueprint, url_prefix="/four_award")
 
 
+def test_register_enabled_modules_honors_blueprint_owned_api_prefix():
+    import router.module_runtime as runtime
+
+    app = Flask(__name__)
+    blueprint = Blueprint(
+        "saltlick",
+        __name__,
+        url_prefix="/api/v1/modules/saltlick",
+    )
+    record = _make_record("saltlick")
+    loaded = runtime.LoadedModule(record=record, blueprint=blueprint)
+
+    with patch("router.module_runtime.load_enabled_modules", return_value=[loaded]):
+        app.register_blueprint = MagicMock()
+        registered = runtime.register_enabled_modules(app)
+
+    assert registered == ["saltlick"]
+    app.register_blueprint.assert_called_once_with(
+        blueprint,
+        url_prefix="/api/v1/modules/saltlick",
+    )
+
+
 def test_load_module_uses_explicit_blueprint_entry_point():
     import router.module_registry as registry
     import router.module_runtime as runtime

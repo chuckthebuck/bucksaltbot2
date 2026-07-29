@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Saltlick UI preview</title>
+    <link rel="stylesheet" href="../modules/saltlick/static/style.css">
+    <style>
+      body { background: #eeece4; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="saltlick-app"></div>
+    <script>
+      const jsonResponse = (payload, status = 200) =>
+        Promise.resolve(
+          new Response(JSON.stringify(payload), {
+            status,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+
+      window.fetch = (url, options = {}) => {
+        if (String(url).endsWith("/auth")) {
+          return jsonResponse({
+            username: "PreviewUser",
+            can_preview: true,
+            can_apply: true,
+            can_manage: true,
+          });
+        }
+        if (String(url).endsWith("/validate")) {
+          const request = JSON.parse(options.body || "{}");
+          return jsonResponse({
+            ok: true,
+            recipe: request.recipe,
+            jobs_py: 'def run(ctx, payload):\n    """Generated preview."""\n    return {"ok": True}\n',
+            module_toml: 'name = "my_first_saltlick_bot"\ntitle = "My first Saltlick bot"\n',
+          });
+        }
+        if (String(url).endsWith("/preview") || String(url).endsWith("/apply")) {
+          return jsonResponse({ status: "queued", run_id: 42 }, 202);
+        }
+        if (String(url).includes("/runs/42")) {
+          return jsonResponse({
+            id: 42,
+            status: "completed",
+            result: {
+              ok: true,
+              dry_run: true,
+              scanned_count: 2,
+              changed_count: 1,
+              saved_count: 0,
+              skipped_count: 1,
+              error_count: 0,
+              items: [
+                {
+                  title: "User:Example/Sandbox",
+                  status: "proposed",
+                  diff: "--- User:Example/Sandbox (before)\n+++ User:Example/Sandbox (after)\n@@ -1 +1 @@\n-old text\n+new text\n",
+                },
+                {
+                  title: "User:Example/Other",
+                  status: "skipped",
+                  reason: "missing_required_text",
+                },
+              ],
+            },
+          });
+        }
+        return jsonResponse({ detail: `Unhandled preview URL: ${url}` }, 404);
+      };
+    </script>
+    <script src="../modules/saltlick/static/saltlick-app.js"></script>
+  </body>
+</html>

@@ -37,6 +37,11 @@ There are three supported module modes:
 | Editable package | separate local module repo | Python entry point from `pip install -e` | day-to-day module development |
 | Vendored snapshot | `vendor/modules/<module_name>/` | Python entry point from `requirements-modules.txt` | Toolforge deploys and reproducible releases |
 
+Saltlick is the reference for the last two modes. It is enabled in the default
+framework build but kept as a complete repository-shaped package under
+`vendor/modules/saltlick/`, so contributors can fork it or install a sibling
+clone editable without moving its implementation into the framework.
+
 Use editable packages while building. Use vendored snapshots when you need a
 single framework commit that Toolforge can build without fetching another repo.
 
@@ -231,6 +236,12 @@ Those should move under `/api/v1/modules/four_award/` over time. A module
 manifest should not need to declare the generated framework endpoint paths. If a
 module needs to describe external API behavior, such as Wikimedia API URL,
 user-agent, or edit-summary tag, keep that separate from CTB routes.
+
+A module Blueprint can own this standard namespace by declaring its Flask
+`url_prefix`, for example
+`Blueprint("saltlick", __name__, url_prefix="/api/v1/modules/saltlick")`.
+Blueprints without an explicit prefix retain the compatibility mount at
+`/<module_name>`.
 
 ## Module Frontend
 

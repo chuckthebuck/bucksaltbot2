@@ -57,5 +57,11 @@ update_module \
 	"${CHUCK_FILE_CHANGER_REMOTE:-https://github.com/chuckthebuck/Chuckthefilechange.git}" \
 	"${CHUCK_FILE_CHANGER_BRANCH:-main}"
 
+update_module \
+	"Saltlick" \
+	"vendor/modules/saltlick" \
+	"${SALTLICK_REMOTE:-https://github.com/chuckthebuck/saltlick.git}" \
+	"${SALTLICK_BRANCH:-main}"
+
 npm install
 npm run modules:frontend

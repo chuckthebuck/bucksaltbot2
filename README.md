@@ -19,6 +19,28 @@ Module-specific business logic should live in the module package repo whenever
 possible. For example, `chuck_the_4awardhelper` owns its parser, reviewer,
 service code, Vue page, static build assets, and module documentation.
 
+## Saltlick: Idea to Pywikibot in Under Two Hours
+
+Saltlick is Chuckbot's marquee module and is included in the default framework
+build. Its guided workshop lets a contributor choose real Pywikibot page
+generators, chain text transformations, filter and bound the run, preview every
+proposed edit as a unified diff, and then either run live or export a fork-ready
+recipe, handler, and manifest.
+
+The shared-host version favors features without pretending arbitrary Python is
+safe to execute beside framework credentials. It includes literal and regex
+changes, full-page templates, and a restricted Python-like expression language.
+When that boundary becomes limiting, the generated source is designed to be
+edited as normal Python in a Saltlick fork.
+
+Saltlick lives as the standalone package snapshot at
+`vendor/modules/saltlick/`, is installed by `requirements-modules.txt`, and is
+listed in `enabled-modules.txt`. Its preview job cannot save; live execution has
+the separate `module:saltlick:apply_changes` permission and explicit
+confirmation gates. See
+[`vendor/modules/saltlick/README.md`](vendor/modules/saltlick/README.md) for the
+two-hour path, CLI, supported sources and transformations, and fork workflow.
+
 ## Module Contract
 
 Production modules are vendored package snapshots, not runtime-loaded plugins.
@@ -34,10 +56,12 @@ module name appears in `enabled-modules.txt`:
 ```txt
 # requirements-modules.txt
 ./vendor/modules/four_award
+./vendor/modules/saltlick
 
 # enabled-modules.txt
 rollback
 four_award
+saltlick
 ```
 
 The framework discovers and loads modules through:

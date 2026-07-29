@@ -185,7 +185,10 @@ def register_enabled_modules(app: Flask) -> list[str]:
         if blueprint is None:
             continue
 
-        url_prefix = f"/{loaded.definition.name}"
+        url_prefix = (
+            str(getattr(blueprint, "url_prefix", "") or "").strip()
+            or f"/{loaded.definition.name}"
+        )
         try:
             app.register_blueprint(blueprint, url_prefix=url_prefix)
         except ValueError:

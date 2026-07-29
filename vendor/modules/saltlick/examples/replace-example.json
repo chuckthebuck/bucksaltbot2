@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "name": "Sandbox spelling updater",
+  "wiki": {
+    "code": "commons",
+    "family": "commons"
+  },
+  "source": {
+    "type": "titles",
+    "titles": [
+      "User:Example/Sandbox"
+    ],
+    "target": "",
+    "limit": 1,
+    "namespaces": [
+      2
+    ],
+    "recursive": 0,
+    "only_template_inclusion": false
+  },
+  "filters": {
+    "title_regex": "Sandbox$",
+    "contains": "teh",
+    "not_contains": "",
+    "skip_redirects": true,
+    "skip_missing": true
+  },
+  "transforms": [
+    {
+      "type": "regex_replace",
+      "pattern": "\\bteh\\b",
+      "replace": "the",
+      "flags": "i",
+      "count": 0
+    }
+  ],
+  "save": {
+    "summary": "Fixing a spelling error in {{pagename}} with Saltlick",
+    "minor": true,
+    "bot": true,
+    "watch": "nochange",
+    "throttle_seconds": 0
+  },
+  "limits": {
+    "max_edits": 1,
+    "stop_on_error": true,
+    "max_page_bytes": 2000000
+  },
+  "metadata": {}
+}

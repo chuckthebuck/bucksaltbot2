@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chuckbot-saltlick"
+version = "0.1.0"
+description = "Guided, forkable Pywikibot workflows for Chuckbot"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "Flask>=3.1",
+  "pywikibot>=11.2",
+]
+
+[project.scripts]
+saltlick = "saltlick.cli:main"
+
+[tool.setuptools]
+packages = ["saltlick"]
+include-package-data = true
+
+[tool.setuptools.package-dir]
+saltlick = "modules/saltlick"
+
+[tool.setuptools.package-data]
+saltlick = [
+  "module.toml",
+  "static/*.js",
+  "static/*.css",
+  "docs/*.md",
+]
+
+[project.entry-points."chuck_buckbot.modules"]
+saltlick = "saltlick.manifest:module_manifest"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["modules"]
