@@ -9,6 +9,19 @@ load_local_env
 ensure_venv
 require_cmd npm
 
+run_unit_tests() {
+	# Local runtime safety/dev flags intentionally change application behavior.
+	# Unit tests need framework defaults and provide their own external-service mocks.
+	env \
+		-u BOT_NAME \
+		-u TOOL_NAME \
+		-u CHUCKBOT_LOCAL_SAFE_MODE \
+		-u FLASK_DEBUG \
+		-u LIVE_TEST_DISABLE_STATUS_UPDATES \
+		ENABLE_MODULE_LOADING=0 \
+		"$(venv_python)" "$@"
+}
+
 info "Canary: Python version"
 run_python --version
 
@@ -18,6 +31,10 @@ ENABLE_MODULE_LOADING=0 run_python -m framework_selftest
 info "Canary: checking vendored module autoversioning"
 python3 scripts/check-module-autoversioning.py
 
+info "Canary: checking generated Salt Shack registry"
+PYTHONPATH=vendor/modules/saltlick/modules \
+	run_python -m saltlick.build --check
+
 info "Canary: generating frontend module registry"
 npm run modules:frontend
 
@@ -25,15 +42,17 @@ info "Canary: production frontend build"
 npm run build
 
 info "Canary: focused framework/module tests"
-ENABLE_MODULE_LOADING=0 run_python -m pytest \
+run_unit_tests -m pytest \
 	tests/test_module_registry.py \
 	tests/test_module_runtime.py \
 	tests/test_jobs_yaml_generator.py \
+	tests/test_saltlick_module.py \
+	tests/test_wiki_actions.py \
 	-q
 
 if [[ "${CANARY_FULL_TESTS:-0}" == "1" ]]; then
 	info "Canary: full non-live pytest suite"
-	ENABLE_MODULE_LOADING=0 run_python -m pytest tests -q --ignore=tests/live
+	run_unit_tests -m pytest tests -q --ignore=tests/live
 else
 	info "Skipping full test suite. Set CANARY_FULL_TESTS=1 to run tests minus tests/live."
 fi

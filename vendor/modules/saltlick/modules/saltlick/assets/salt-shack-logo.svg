@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-labelledby="title description">
+  <title id="title">Salt Shack</title>
+  <desc id="description">A small blue shack with antlers and the Chuckbot C in its doorway.</desc>
+  <g fill="none" stroke="#163d7a" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M72 48 60 37 48 40 39 31M60 37 61 24M120 48l12-11 12 3 9-9M132 37l-1-13" stroke-width="7"/>
+    <path d="m30 83 66-50 66 50" stroke-width="10"/>
+    <path d="M43 79v78h106V79" fill="#e8f1ff" stroke-width="8"/>
+    <path d="M76 157v-55c0-12 9-21 20-21s20 9 20 21v55" fill="#ffffff" stroke-width="8"/>
+    <path d="M106 101a18 18 0 1 0 0 28" stroke-width="9"/>
+    <path d="M21 157h150" stroke-width="8"/>
+  </g>
+  <circle cx="151" cy="64" r="6" fill="#4f78bd"/>
+  <circle cx="41" cy="64" r="6" fill="#4f78bd"/>
+</svg>

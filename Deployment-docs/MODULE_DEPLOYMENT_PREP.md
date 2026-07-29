@@ -61,6 +61,12 @@ This document guides you through preparing Chuck the Buckbot Framework for produ
   - [x] Installs from `./vendor/modules/four_award`
   - [ ] Confirm `chuck_the_4awardhelper` imports cleanly before deploy
 
+- [ ] **Salt Shack module snapshot** (`vendor/modules/saltlick/`):
+  - [ ] Run `PYTHONPATH=vendor/modules/saltlick/modules python3 -m saltlick.build --check`
+  - [ ] Confirm every intended directory appears in the generated Saltlick registry
+  - [ ] Run the package tests and Codex frontend typecheck/build
+  - [ ] Preview a read-only Saltlick and the page-purger action Saltlick in local safe mode
+
 ### 4. Testing
 
 - [ ] **Run focused tests for the areas changed**:

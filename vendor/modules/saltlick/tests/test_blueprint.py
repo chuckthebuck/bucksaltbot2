@@ -94,3 +94,71 @@ def test_preview_queues_canonical_recipe(monkeypatch):
     assert captured["username"] == "Alice"
     assert captured["live"] is False
     assert captured["workflow"].name == "Example bot"
+
+
+def test_salt_shack_catalog_exposes_contracts_without_entrypoints(monkeypatch):
+    response = client(monkeypatch).get("/api/v1/modules/saltlick/saltlicks")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["module"]["display_name"] == "Salt Shack"
+    assert {item["id"] for item in body["saltlicks"]} == {
+        "page_purger",
+        "transclusion_report",
+    }
+    assert all("entrypoint" not in item for item in body["saltlicks"])
+
+
+def test_nested_run_endpoint_accepts_only_inputs_and_arguments(monkeypatch):
+    captured = {}
+
+    def fake_enqueue(
+        saltlick_id,
+        *,
+        username,
+        live,
+        inputs,
+        arguments,
+        preview_token="",
+    ):
+        captured.update(
+            saltlick_id=saltlick_id,
+            username=username,
+            live=live,
+            inputs=inputs,
+            arguments=arguments,
+            preview_token=preview_token,
+        )
+        return 77
+
+    monkeypatch.setattr(api, "_enqueue_saltlick", fake_enqueue)
+    response = client(monkeypatch).post(
+        "/api/v1/modules/saltlick/saltlicks/page_purger/runs",
+        json={
+            "mode": "preview",
+            "inputs": {
+                "targets": [{"title": "Main Page", "namespace": 0}],
+            },
+            "arguments": ["-verbose"],
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.get_json()["run_id"] == 77
+    assert captured["saltlick_id"] == "page_purger"
+    assert captured["username"] == "Alice"
+    assert captured["live"] is False
+    assert captured["inputs"]["targets"][0]["namespace"] == 0
+
+    rejected = client(monkeypatch).post(
+        "/api/v1/modules/saltlick/saltlicks/page_purger/runs",
+        json={
+            "mode": "preview",
+            "inputs": {
+                "targets": [{"title": "Main Page", "namespace": 0}],
+            },
+            "script": "other.py",
+        },
+    )
+    assert rejected.status_code == 400
+    assert "unsupported request field" in rejected.get_json()["detail"]

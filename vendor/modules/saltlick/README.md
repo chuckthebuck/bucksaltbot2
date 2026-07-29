@@ -1,203 +1,298 @@
-# Saltlick
+# Salt Shack
 
-Saltlick is Chuckbot's guided Pywikibot workshop. It turns a page source and a
-chain of text transformations into:
+Salt Shack is Chuckbot's default, contract-driven Pywikibot module. The module
+contains any number of independently runnable **Saltlicks**. Each immediate
+subdirectory under `modules/saltlick/saltlicks/` becomes one nested UI and one
+fixed server-side script.
 
-- a real dry run against live wiki text,
-- bounded unified diffs for every proposed edit,
-- a separately permissioned live run, and
-- fork-ready `recipe.json`, `jobs.py`, and `module.toml` source.
+The intended authoring path is deliberately short:
 
-The goal is practical: a Wikimedia contributor who understands the edit they
-want to make should be able to get a solid Pywikibot workflow running in under
-two hours without first rebuilding authentication, scheduling, permissions,
-logging, cancellation, run history, or dry-run reporting.
+1. Duplicate a Saltlick directory.
+2. Rename the directory.
+3. Replace `script.py`.
+4. Describe inputs, outputs, and allowed actions in `saltlick.yaml`.
+5. Rebuild Salt Shack.
 
-Saltlick is a standalone Python package and Chuckbot module. The Chuckbot
-framework vendors a known-good snapshot and enables it by default; day-to-day
-Saltlick development can happen in its own repository.
+There is no runtime **Add Saltlick** endpoint. Saltlick source and contracts are
+immutable image contents.
 
-## The under-two-hour path
-
-1. Open **Modules → Saltlick** in Chuckbot.
-2. Choose a wiki and one of the page sources.
-3. Add one or more transformations.
-4. Run a dry preview and inspect each diff.
-5. Iterate until the report is clean.
-6. Either run live with the `apply_changes` right or download the recipe and
-   fork Saltlick.
-
-Drafts remain in the browser. They are not stored as shared framework config,
-and another Saltlick user cannot overwrite them.
-
-## Page sources
-
-Saltlick supports bounded versions of common Pywikibot generators:
-
-- explicit page titles,
-- category members, including recursive subcategories,
-- backlinks or template transclusions,
-- pages linked from another page,
-- MediaWiki search,
-- a user's contributions,
-- recent changes, and
-- pages with a title prefix.
-
-Namespaces and page limits are part of the recipe, so a broad source does not
-silently turn into an unbounded job.
-
-## Transformations
-
-Transformations run in order:
-
-- literal find/replace,
-- regex substitution with `i`, `m`, `s`, and `x` flags,
-- prepend or append,
-- replace the whole page,
-- page templates using `{{text}}`, `{{title}}`, and `{{namespace}}`, and
-- restricted expressions.
-
-The expression language resembles a Python expression but is interpreted
-node-by-node. It exposes `text`, `title`, and `namespace`, plus:
+## Directory convention
 
 ```text
-replace, regex, strip, lstrip, rstrip, lower, upper, titlecase,
-contains, starts_with, ends_with, length, slice
+modules/saltlick/saltlicks/
+├── page_purger/
+│   ├── saltlick.yaml
+│   └── script.py
+└── transclusion_report/
+    ├── saltlick.yaml
+    └── script.py
 ```
 
-For example:
+The directory name is the stable Saltlick ID. No central Python or frontend
+registry needs to be edited.
+
+If `saltlick.yaml` is omitted, the build generates a zero-config contract with
+the standard wiki and raw Pywikibot-argument controls. Add a contract when the
+script should receive typed inputs or return structured output.
+
+## Contract
+
+```yaml
+contract: 1
+display_name: Page purger
+description: Preview and perform cache purges.
+entrypoint: script.py:run
+
+inputs:
+  wiki:
+    type: wiki
+    required: true
+    default: {code: commons, family: commons}
+
+  targets:
+    type: pages
+    required: true
+    max_items: 250
+    namespace:
+      selectable: true
+      allowed: [0, 2, 4, 6, 10, 14]
+      default: 0
+
+  force_link_update:
+    type: boolean
+    default: true
+
+outputs:
+  planned_count:
+    type: number
+    label: Planned purges
+
+  targets:
+    type: pages
+    label: Target pages
+
+actions:
+  allowed:
+    - mediawiki.page.purge
+```
+
+Salt Shack owns the Codex layout. Contracts describe semantics only; they do
+not contain HTML, Codex component names, colors, columns, or arbitrary layout.
+
+### Input types
+
+- `string`
+- `text`
+- `integer`
+- `number`
+- `boolean`
+- `choice`
+- `wiki`
+- `namespace`
+- `page`
+- `pages`
+- `user`
+- `date`
+- `datetime`
+
+Page values are normalized into an explicit API shape:
+
+```json
+{
+  "wiki": {"code": "commons", "family": "commons"},
+  "namespace": 10,
+  "title": "Example"
+}
+```
+
+For `page` and `pages`, namespace policy can be fixed or selectable. Salt Shack
+loads the selected wiki's real namespace names and uses namespace-scoped Codex
+lookups for page titles. `pages` renders as a multi-select lookup with chips.
+
+When a contract has exactly one `wiki` input, Salt Shack automatically links
+all `namespace`, `page`, and `pages` inputs to it. If a Saltlick exposes
+multiple wiki inputs, point a dependent input at the right one:
+
+```yaml
+inputs:
+  source_wiki:
+    type: wiki
+  source_page:
+    type: page
+    wiki_input: source_wiki
+```
+
+The wiki selector is populated from Wikimedia's site matrix, with common
+projects available as an offline fallback.
+
+### Output types
+
+- `string`
+- `number`
+- `boolean`
+- `message`
+- `page`
+- `pages`
+- `table`
+- `json`
+
+Tables declare typed columns. Returned output and action data are validated
+against the installed contract before they are persisted as the run result.
+
+## Script contract
+
+The recommended function accepts the framework context, normalized inputs, and
+raw compatibility arguments:
 
 ```python
-regex(r"(?i)old name", "New name", text) if contains(lower(text), "old name") else text
+def run(ctx, inputs, arguments):
+    site = ctx.site(
+        inputs["wiki"]["code"],
+        inputs["wiki"]["family"],
+    )
+    return {
+        "outputs": {
+            "count": 0,
+            "rows": [],
+        },
+        "actions": [],
+    }
 ```
 
-Imports, attributes, comprehensions, arbitrary function calls, and statements
-are rejected. A fork can replace the generated handler with normal Python when
-the shared-host expression language is no longer enough.
+For small scripts Salt Shack also accepts:
 
-## Dry-run boundary
+```text
+run(ctx, inputs)
+run(inputs, arguments)
+run(inputs)
+run()
+```
 
-The `preview` job always runs dry, regardless of request payload. It reads the
-same pages and runs the same transformation chain as a live job, but it never
-calls `page.save()`. Proposed edits and summaries are returned as
-`dry_run_edits`, which the framework's normal run report renders.
+The browser never submits a script path, handler path, or Python source. The
+worker resolves the requested Saltlick ID against the compiled image registry.
 
-Live runs have three independent gates:
+## Framework actions
 
-1. the manifest's `apply` job requires `module:saltlick:apply_changes`;
-2. the browser requires an explicit confirmation;
-3. the handler requires `confirm_live=true`.
+Scripts return declarative action envelopes:
 
-`CHUCKBOT_LOCAL_SAFE_MODE` still wins: the framework injects `dry_run=true`
-into module config, which forces even the `apply` handler back to preview mode.
+```python
+{
+    "type": "mediawiki.page.purge",
+    "target": {
+        "wiki": {"code": "commons", "family": "commons"},
+        "namespace": 0,
+        "title": "Main Page",
+    },
+    "params": {"forcelinkupdate": True},
+}
+```
 
-Diffs are bounded per page and per run. Sources, page size, transformation
-count, expression size, and edit count are bounded as well. Regexes are more
-permissive by design; the framework's isolated process timeout remains the
-backstop for an unexpectedly expensive pattern.
+Action types must be declared by the Saltlick and implemented by Chuckbot's
+framework-owned action catalog. Salt Shack does not contain the MediaWiki
+mutation implementation.
 
-Saltlick does **not** execute arbitrary user-provided Python on the shared host.
-That would expose framework credentials and host data, not merely trade a small
-amount of safety for features.
+Preview runs validate and display the action plan without executing it. The
+result includes a SHA-256 plan digest. Apply runs regenerate the plan and must
+match the reviewed digest before the framework executes any action.
 
-## API boundary
+The first shipped framework action is:
 
-Saltlick's authoring API is mounted at `/api/v1/modules/saltlick`. The
-`validate`, `preview`, and `apply` routes accept a declarative `recipe`, never
-Python source or a handler path:
+```text
+mediawiki.page.purge
+```
+
+Additional non-editing MediaWiki actions can be added to the framework catalog
+without changing the Saltlick UI renderer.
+
+## API
+
+```text
+GET  /api/v1/modules/saltlick/saltlicks
+GET  /api/v1/modules/saltlick/saltlicks/<saltlick-id>
+GET  /api/v1/modules/saltlick/saltlicks/<saltlick-id>/runs
+POST /api/v1/modules/saltlick/saltlicks/<saltlick-id>/runs
+GET  /api/v1/modules/saltlick/runs/<run-id>
+```
+
+Preview request:
 
 ```json
 {
-  "recipe": {
-    "wiki": {"code": "commons", "family": "commons"},
-    "source": {"type": "category", "target": "Category:Example", "limit": 25},
-    "transforms": [{"type": "literal_replace", "find": "old", "replace": "new"}],
-    "save": {"summary": "Example Saltlick update"},
-    "limits": {"max_edits": 25}
+  "mode": "preview",
+  "inputs": {
+    "targets": [
+      {"namespace": 0, "title": "Main Page"}
+    ]
   },
-  "inputs": {},
-  "arguments": {}
+  "arguments": ["-verbose"]
 }
 ```
 
-The package handler is fixed by `module.toml` as
-`saltlick.service:run_saltlick`. The run payload is stored as audited job data
-and interpreted by that reviewed handler.
-
-Generated bots go one step further: their recipe is baked into `jobs.py`, so
-their normal run endpoint accepts only `inputs`, `arguments`, and the live
-confirmation. The allowed invocation fields are deliberately small:
-
-- inputs: `titles`, `target`;
-- arguments: `source_limit`, `namespaces`, `max_edits`, `title_regex`,
-  `contains`, `not_contains`, `summary`, `throttle_seconds`.
-
-The framework supplies the fixed generated-bot routes:
-
-```text
-POST /api/v1/modules/<module-name>/jobs/preview/runs
-POST /api/v1/modules/<module-name>/jobs/apply/runs
-```
-
-For example:
+Apply request:
 
 ```json
 {
-  "inputs": {"target": "Category:Example"},
-  "arguments": {"source_limit": 50, "max_edits": 10},
-  "confirm_live": true
+  "mode": "apply",
+  "inputs": {
+    "targets": [
+      {"namespace": 0, "title": "Main Page"}
+    ]
+  },
+  "arguments": ["-verbose"],
+  "confirm_live": true,
+  "preview_token": "<digest returned by preview>"
 }
 ```
 
-`confirm_live` is omitted for previews and required for apply runs.
-Unknown request fields are rejected. `jobs.py` returned by `validate` is an
-export artifact and is never accepted back by a run endpoint.
+## Generated registry
 
-## Run as a standalone CLI
-
-Install the package in a normal Pywikibot environment:
+Build the self-generated YAML registry:
 
 ```bash
-python -m pip install -e .
-saltlick examples/replace-example.json
+PYTHONPATH=modules python3 -m saltlick.build
 ```
 
-The default is always a dry run. A live run requires both flags:
+Verify that the checked-in/generated artifact matches the directories:
 
 ```bash
-saltlick examples/replace-example.json --live --yes
+PYTHONPATH=modules python3 -m saltlick.build --check
 ```
 
-Pywikibot supplies the normal `user-config.py` and login behavior outside
-Chuckbot.
+`npm run build` runs the registry compiler before the Codex frontend build.
+The generated artifact is packaged into the image for review and deployment
+audits. Runtime discovery uses the same compiler rules.
 
-## Develop beside Chuckbot
+## Develop and test
 
 ```bash
-python -m pip install -e ../saltlick
-python scripts/check-module-install.py
+python3 -m pip install -e .
+npm install
+npm run typecheck
+npm run build
+PYTHONPATH=modules python3 -m pytest -q
 ```
 
-The package advertises the `saltlick` manifest through the
-`chuck_buckbot.modules` entry-point group. Before a framework deploy, refresh
-the vendored snapshot and keep these entries:
-
-```text
-# requirements-modules.txt
-./vendor/modules/saltlick
-
-# enabled-modules.txt
-saltlick
-```
-
-The frontend source lives in `modules/saltlick/frontend`. Build the standalone
-package with `npm run build`. Saltlick packages its compiled JavaScript and CSS,
-and the framework serves those authenticated module assets directly; a fork
-does not need a matching import in the framework's combined Vite bundle.
-
-## Test
+When vendored into Chuckbot:
 
 ```bash
-PYTHONPATH=modules python -m pytest -q
+PYTHONPATH=vendor/modules/saltlick/modules \
+  python3 -m pytest -q vendor/modules/saltlick/tests
+
+python3 -m pytest -q tests/test_saltlick_module.py tests/test_wiki_actions.py
 npm run build
 ```
+
+## Deployment
+
+Salt Shack remains a separate, forkable repository while Chuckbot vendors a
+known-good snapshot under `vendor/modules/saltlick`.
+
+Production wiring remains:
+
+```text
+requirements-modules.txt: ./vendor/modules/saltlick
+enabled-modules.txt:      saltlick
+```
+
+The manifest's compatibility key remains `saltlick`; its user-facing title is
+**Salt Shack**.

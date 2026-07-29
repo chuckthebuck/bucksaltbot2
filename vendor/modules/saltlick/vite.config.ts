@@ -7,6 +7,7 @@ export default defineConfig({
     "process.env.NODE_ENV": JSON.stringify("production"),
   },
   build: {
+    assetsInlineLimit: 100_000,
     lib: {
       entry: "modules/saltlick/frontend/entry.ts",
       name: "SaltlickApp",

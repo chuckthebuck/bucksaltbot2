@@ -1,10 +1,12 @@
-"""Authenticated Saltlick browser API."""
+"""Authenticated Salt Shack browser API."""
 
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request, session
 
 from .codegen import render_jobs_py, render_module_toml
+from .contracts import public_contract, validate_arguments, validate_inputs
+from .registry import get_saltlick, registry_fingerprint, registry_payload
 from .spec import WorkflowSpec
 
 
@@ -137,6 +139,45 @@ def _enqueue(
     return run_id
 
 
+def _enqueue_saltlick(
+    saltlick_id: str,
+    *,
+    username: str,
+    live: bool,
+    inputs: dict,
+    arguments: list[str],
+    preview_token: str = "",
+) -> int:
+    from module_tasks import process_module_job_run
+    from router.module_registry import (
+        ModuleJobConcurrencyError,
+        create_module_job_run,
+    )
+
+    job_name = "apply" if live else "preview"
+    payload = {
+        "saltlick_id": saltlick_id,
+        "inputs": inputs,
+        "arguments": arguments,
+        "confirm_live": bool(live),
+    }
+    if preview_token:
+        payload["preview_token"] = preview_token
+    try:
+        run_id = create_module_job_run(
+            MODULE_NAME,
+            job_name,
+            trigger_type="manual",
+            triggered_by=username,
+            payload=payload,
+            concurrency_policy="forbid" if live else "allow",
+        )
+    except ModuleJobConcurrencyError as exc:
+        raise ActiveRunError(exc.active_run_ids) from exc
+    process_module_job_run.delay(run_id)
+    return run_id
+
+
 @blueprint.get("/auth")
 def auth_api():
     username, denied = _require_access()
@@ -150,6 +191,137 @@ def auth_api():
             "can_manage": _has_right(username or "", "manage"),
         }
     )
+
+
+@blueprint.get("/saltlicks")
+def saltlicks_api():
+    _, denied = _require_access()
+    if denied:
+        return denied
+    payload = registry_payload()
+    payload["fingerprint"] = registry_fingerprint()
+    return jsonify(payload)
+
+
+@blueprint.get("/saltlicks/<saltlick_id>")
+def saltlick_contract_api(saltlick_id: str):
+    _, denied = _require_access()
+    if denied:
+        return denied
+    definition = get_saltlick(saltlick_id)
+    if definition is None:
+        return jsonify({"detail": "Saltlick not found"}), 404
+    return jsonify(definition.as_dict(public=True))
+
+
+@blueprint.post("/saltlicks/<saltlick_id>/runs")
+def saltlick_run_api(saltlick_id: str):
+    username, denied = _require_access()
+    if denied:
+        return denied
+    definition = get_saltlick(saltlick_id)
+    if definition is None:
+        return jsonify({"detail": "Saltlick not found"}), 404
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"detail": "request body must be an object"}), 400
+    allowed = {
+        "mode",
+        "inputs",
+        "arguments",
+        "confirm_live",
+        "preview_token",
+    }
+    unknown = sorted(set(payload) - allowed)
+    if unknown:
+        return jsonify(
+            {"detail": f"unsupported request field(s): {', '.join(unknown)}"}
+        ), 400
+    mode = str(payload.get("mode") or "preview").strip().lower()
+    if mode not in {"preview", "apply"}:
+        return jsonify({"detail": "mode must be preview or apply"}), 400
+    live = mode == "apply"
+    if live:
+        if not _can_apply(username or ""):
+            return jsonify(
+                {"detail": "Forbidden: apply_changes right required"}
+            ), 403
+        if payload.get("confirm_live") is not True:
+            return jsonify(
+                {"detail": "Live run requires confirm_live=true"}
+            ), 400
+        preview_token = str(payload.get("preview_token") or "").strip()
+        if not preview_token:
+            return jsonify(
+                {"detail": "Live run requires a preview_token"}
+            ), 400
+    else:
+        if not _can_preview(username or ""):
+            return jsonify({"detail": "Forbidden: run_jobs right required"}), 403
+        preview_token = ""
+    try:
+        inputs = validate_inputs(definition.contract, payload.get("inputs"))
+        arguments = validate_arguments(payload.get("arguments"))
+        run_id = _enqueue_saltlick(
+            definition.id,
+            username=username or "",
+            live=live,
+            inputs=inputs,
+            arguments=arguments,
+            preview_token=preview_token,
+        )
+    except ActiveRunError as exc:
+        return jsonify(
+            {"detail": str(exc), "active_run_ids": exc.run_ids}
+        ), 409
+    except ValueError as exc:
+        return jsonify({"detail": str(exc)}), 400
+    return jsonify(
+        {
+            "status": "queued",
+            "run_id": run_id,
+            "job": "apply" if live else "preview",
+            "saltlick_id": definition.id,
+            "contract": public_contract(definition.contract),
+        }
+    ), 202
+
+
+@blueprint.get("/saltlicks/<saltlick_id>/runs")
+def saltlick_runs_api(saltlick_id: str):
+    username, denied = _require_access()
+    if denied:
+        return denied
+    definition = get_saltlick(saltlick_id)
+    if definition is None:
+        return jsonify({"detail": "Saltlick not found"}), 404
+    from router.module_registry import list_module_job_runs
+
+    can_manage = _has_right(username or "", "manage")
+    runs = []
+    for run in list_module_job_runs(MODULE_NAME, limit=100):
+        payload = run.get("payload") or {}
+        if payload.get("saltlick_id") != definition.id:
+            continue
+        owner = str(run.get("triggered_by") or "")
+        if owner and owner != username and not can_manage:
+            continue
+        runs.append(
+            {
+                "id": run["id"],
+                "job_name": run.get("job_name"),
+                "status": run.get("status"),
+                "triggered_by": run.get("triggered_by"),
+                "created_at": run.get("created_at"),
+                "started_at": run.get("started_at"),
+                "finished_at": run.get("finished_at"),
+                "error": run.get("error"),
+                "result": run.get("result") or {},
+            }
+        )
+        if len(runs) >= 25:
+            break
+    return jsonify({"saltlick_id": definition.id, "runs": runs})
 
 
 @blueprint.post("/validate")

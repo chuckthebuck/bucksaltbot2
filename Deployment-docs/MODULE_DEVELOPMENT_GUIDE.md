@@ -42,6 +42,19 @@ framework build but kept as a complete repository-shaped package under
 `vendor/modules/saltlick/`, so contributors can fork it or install a sibling
 clone editable without moving its implementation into the framework.
 
+Its canonical upstream is `https://github.com/chuckthebuck/saltlick`. When
+Salt Shack changes are first developed in the framework snapshot, commit the
+framework work and split only the module directory back to that repository:
+
+```bash
+bash scripts/backport-saltlick-subtree.sh --dry-run
+bash scripts/backport-saltlick-subtree.sh
+```
+
+The helper accepts `SALTLICK_REMOTE` and `SALTLICK_BRANCH` overrides for a
+local bootstrap repository, fork, or release branch. The upstream repository
+must exist before the non-dry-run push.
+
 Use editable packages while building. Use vendored snapshots when you need a
 single framework commit that Toolforge can build without fetching another repo.
 

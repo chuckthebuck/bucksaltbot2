@@ -5,6 +5,7 @@ WORKDIR /app
 COPY requirements.txt requirements-modules.txt ./
 COPY vendor ./vendor
 RUN pip install -r requirements.txt
+RUN saltshack-build --check
 
 COPY . .
 

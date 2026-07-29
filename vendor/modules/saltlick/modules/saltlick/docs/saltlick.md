@@ -1,62 +1,46 @@
-# Saltlick
+# Salt Shack
 
-Saltlick takes you from a repeatable wiki edit to a working Pywikibot workflow:
+Salt Shack contains the Saltlick scripts compiled into this Chuckbot image.
+Each Saltlick owns its typed inputs, structured outputs, permitted framework
+actions, defaults, and run history.
 
-1. choose a wiki and a bounded page source;
-2. chain text transformations;
-3. filter pages and set edit limits;
-4. run a dry preview against live page text;
-5. inspect every proposed diff; and
-6. run live or export the recipe and generated module source.
+## Running a Saltlick
 
-## Sources
+1. Select an installed Saltlick.
+2. Complete the generated Codex form.
+3. Optionally add raw Pywikibot arguments under **Advanced**.
+4. Run a dry preview.
+5. Review the structured outputs and every planned action.
+6. Apply the exact previewed plan when the Saltlick declares actions and you
+   have the required right.
 
-You can start from page titles, category members, backlinks/template
-transclusions, links on a page, wiki search, user contributions, recent
-changes, or a title prefix. A source reads at most 500 pages. Use namespaces
-and a smaller limit while developing.
+Apply runs must reproduce the preview's action-plan digest. If the plan changes,
+Salt Shack rejects it and requires a new preview.
 
-## Changes
+## Adding a Saltlick
 
-Saltlick applies every transform in order. It supports literal and regex
-replacement, prepend/append, full-page templates, whole-page replacement, and
-restricted expressions.
+Saltlicks cannot be added from the browser. They are immutable image contents.
 
-Template text can use:
+Duplicate a subdirectory under `modules/saltlick/saltlicks/`, rename it, replace
+the script, update its optional `saltlick.yaml`, and rebuild the module. The
+Salt Shack registry and nested UI are generated from the discovered
+directories.
 
-- `{{text}}` — text entering this transformation;
-- `{{title}}` — full page title;
-- `{{namespace}}` — numeric namespace.
+## Page inputs
 
-Expression transforms expose `text`, `title`, and `namespace`, with the safe
-functions listed in the UI. They do not execute arbitrary Python. Download the
-generated source and edit it in a fork when you need unrestricted code.
+Page inputs contain a numeric namespace and title. Salt Shack loads the chosen
+wiki's namespace catalog, then uses namespace-scoped Codex lookups for page
+titles. A Saltlick may fix the namespace, allow a specific set, or expose the
+selector. Multiple-page inputs use a searchable multi-select with removable
+chips.
 
-## Dry run and live run
+When the contract has one wiki input, page and namespace inputs follow it
+automatically. Contracts with multiple wiki inputs use `wiki_input` to name the
+one a page or namespace field should follow.
 
-Preview is structurally dry: the preview handler never calls `page.save()`.
-The report includes the edit summary and bounded unified diff for every
-proposed change.
+## Framework actions
 
-A live run requires the `module:saltlick:apply_changes` right, the browser
-confirmation, and the handler's live confirmation. The maximum-edit setting is
-a hard ceiling. Local safe mode forces all Saltlick runs back to dry-run mode.
-
-Start with one sandbox page, then a small representative source, then the full
-bounded set.
-
-## Forking
-
-**Validate and generate code** produces:
-
-- `recipe.json` — portable workflow data;
-- `jobs.py` — a framework handler using Saltlick's tested engine;
-- `module.toml` — a starter module manifest.
-
-The Saltlick package is deliberately a separate, forkable module repository
-even though Chuckbot includes it by default.
-
-The shared authoring API accepts declarative `recipe`, `inputs`, and
-`arguments` objects. It never accepts Python source. In generated modules, the
-recipe is baked into the reviewed handler and run endpoints accept only the
-documented inputs and arguments.
+Saltlick scripts describe actions; Chuckbot's framework executes them. Preview
+runs never execute actions. The installed framework currently supports
+`mediawiki.page.purge`; other action types must be added to the framework
+catalog before a Saltlick may apply them.

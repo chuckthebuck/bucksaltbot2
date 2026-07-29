@@ -19,27 +19,26 @@ Module-specific business logic should live in the module package repo whenever
 possible. For example, `chuck_the_4awardhelper` owns its parser, reviewer,
 service code, Vue page, static build assets, and module documentation.
 
-## Saltlick: Idea to Pywikibot in Under Two Hours
+## Salt Shack: Idea to Pywikibot in Under Two Hours
 
-Saltlick is Chuckbot's marquee module and is included in the default framework
-build. Its guided workshop lets a contributor choose real Pywikibot page
-generators, chain text transformations, filter and bound the run, preview every
-proposed edit as a unified diff, and then either run live or export a fork-ready
-recipe, handler, and manifest.
+Salt Shack is Chuckbot's marquee module and is included in the default
+framework build. It contains any number of independently runnable Saltlicks.
+Each immediate child directory supplies one fixed Python script and an optional
+typed YAML contract for its inputs, outputs, and framework actions.
 
-The shared-host version favors features without pretending arbitrary Python is
-safe to execute beside framework credentials. It includes literal and regex
-changes, full-page templates, and a restricted Python-like expression language.
-When that boundary becomes limiting, the generated source is designed to be
-edited as normal Python in a Saltlick fork.
+The build discovers those directories automatically, compiles the registry, and
+generates a nested Wikimedia Codex UI. Wiki, namespace, page, multi-page,
+choice, numeric, boolean, text, date, and user inputs are supported without a
+Saltlick author writing frontend code. The browser sends only the Saltlick ID,
+typed inputs, and compatibility arguments; it never sends script source or a
+handler path.
 
-Saltlick lives as the standalone package snapshot at
+Salt Shack lives as the standalone-repository-shaped snapshot at
 `vendor/modules/saltlick/`, is installed by `requirements-modules.txt`, and is
-listed in `enabled-modules.txt`. Its preview job cannot save; live execution has
-the separate `module:saltlick:apply_changes` permission and explicit
-confirmation gates. See
+listed in `enabled-modules.txt`. Preview runs produce a reviewed action-plan
+digest; apply runs must reproduce that exact plan. See
 [`vendor/modules/saltlick/README.md`](vendor/modules/saltlick/README.md) for the
-two-hour path, CLI, supported sources and transformations, and fork workflow.
+copy-a-directory workflow, contract format, API, and framework action model.
 
 ## Module Contract
 
@@ -321,6 +320,16 @@ bash scripts/backport-four-award-subtree.sh --dry-run
 
 The helper splits only `vendor/modules/four_award` and refuses commits that
 contain framework paths. The same workflow is available as VS Code tasks.
+
+Salt Shack has the equivalent checked split for its independent repository:
+
+```bash
+bash scripts/backport-saltlick-subtree.sh --dry-run
+```
+
+It defaults to `https://github.com/chuckthebuck/saltlick.git`; override
+`SALTLICK_REMOTE` or `SALTLICK_BRANCH` when bootstrapping a local repository or
+publishing through a fork.
 
 ## Documentation
 

@@ -87,6 +87,23 @@ class ModuleRunContext:
         site.login()
         return site
 
+    def execute_actions(
+        self,
+        actions,
+        *,
+        dry_run: bool = True,
+        allowed_types=(),
+    ):
+        """Run a declarative action plan through the framework action catalog."""
+        from router.wiki_actions import execute_action_plan
+
+        return execute_action_plan(
+            actions,
+            site_factory=self.site,
+            dry_run=dry_run,
+            allowed_types=allowed_types,
+        )
+
 
 def _import_handler(handler_path: str):
     module_path, sep, attr = str(handler_path or "").partition(":")

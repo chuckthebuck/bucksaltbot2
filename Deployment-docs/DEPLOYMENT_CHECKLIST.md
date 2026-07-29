@@ -49,6 +49,13 @@ The split should show the module repo root (`modules/`, `tests/`,
 framework paths such as `router/`, `Deployment-docs/`, `vendor/`, or
 `requirements.txt`.
 
+Use the equivalent Salt Shack check before publishing its independent module
+repository:
+
+```bash
+bash scripts/backport-saltlick-subtree.sh --dry-run
+```
+
 ## Toolforge Deploy
 
 From the tool account:

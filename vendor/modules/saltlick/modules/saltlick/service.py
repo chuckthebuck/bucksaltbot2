@@ -5,11 +5,21 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime, timezone
 import difflib
+import hashlib
+import json
 import re
 import time
 from typing import Any
 
 from .codegen import render_jobs_py
+from .contracts import (
+    public_contract,
+    validate_actions,
+    validate_arguments,
+    validate_inputs,
+    validate_outputs,
+)
+from .registry import get_saltlick, invoke_saltlick
 from .sources import resolve_pages
 from .spec import WorkflowSpec, recipe_with_invocation
 from .transforms import apply_transforms
@@ -222,8 +232,11 @@ def _config_bool(ctx: Any | None, key: str, default: bool = False) -> bool:
     return bool(value)
 
 
-def run_saltlick(ctx: Any | None = None, payload: dict[str, Any] | None = None):
-    """Run Saltlick through Chuckbot's isolated module runner."""
+def _run_legacy_workflow(
+    ctx: Any | None = None,
+    payload: dict[str, Any] | None = None,
+):
+    """Run the pre-Salt-Shack recipe format for compatibility."""
     data = payload or {}
     unknown = sorted(set(data) - {"recipe", "inputs", "arguments", "confirm_live"})
     if unknown:
@@ -247,3 +260,147 @@ def run_saltlick(ctx: Any | None = None, payload: dict[str, Any] | None = None):
             raise RuntimeError("Saltlick requires a framework context or injected site")
         site = ctx.site(workflow.wiki.code, workflow.wiki.family)
     return execute_workflow(site, workflow, dry_run=dry_run, ctx=ctx)
+
+
+def _plan_token(
+    *,
+    saltlick_id: str,
+    inputs: dict[str, Any],
+    arguments: list[str],
+    actions: list[dict[str, Any]],
+) -> str:
+    payload = {
+        "saltlick_id": saltlick_id,
+        "inputs": inputs,
+        "arguments": arguments,
+        "actions": actions,
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def execute_saltlick(
+    ctx: Any | None,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate, dispatch, and report one immutable Saltlick."""
+    allowed_payload = {
+        "saltlick_id",
+        "inputs",
+        "arguments",
+        "confirm_live",
+        "preview_token",
+    }
+    unknown = sorted(set(payload) - allowed_payload)
+    if unknown:
+        raise ValueError(f"unsupported run argument(s): {', '.join(unknown)}")
+
+    saltlick_id = str(payload.get("saltlick_id") or "").strip()
+    definition = get_saltlick(saltlick_id)
+    if definition is None:
+        raise ValueError(f"unknown Saltlick: {saltlick_id}")
+    inputs = validate_inputs(definition.contract, payload.get("inputs"))
+    arguments = validate_arguments(payload.get("arguments"))
+
+    job_name = str(getattr(ctx, "job_name", "preview") or "preview")
+    apply_job = job_name == "apply"
+    if apply_job and payload.get("confirm_live") is not True:
+        raise ValueError("live Saltlick runs require confirm_live=true")
+    forced_dry_run = _config_bool(ctx, "dry_run", False)
+    dry_run = not apply_job or forced_dry_run
+
+    raw_result = invoke_saltlick(
+        definition,
+        ctx=ctx,
+        inputs=inputs,
+        arguments=arguments,
+    )
+    if raw_result is None:
+        raw_result = {}
+    if not isinstance(raw_result, dict):
+        raise ValueError("Saltlick run functions must return an object")
+    unknown_result = sorted(set(raw_result) - {"outputs", "actions"})
+    if unknown_result:
+        raise ValueError(
+            "Saltlick returned unsupported field(s): "
+            + ", ".join(unknown_result)
+        )
+    outputs = validate_outputs(
+        definition.contract,
+        raw_result.get("outputs"),
+    )
+    actions = validate_actions(
+        definition.contract,
+        raw_result.get("actions"),
+    )
+    plan_token = _plan_token(
+        saltlick_id=definition.id,
+        inputs=inputs,
+        arguments=arguments,
+        actions=actions,
+    )
+    if apply_job and not forced_dry_run:
+        supplied_token = str(payload.get("preview_token") or "")
+        if not supplied_token:
+            raise ValueError("live Saltlick runs require a preview_token")
+        if supplied_token != plan_token:
+            raise ValueError(
+                "Saltlick action plan changed after preview; preview it again"
+            )
+
+    if ctx is None or not hasattr(ctx, "execute_actions"):
+        if actions and not dry_run:
+            raise RuntimeError(
+                "live Saltlick actions require a framework run context"
+            )
+        action_result = {
+            "ok": True,
+            "dry_run": True,
+            "planned_count": len(actions),
+            "completed_count": 0,
+            "error_count": 0,
+            "items": [
+                {
+                    "index": index,
+                    **action,
+                    "status": "planned",
+                }
+                for index, action in enumerate(actions)
+            ],
+        }
+    else:
+        action_result = ctx.execute_actions(
+            actions,
+            dry_run=dry_run,
+            allowed_types=definition.contract["actions"]["allowed"],
+        )
+
+    return {
+        "ok": bool(action_result.get("ok", True)),
+        "saltlick": {
+            "id": definition.id,
+            "display_name": definition.contract["display_name"],
+            "source_digest": definition.source_digest,
+        },
+        "contract": public_contract(definition.contract),
+        "inputs": inputs,
+        "arguments": arguments,
+        "outputs": outputs,
+        "actions": actions,
+        "action_result": action_result,
+        "dry_run": bool(dry_run),
+        "plan_token": plan_token,
+    }
+
+
+def run_saltlick(ctx: Any | None = None, payload: dict[str, Any] | None = None):
+    """Run a Salt Shack child Saltlick through Chuckbot's isolated runner."""
+    data = payload or {}
+    if "recipe" in data:
+        return _run_legacy_workflow(ctx, data)
+    return execute_saltlick(ctx, data)

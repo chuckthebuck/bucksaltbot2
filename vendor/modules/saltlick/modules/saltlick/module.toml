@@ -4,7 +4,7 @@ entry_point = "saltlick.service:run_saltlick"
 blueprint_entry_point = "saltlick.blueprint:blueprint"
 ui = true
 redis_namespace = "saltlick"
-title = "Saltlick"
+title = "Salt Shack"
 oauth_consumer_mode = "default"
 rights = ["manage", "run_jobs", "apply_changes"]
 
