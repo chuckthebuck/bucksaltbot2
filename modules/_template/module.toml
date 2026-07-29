@@ -1,14 +1,28 @@
 name = "template_module"
 repo = "https://github.com/chuckthebuck/bucksaltbot2"
-entry_point = "modules.template_module.blueprint"
-ui = true
+entry_point = "modules.template_module.jobs:run"
+ui = false
 redis_namespace = "template_module"
 title = "Template Module"
+rights = ["run_jobs"]
 
-# Optional: declare worker-facing rights exposed by this module.
-# Grant these with module-scoped atoms such as module:template_module:run_jobs.
+# Optional UI:
+# blueprint_entry_point = "modules.template_module.blueprint:blueprint"
+# ui = true
+#
+# Declare worker-facing rights exposed by this module. Grant these with
+# module-scoped atoms such as module:template_module:run_jobs.
 # The framework automatically provides module:<name>:view and module:<name>:estop.
-# rights = ["manage", "run_jobs", "edit_config"]
+#
+# Add manage/edit_config or a sensitive action right when the module needs them:
+# rights = ["manage", "run_jobs", "edit_config", "apply_changes"]
+
+[[worker_jobs]]
+name = "run"
+handler = "modules.template_module.jobs:run"
+concurrency_policy = "forbid"
+timeout_seconds = 300
+enabled = true
 
 # For cron-only modules, add:
 # [[cron_jobs]]
@@ -16,5 +30,9 @@ title = "Template Module"
 # run = "daily at 01:00"
 # # Or use raw cron for advanced schedules:
 # # schedule = "0 1 * * *"
-# endpoint = "/api/v1/template_module/cron/some-job"
+# handler = "modules.template_module.jobs:run"
+# execution_mode = "handler"
 # timeout_seconds = 300
+
+# Sensitive jobs can require a second declared module right beyond run_jobs:
+# required_right = "apply_changes"

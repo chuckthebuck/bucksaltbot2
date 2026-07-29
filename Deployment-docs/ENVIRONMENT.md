@@ -32,6 +32,7 @@ These should not be committed.
 | `CONSUMER_SECRET` | wiki writes | Pywikibot OAuth consumer secret for bot edits. |
 | `ACCESS_TOKEN` | wiki writes | Pywikibot OAuth access token for bot edits. |
 | `ACCESS_SECRET` | wiki writes | Pywikibot OAuth access secret for bot edits. |
+| `MODULE_CRON_TOKEN` | module cron | Shared secret required by legacy HTTP cron triggers. Prefer handler jobs. |
 | `TOOL_TOOLSDB_PASSWORD` | Toolforge/local DB | MariaDB password. Toolforge buildservice can provide this through env when `replica.my.cnf` is not mounted. |
 
 ## Non-Secret Runtime Config
@@ -41,7 +42,7 @@ These are safe to document and usually safe to keep in `.env.example`.
 | Name | Scope | Notes |
 | --- | --- | --- |
 | `ENABLE_MODULE_LOADING` | framework | Enables module registry bootstrap. |
-| `ENABLED_MODULES` | framework | Optional override; empty uses `enabled-modules.txt`. |
+| `ENABLED_MODULES` | framework | Optional addition to `enabled-modules.txt`; when both are empty, no modules are loaded. |
 | `BOT_NAME` / `TOOL_NAME` | framework | Tool identity and default callback host. |
 | `NOTDEV` | framework | Production flag used by deployment/runtime scripts. |
 | `BUCKBOT_HTTP_USER_AGENT` | framework HTTP | User-Agent for framework-owned Wikimedia/Toolhub requests. |
@@ -54,6 +55,7 @@ These are safe to document and usually safe to keep in `.env.example`.
 | `TOOL_TOOLSDB_DATABASE` | DB | DB name override. |
 | `TOOL_DATA_DIR` | filesystem | Runtime data/log root. |
 | `PYWIKIBOT_DIR` | filesystem | Pywikibot config directory. |
+| `MODULE_CRON_BASE_URL` | module cron | Public framework base URL used only by legacy HTTP cron jobs. |
 
 ## Policy
 

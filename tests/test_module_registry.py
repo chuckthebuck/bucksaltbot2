@@ -126,6 +126,26 @@ def test_parse_module_definition_accepts_cron_only_module():
     assert definition.cron_jobs[0].endpoint == "/api/v1/cleanup/cron/daily"
 
 
+def test_parse_module_definition_rejects_remote_cron_endpoint():
+    import router.module_registry as registry
+
+    with pytest.raises(ValueError, match="application path"):
+        registry.parse_module_definition(
+            {
+                "name": "cleanup",
+                "repo": "https://example.invalid/cleanup",
+                "entry_point": "cleanup.cron",
+                "cron": [
+                    {
+                        "name": "daily-cleanup",
+                        "schedule": "0 1 * * *",
+                        "endpoint": "https://example.invalid/run",
+                    }
+                ],
+            }
+        )
+
+
 def test_parse_module_definition_accepts_human_readable_handler_job():
     import router.module_registry as registry
 
@@ -177,6 +197,75 @@ def test_parse_module_definition_accepts_worker_job():
     assert definition.worker_jobs[0].name == "file-change"
     assert definition.worker_jobs[0].handler == "modules.file_changer.service:run"
     assert definition.worker_jobs[0].timeout_seconds == 900
+
+
+def test_parse_module_definition_accepts_job_required_right():
+    import router.module_registry as registry
+
+    definition = registry.parse_module_definition(
+        {
+            "name": "file_changer",
+            "repo": "https://example.invalid/file-changer",
+            "entry_point": "modules.file_changer.service:run",
+            "ui": True,
+            "rights": ["apply_changes"],
+            "worker_jobs": [
+                {
+                    "name": "file-change",
+                    "handler": "modules.file_changer.service:run",
+                    "required_right": "apply-changes",
+                }
+            ],
+        }
+    )
+
+    assert definition.worker_jobs[0].required_right == "apply_changes"
+
+
+def test_parse_module_definition_rejects_undeclared_job_required_right():
+    import router.module_registry as registry
+
+    with pytest.raises(ValueError, match="must also appear in module rights"):
+        registry.parse_module_definition(
+            {
+                "name": "file_changer",
+                "repo": "https://example.invalid/file-changer",
+                "entry_point": "file_changer.service:run",
+                "worker_jobs": [
+                    {
+                        "name": "apply",
+                        "handler": "file_changer.service:run",
+                        "required_right": "apply_changes",
+                    }
+                ],
+            }
+        )
+
+
+def test_parse_module_definition_rejects_duplicate_job_names_across_job_types():
+    import router.module_registry as registry
+
+    with pytest.raises(ValueError, match="job names must be unique"):
+        registry.parse_module_definition(
+            {
+                "name": "cleanup",
+                "repo": "https://example.invalid/cleanup",
+                "entry_point": "cleanup.service:run",
+                "jobs": [
+                    {
+                        "name": "sync",
+                        "run": "every hour",
+                        "handler": "cleanup.service:run",
+                    }
+                ],
+                "worker_jobs": [
+                    {
+                        "name": "sync",
+                        "handler": "cleanup.service:run",
+                    }
+                ],
+            }
+        )
 
 
 def test_parse_module_definition_accepts_module_rights():
@@ -246,16 +335,39 @@ def test_parse_module_definition_accepts_packaged_frontend_metadata():
     assert definition.frontend.bundled is True
 
 
-def test_four_award_python_manifest_marks_frontend_bundled():
+def test_four_award_python_entry_point_uses_packaged_toml_manifest():
     from vendor.modules.four_award.modules.four_award.manifest import module_manifest
 
     import router.module_registry as registry
 
     definition = registry.parse_module_definition(module_manifest())
+    toml_definition = registry.load_module_definition(
+        Path(
+            "vendor/modules/four_award/modules/four_award/module.toml"
+        )
+    )
 
-    assert definition.frontend is not None
+    assert definition == toml_definition
     assert definition.frontend.mount_id == "four-award-app"
     assert definition.frontend.bundled is True
+
+
+def test_file_changer_python_entry_point_uses_packaged_toml_manifest():
+    from vendor.modules.chuck_file_changer.modules.chuck_file_changer.manifest import (
+        module_manifest,
+    )
+
+    import router.module_registry as registry
+
+    definition = registry.parse_module_definition(module_manifest())
+    toml_definition = registry.load_module_definition(
+        Path(
+            "vendor/modules/chuck_file_changer/modules/"
+            "chuck_file_changer/module.toml"
+        )
+    )
+
+    assert definition == toml_definition
 
 
 def test_parse_module_definition_rejects_frontend_without_ui():
@@ -337,6 +449,46 @@ def test_parse_module_definition_requires_module_consumer_fields_when_enabled():
         )
 
 
+def test_parse_module_definition_records_module_worker_oauth_environment():
+    import router.module_registry as registry
+
+    definition = registry.parse_module_definition(
+        {
+            "name": "managed",
+            "repo": "https://example.invalid/managed",
+            "entry_point": "handler",
+            "ui": True,
+            "oauth_consumer_mode": "module",
+            "oauth_consumer_key_env": "MANAGED_CONSUMER_TOKEN",
+            "oauth_consumer_secret_env": "MANAGED_CONSUMER_SECRET",
+            "oauth_access_token_env": "MANAGED_ACCESS_TOKEN",
+            "oauth_access_secret_env": "MANAGED_ACCESS_SECRET",
+        }
+    )
+
+    assert definition.oauth_consumer_key_env == "MANAGED_CONSUMER_TOKEN"
+    assert definition.oauth_consumer_secret_env == "MANAGED_CONSUMER_SECRET"
+    assert definition.oauth_access_token_env == "MANAGED_ACCESS_TOKEN"
+    assert definition.oauth_access_secret_env == "MANAGED_ACCESS_SECRET"
+
+
+def test_parse_module_definition_rejects_invalid_oauth_environment_name():
+    import router.module_registry as registry
+
+    with pytest.raises(ValueError, match="uppercase environment variable"):
+        registry.parse_module_definition(
+            {
+                "name": "managed",
+                "repo": "https://example.invalid/managed",
+                "entry_point": "handler",
+                "ui": True,
+                "oauth_consumer_mode": "module",
+                "oauth_consumer_key_env": "not-valid",
+                "oauth_consumer_secret_env": "MANAGED_CONSUMER_SECRET",
+            }
+        )
+
+
 def test_discover_module_definitions_loads_toml_manifests(tmp_path: Path):
     import router.module_registry as registry
 
@@ -390,6 +542,213 @@ def test_upsert_module_definition_persists_cron_jobs_and_registry_rows():
     executed = " ".join(str(c) for c in mock_cursor.execute.call_args_list)
     assert "module_registry" in executed
     assert "module_cron_jobs" in executed
+
+
+def test_upsert_module_definition_preserves_runtime_state():
+    import json
+
+    import router.module_registry as registry
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        ("daily-cleanup", "*/5 * * * *", "every 5 minutes", 45, 0)
+    ]
+    mock_conn = MagicMock()
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    definition = registry.parse_module_definition(
+        {
+            "name": "cleanup",
+            "repo": "https://example.invalid/cleanup",
+            "entry_point": "cleanup.handler",
+            "cron": [
+                {
+                    "name": "daily-cleanup",
+                    "schedule": "0 1 * * *",
+                    "endpoint": "/api/v1/cleanup/cron/daily",
+                    "timeout_seconds": 300,
+                }
+            ],
+        }
+    )
+
+    with patch("router.module_registry.get_conn", return_value=mock_conn):
+        registry.upsert_module_definition(definition, enabled=True)
+
+    registry_insert = next(
+        call
+        for call in mock_cursor.execute.call_args_list
+        if "INSERT INTO module_registry" in call.args[0]
+    )
+    persisted_manifest = json.loads(registry_insert.args[1][-1])
+    persisted_job = persisted_manifest["cron_jobs"][0]
+    assert persisted_job["schedule"] == "*/5 * * * *"
+    assert persisted_job["schedule_text"] == "every 5 minutes"
+    assert persisted_job["timeout_seconds"] == 45
+    assert persisted_job["enabled"] is False
+    assert "enabled=VALUES(enabled)" not in registry_insert.args[0]
+
+
+def test_update_module_cron_job_preserves_worker_jobs():
+    import json
+
+    import router.module_registry as registry
+
+    definition = registry.parse_module_definition(
+        {
+            "name": "combined",
+            "repo": "https://example.invalid/combined",
+            "entry_point": "combined.service:run",
+            "jobs": [
+                {
+                    "name": "scheduled",
+                    "run": "every hour",
+                    "handler": "combined.service:run",
+                }
+            ],
+            "worker_jobs": [
+                {
+                    "name": "manual",
+                    "handler": "combined.service:run",
+                }
+            ],
+        }
+    )
+    record = registry.ModuleRecord(definition=definition, enabled=True)
+    mock_cursor = MagicMock()
+    mock_conn = MagicMock()
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("router.module_registry.get_module_definition", return_value=record),
+        patch("router.module_registry.get_conn", return_value=mock_conn),
+    ):
+        registry.update_module_cron_job(
+            "combined",
+            "scheduled",
+            schedule_text="every 5 minutes",
+        )
+
+    manifest_update = next(
+        call
+        for call in mock_cursor.execute.call_args_list
+        if "UPDATE module_registry" in call.args[0]
+    )
+    persisted_manifest = json.loads(manifest_update.args[1][0])
+    assert persisted_manifest["worker_jobs"][0]["name"] == "manual"
+
+
+def test_create_module_job_run_forbid_rejects_active_run():
+    import router.module_registry as registry
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [(12,)]
+    mock_conn = MagicMock()
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("router.module_registry.get_conn", return_value=mock_conn),
+        pytest.raises(registry.ModuleJobConcurrencyError) as exc_info,
+    ):
+        registry.create_module_job_run(
+            "cleanup",
+            "sync",
+            concurrency_policy="forbid",
+        )
+
+    assert exc_info.value.active_run_ids == [12]
+    mock_conn.rollback.assert_called_once()
+    assert not any(
+        "INSERT INTO module_job_runs" in call.args[0]
+        for call in mock_cursor.execute.call_args_list
+    )
+
+
+def test_create_module_job_run_replace_cancels_active_and_inserts():
+    import router.module_registry as registry
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [(12,), (13,)]
+    mock_cursor.lastrowid = 99
+    mock_conn = MagicMock()
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    with patch("router.module_registry.get_conn", return_value=mock_conn):
+        run_id = registry.create_module_job_run(
+            "cleanup",
+            "sync",
+            concurrency_policy="replace",
+        )
+
+    assert run_id == 99
+    executed = " ".join(call.args[0] for call in mock_cursor.execute.call_args_list)
+    assert "SELECT name" in executed
+    assert "FROM module_registry" in executed
+    assert "FOR UPDATE" in executed
+    assert "UPDATE module_job_runs" in executed
+    assert "INSERT INTO module_job_runs" in executed
+    replace_call = next(
+        call
+        for call in mock_cursor.execute.call_args_list
+        if "UPDATE module_job_runs" in call.args[0]
+    )
+    assert replace_call.args[1][0] == "Replaced by a newer module job run"
+
+
+def test_claim_module_job_run_atomically_claims_queued_run():
+    import router.module_registry as registry
+
+    run = {"id": 77, "status": "launching"}
+    mock_cursor = MagicMock()
+    mock_cursor.rowcount = 1
+    mock_conn = MagicMock()
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("router.module_registry.get_conn", return_value=mock_conn),
+        patch("router.module_registry.get_module_job_run", return_value=run),
+    ):
+        claimed = registry.claim_module_job_run(77)
+
+    assert claimed == run
+    assert "status='queued'" in mock_cursor.execute.call_args.args[0]
+    mock_conn.commit.assert_called_once()
+
+
+def test_claim_module_job_run_rejects_already_claimed_run():
+    import router.module_registry as registry
+
+    mock_cursor = MagicMock()
+    mock_cursor.rowcount = 0
+    mock_conn = MagicMock()
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("router.module_registry.get_conn", return_value=mock_conn),
+        patch("router.module_registry.get_module_job_run") as get_run,
+    ):
+        claimed = registry.claim_module_job_run(77)
+
+    assert claimed is None
+    get_run.assert_not_called()
 
 
 def test_discover_installed_module_definitions_from_entry_points():
@@ -490,3 +849,35 @@ def test_bootstrap_installed_module_definitions_filters_enabled_names():
 
     assert definitions == [four_award]
     mock_upsert.assert_called_once_with(four_award, enabled=True)
+
+
+def test_bootstrap_installed_module_definitions_respects_empty_enabled_allowlist():
+    import router.module_registry as registry
+
+    definition = registry.parse_module_definition(
+        {
+            "name": "cleanup",
+            "repo": "https://example.invalid/cleanup",
+            "entry_point": "cleanup.service:run",
+            "worker_jobs": [
+                {
+                    "name": "sync",
+                    "handler": "cleanup.service:run",
+                }
+            ],
+        }
+    )
+
+    with (
+        patch(
+            "router.module_registry.discover_installed_module_definitions",
+            return_value=[definition],
+        ),
+        patch("router.module_registry.upsert_module_definition") as mock_upsert,
+    ):
+        definitions = registry.bootstrap_installed_module_definitions(
+            enabled_names=set()
+        )
+
+    assert definitions == []
+    mock_upsert.assert_not_called()

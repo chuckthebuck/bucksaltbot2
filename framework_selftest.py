@@ -18,6 +18,8 @@ import json
 import os
 from pathlib import Path
 import sys
+import tomllib
+from types import ModuleType
 from typing import Any, Iterable
 
 
@@ -87,12 +89,22 @@ def _check(name: str, severity: str, ok: bool, message: str, **detail: Any) -> S
 
 
 def _import_dependencies() -> SelfTestCheck:
-    required = ("flask", "mwoauth", "requests", "redis", "pymysql", "celery")
+    required = (
+        "celery",
+        "flask",
+        "mwoauth",
+        "pymysql",
+        "pywikibot",
+        "redis",
+        "requests",
+    )
     missing: list[str] = []
     for module_name in required:
         try:
-            importlib.import_module(module_name)
-        except ModuleNotFoundError:
+            available = importlib.util.find_spec(module_name) is not None
+        except (ModuleNotFoundError, ValueError):
+            available = False
+        if not available:
             missing.append(module_name)
 
     return _check(
@@ -186,8 +198,49 @@ def _resolve_handler_module(handler_path: str) -> None:
     module_name, sep, attr = handler_path.partition(":")
     if not sep or not module_name or not attr:
         raise ValueError("handler must be in module.path:function form")
-    if importlib.util.find_spec(module_name) is None:
+    try:
+        resolved = importlib.util.find_spec(module_name)
+    except (ModuleNotFoundError, ValueError):
+        resolved = None
+    if resolved is None and not _vendored_module_path(module_name):
         raise ModuleNotFoundError(module_name)
+
+
+def _vendored_package_dirs() -> dict[str, Path]:
+    """Return setuptools package-name mappings from vendored pyprojects."""
+    mappings: dict[str, Path] = {}
+    vendor_root = REPO_ROOT / "vendor" / "modules"
+    if not vendor_root.exists():
+        return mappings
+
+    for pyproject_path in sorted(vendor_root.glob("*/pyproject.toml")):
+        try:
+            config = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+            package_dirs = config["tool"]["setuptools"]["package-dir"]
+        except (KeyError, OSError, tomllib.TOMLDecodeError, TypeError):
+            continue
+        if not isinstance(package_dirs, dict):
+            continue
+        for package_name, relative_path in package_dirs.items():
+            if not isinstance(package_name, str) or not isinstance(relative_path, str):
+                continue
+            package_root = pyproject_path.parent / relative_path
+            if package_root.is_dir():
+                mappings[package_name] = package_root
+    return mappings
+
+
+def _vendored_module_path(module_name: str) -> Path | None:
+    package_name, *children = module_name.split(".")
+    package_root = _vendored_package_dirs().get(package_name)
+    if package_root is None:
+        return None
+    candidate = package_root.joinpath(*children)
+    module_file = candidate.with_suffix(".py")
+    if module_file.is_file():
+        return module_file
+    init_file = candidate / "__init__.py"
+    return init_file if init_file.is_file() else None
 
 
 def _module_handler_checks(
@@ -229,14 +282,71 @@ def _module_handler_checks(
     ]
 
 
+def _module_blueprint_checks(
+    enabled: set[str],
+    available: dict[str, Any],
+) -> list[SelfTestCheck]:
+    errors: list[str] = []
+    checked: list[str] = []
+    for module_name in sorted(enabled):
+        definition = available.get(module_name)
+        if definition is None or not definition.blueprint_entry_point:
+            continue
+        checked.append(f"{module_name}:{definition.blueprint_entry_point}")
+        try:
+            _resolve_handler_module(definition.blueprint_entry_point)
+        except Exception as exc:  # noqa: BLE001 - self-test reports exact failure
+            errors.append(f"{module_name}: {type(exc).__name__}: {exc}")
+
+    return [
+        _check(
+            "module_blueprints_importable",
+            FATAL,
+            not errors,
+            "Enabled module Blueprint modules are resolvable"
+            if not errors
+            else "One or more enabled module Blueprint modules failed to resolve",
+            checked=checked,
+            errors=errors,
+        )
+    ]
+
+
 def _deep_import_handler(handler_path: str) -> None:
     module_name, sep, attr = handler_path.partition(":")
     if not sep or not module_name or not attr:
         raise ValueError("handler must be in module.path:function form")
-    module = importlib.import_module(module_name)
+    package_name = module_name.split(".", 1)[0]
+    try:
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError:
+        _load_vendored_package_alias(package_name)
+        module = importlib.import_module(module_name)
     handler = getattr(module, attr)
     if not callable(handler):
         raise ValueError(f"handler is not callable: {handler_path}")
+
+
+def _load_vendored_package_alias(package_name: str) -> ModuleType:
+    package_root = _vendored_package_dirs().get(package_name)
+    if package_root is None:
+        raise ModuleNotFoundError(package_name)
+    init_file = package_root / "__init__.py"
+    spec = importlib.util.spec_from_file_location(
+        package_name,
+        init_file,
+        submodule_search_locations=[str(package_root)],
+    )
+    if spec is None or spec.loader is None:
+        raise ModuleNotFoundError(package_name)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[package_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(package_name, None)
+        raise
+    return module
 
 
 def _vendored_resource_exists(module_name: str, resource_path: str) -> bool:
@@ -353,6 +463,7 @@ def run_selftest(
                 deep_import_handlers=deep_import_handlers,
             )
         )
+        checks.extend(_module_blueprint_checks(enabled, available))
         checks.extend(_module_resource_checks(enabled, available))
 
     if include_services:

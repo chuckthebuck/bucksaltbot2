@@ -26,13 +26,16 @@ def _generate_cron_job_entries() -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
 
     for job in cron_jobs:
-        if not job.get("enabled"):
+        if not job.get("enabled") or not job.get("module_enabled", True):
             continue
 
         module_name = job.get("module_name", "").strip()
         job_name = job.get("job_name", "").strip()
         schedule = job.get("schedule", "").strip()
         handler = str(job.get("handler") or "").strip()
+        execution_mode = str(job.get("execution_mode") or "").strip().lower()
+        if not execution_mode:
+            execution_mode = "handler" if handler else "http"
         timeout_seconds = int(job.get("timeout_seconds", 300))
 
         if not module_name or not job_name or not schedule:
@@ -46,23 +49,33 @@ def _generate_cron_job_entries() -> list[dict[str, Any]]:
             .replace("_", "-")
         )
 
-        if handler:
+        if execution_mode in {"handler", "k8s_job"} and handler:
+            supervisor_timeout = timeout_seconds + 10
             run_cmd = (
                 "export NOTDEV=1; "
-                f"timeout {timeout_seconds} "
+                f"timeout {supervisor_timeout} "
                 f"python3 -m module_runner "
                 f"--module {_escape_bash_string(module_name)} "
                 f"--job {_escape_bash_string(job_name)} "
                 "--trigger schedule"
             )
-        else:
+        elif execution_mode == "http":
             # Legacy endpoint-backed cron jobs keep working while modules move
-            # to isolated handler jobs.
+            # to isolated handler jobs. Both values are required so the public
+            # trigger cannot become an unauthenticated execution surface.
             run_cmd = (
-                f"curl -f -X POST "
+                'export NOTDEV=1; '
+                ': "${MODULE_CRON_BASE_URL:?MODULE_CRON_BASE_URL is required}"; '
+                ': "${MODULE_CRON_TOKEN:?MODULE_CRON_TOKEN is required}"; '
+                "curl -f -X POST "
+                '-H "X-Chuckbot-Cron-Token: ${MODULE_CRON_TOKEN}" '
                 f"--max-time {timeout_seconds} "
-                f"http://localhost:5000/api/v1/modules/{_escape_bash_string(module_name)}/cron/{_escape_bash_string(job_name)}"
+                '"${MODULE_CRON_BASE_URL%/}'
+                f"/api/v1/modules/{_escape_bash_string(module_name)}"
+                f'/cron/{_escape_bash_string(job_name)}"'
             )
+        else:
+            continue
 
         entry = {
             "name": toolforge_job_name,

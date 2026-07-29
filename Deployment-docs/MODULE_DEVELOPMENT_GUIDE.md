@@ -120,7 +120,20 @@ four_award = "chuck_the_4awardhelper.manifest:module_manifest"
 ```
 
 The entry point can return a manifest dictionary, a path to a manifest file, or
-a `ModuleDefinition`.
+a `ModuleDefinition`. Keep `module.toml` as the source of truth; the small
+Python entry point should load that packaged file rather than duplicate its
+contents:
+
+```python
+from importlib.resources import files
+import tomllib
+
+def module_manifest():
+    text = files(__package__).joinpath("module.toml").read_text(encoding="utf-8")
+    return tomllib.loads(text)
+```
+
+Include `module.toml` in the package-data section of `pyproject.toml`.
 
 Install the vendored module into the framework with a local path for production
 builds:
@@ -152,6 +165,7 @@ name = "four_award"
 title = "Chuck the 4awardhelper"
 repo = "https://github.com/example/chuck-the-4awardhelper"
 entry_point = "chuck_the_4awardhelper.service:run_four_award_sync"
+blueprint_entry_point = "chuck_the_4awardhelper.blueprint:blueprint"
 ui = true
 rights = ["manage", "run_jobs", "edit_config"]
 
@@ -176,8 +190,17 @@ Important fields:
 
 - `ui = true` means the module has a web surface.
 - `frontend` points to packaged static assets owned by the module package.
+- `blueprint_entry_point` is optional and separate from the job handler entry
+  point. Headless Pywikibot modules can omit it.
 - `jobs` are Toolforge cron-style jobs generated into `jobs.yaml`.
+- `worker_jobs` are controller-run jobs that can be queued manually without a
+  cron schedule.
 - `run` accepts human-readable schedules such as `every hour`, `every 15 minutes`, `every 24 hours`, or `daily at 03:00`.
+- `concurrency_policy` is `forbid` by default; `replace` cancels older active
+  runs and `allow` permits overlap.
+- `required_right` adds a job-specific module right on top of `run_jobs`; use it
+  for sensitive handlers such as live wiki edits. The right must also be
+  declared in the module-level `rights` list.
 - `rights` are module-defined worker right names. The framework grants them as
   atoms such as `module:four_award:run_jobs`. The framework automatically
   provides `module:<name>:view` and `module:<name>:estop`, so modules should not
@@ -270,12 +293,52 @@ def run_four_award_sync(ctx, payload):
     return {"ok": True, "dry_run": bool(config.get("dry_run", True))}
 ```
 
+Handlers may accept `()`, `(ctx)`, `(payload)`, or `(ctx, payload)`. The
+two-argument form is recommended. `ctx.config` is a read-only mapping,
+`ctx.check_cancelled()` provides cooperative cancellation, and
+`ctx.site(code, family)` returns a logged-in Pywikibot site using the
+framework-managed credentials.
+
+A manually queued handler can be declared without a schedule:
+
+```toml
+rights = ["run_jobs", "apply_changes"]
+
+[[worker_jobs]]
+name = "apply-changes"
+handler = "example_module.service:apply_changes"
+timeout_seconds = 900
+concurrency_policy = "forbid"
+required_right = "apply_changes"
+```
+
+The generic run API accepts handler payload data but rejects
+`config_overrides`. Persistent configuration must go through the module config
+API, where the framework applies the module's config-edit permission.
+
+For a separate OAuth identity, set `oauth_consumer_mode = "module"` and declare
+the source environment-variable names:
+
+```toml
+oauth_consumer_key_env = "EXAMPLE_CONSUMER_TOKEN"
+oauth_consumer_secret_env = "EXAMPLE_CONSUMER_SECRET"
+oauth_access_token_env = "EXAMPLE_ACCESS_TOKEN"
+oauth_access_secret_env = "EXAMPLE_ACCESS_SECRET"
+```
+
+The isolated runner maps those four values into Pywikibot only for that module
+process. The manifest contains variable names, never credential values.
+
 Toolforge jobs are generated from registry rows. After editing cron schedules in
 the web UI, regenerate Jobs YAML and run:
 
 ```bash
 toolforge jobs load jobs.yaml
 ```
+
+Handler jobs are the default. Legacy `execution_mode = "http"` jobs require an
+application-path `endpoint` plus deploy-time `MODULE_CRON_BASE_URL` and secret
+`MODULE_CRON_TOKEN`; their public trigger rejects requests without that token.
 
 ## Permissions
 

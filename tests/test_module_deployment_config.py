@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import json
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,3 +43,18 @@ def test_frontend_modules_are_enabled_and_installed_for_runtime_discovery():
     assert {
         f"./vendor/modules/{module_name}" for module_name in frontend_modules
     } <= requirement_paths
+
+
+def test_vendored_entry_point_packages_ship_toml_manifest():
+    for module_name in ("four_award", "chuck_file_changer"):
+        pyproject = tomllib.loads(
+            (ROOT / "vendor" / "modules" / module_name / "pyproject.toml").read_text(
+                encoding="utf-8"
+            )
+        )
+        package_data = pyproject["tool"]["setuptools"]["package-data"]
+
+        assert any(
+            "module.toml" in resources
+            for resources in package_data.values()
+        )

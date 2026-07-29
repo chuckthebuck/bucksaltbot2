@@ -1408,7 +1408,7 @@ def test_cancel_job_returns_403_when_owned_by_different_user(client):
     assert resp.status_code == 403
 
 
-def test_module_worker_run_now_enqueues_celery_task(client):
+def test_module_worker_run_now_queues_for_claiming_controller(client):
     import router.module_registry as registry
 
     _set_session(client, "operator")
@@ -1434,9 +1434,7 @@ def test_module_worker_run_now_enqueues_celery_task(client):
         patch("router.routes._can_run_module_jobs", return_value=True),
         patch("router.routes.get_module_definition", return_value=record),
         patch("router.routes.create_module_job_run", return_value=55) as create_run,
-        patch("router.routes.process_module_job_run") as task,
     ):
-        task.delay = MagicMock()
         resp = client.post(
             "/api/v1/modules/chuck_file_changer/jobs/file-change/runs",
             json={"source_text": "File:Example.jpg"},
@@ -1449,8 +1447,212 @@ def test_module_worker_run_now_enqueues_celery_task(client):
         trigger_type="manual",
         triggered_by="operator",
         payload={"source_text": "File:Example.jpg"},
+        concurrency_policy="forbid",
     )
-    task.delay.assert_called_once_with(55)
+
+
+def test_module_worker_run_now_rejects_config_overrides(client):
+    import router.module_registry as registry
+
+    _set_session(client, "operator")
+    record = registry.ModuleRecord(
+        definition=registry.parse_module_definition(
+            {
+                "name": "cleanup",
+                "repo": "https://example.invalid/cleanup",
+                "entry_point": "cleanup.service:run",
+                "ui": True,
+                "worker_jobs": [
+                    {
+                        "name": "cleanup",
+                        "handler": "cleanup.service:run",
+                    }
+                ],
+            }
+        ),
+        enabled=True,
+    )
+
+    with (
+        patch("router.routes._can_run_module_jobs", return_value=True),
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes.create_module_job_run") as create_run,
+    ):
+        resp = client.post(
+            "/api/v1/modules/cleanup/jobs/cleanup/runs",
+            json={"config_overrides": {"dry_run": False}},
+        )
+
+    assert resp.status_code == 400
+    assert "config_overrides" in resp.get_json()["detail"]
+    create_run.assert_not_called()
+
+
+def test_module_worker_run_now_enforces_job_required_right(client):
+    import router.module_registry as registry
+
+    _set_session(client, "operator")
+    record = registry.ModuleRecord(
+        definition=registry.parse_module_definition(
+            {
+                "name": "file_changer",
+                "repo": "https://example.invalid/file-changer",
+                "entry_point": "file_changer.service:run",
+                "ui": True,
+                "rights": ["apply_changes"],
+                "worker_jobs": [
+                    {
+                        "name": "file-change",
+                        "handler": "file_changer.service:run",
+                        "required_right": "apply_changes",
+                    }
+                ],
+            }
+        ),
+        enabled=True,
+    )
+
+    with (
+        patch("router.routes._can_run_module_jobs", return_value=True),
+        patch("router.routes._can_manage_module", return_value=False),
+        patch("router.routes.user_has_module_right", return_value=False),
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes.create_module_job_run") as create_run,
+    ):
+        resp = client.post(
+            "/api/v1/modules/file_changer/jobs/file-change/runs",
+            json={"apply": True, "dry_run": False},
+        )
+
+    assert resp.status_code == 403
+    assert "apply_changes" in resp.get_json()["detail"]
+    create_run.assert_not_called()
+
+
+def test_module_worker_run_now_returns_conflict_for_forbid_policy(client):
+    import router.module_registry as registry
+
+    _set_session(client, "operator")
+    record = registry.ModuleRecord(
+        definition=registry.parse_module_definition(
+            {
+                "name": "cleanup",
+                "repo": "https://example.invalid/cleanup",
+                "entry_point": "cleanup.service:run",
+                "ui": True,
+                "worker_jobs": [
+                    {
+                        "name": "cleanup",
+                        "handler": "cleanup.service:run",
+                        "concurrency_policy": "forbid",
+                    }
+                ],
+            }
+        ),
+        enabled=True,
+    )
+    conflict = registry.ModuleJobConcurrencyError("cleanup", "cleanup", [41])
+
+    with (
+        patch("router.routes._can_run_module_jobs", return_value=True),
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes.create_module_job_run", side_effect=conflict),
+    ):
+        resp = client.post(
+            "/api/v1/modules/cleanup/jobs/cleanup/runs",
+            json={},
+        )
+
+    assert resp.status_code == 409
+    assert resp.get_json()["active_run_ids"] == [41]
+
+
+def test_module_run_cancel_enforces_job_required_right(client):
+    import router.module_registry as registry
+
+    _set_session(client, "operator")
+    record = registry.ModuleRecord(
+        definition=registry.parse_module_definition(
+            {
+                "name": "file_changer",
+                "repo": "https://example.invalid/file-changer",
+                "entry_point": "file_changer.service:run",
+                "ui": True,
+                "rights": ["apply_changes"],
+                "worker_jobs": [
+                    {
+                        "name": "file-change",
+                        "handler": "file_changer.service:run",
+                        "required_right": "apply_changes",
+                    }
+                ],
+            }
+        ),
+        enabled=True,
+    )
+    run = {
+        "id": 41,
+        "module_name": "file_changer",
+        "job_name": "file-change",
+    }
+
+    with (
+        patch("router.routes.get_module_job_run", return_value=run),
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes._can_run_module_jobs", return_value=True),
+        patch("router.routes._can_manage_module", return_value=False),
+        patch("router.routes.user_has_module_right", return_value=False),
+        patch("router.routes.request_module_job_run_cancel") as cancel_run,
+    ):
+        resp = client.post("/api/v1/modules/runs/41/cancel")
+
+    assert resp.status_code == 403
+    cancel_run.assert_not_called()
+
+
+def test_module_cron_trigger_requires_configured_token(client, monkeypatch):
+    monkeypatch.delenv("MODULE_CRON_TOKEN", raising=False)
+
+    resp = client.post("/api/v1/modules/cleanup/cron/sync")
+
+    assert resp.status_code == 503
+
+
+def test_module_cron_trigger_dispatches_local_endpoint_and_propagates_status(
+    client,
+    monkeypatch,
+):
+    monkeypatch.setenv("MODULE_CRON_TOKEN", "cron-secret")
+    cron_job = SimpleNamespace(
+        name="sync",
+        enabled=True,
+        endpoint="/cleanup/internal-sync",
+        timeout_seconds=300,
+    )
+    record = SimpleNamespace(
+        enabled=True,
+        definition=SimpleNamespace(cron_jobs=[cron_job]),
+    )
+    endpoint_response = SimpleNamespace(status_code=422)
+    internal_client = MagicMock()
+    internal_client.__enter__.return_value.post.return_value = endpoint_response
+    internal_client.__exit__.return_value = False
+
+    with (
+        patch("router.routes.get_module_definition", return_value=record),
+        patch("router.routes.app.test_client", return_value=internal_client),
+    ):
+        resp = client.post(
+            "/api/v1/modules/cleanup/cron/sync",
+            headers={"X-Chuckbot-Cron-Token": "cron-secret"},
+        )
+
+    assert resp.status_code == 422
+    assert resp.get_json()["status"] == "failed"
+    internal_client.__enter__.return_value.post.assert_called_once_with(
+        "/cleanup/internal-sync",
+        headers={"X-Chuckbot-Cron-Token": "cron-secret"},
+    )
 
 
 def test_module_registry_api_lists_loaded_modules(client):

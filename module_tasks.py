@@ -7,20 +7,14 @@ from celery import shared_task
 
 @shared_task(name="buckbot.process_module_job_run", ignore_result=True)
 def process_module_job_run(run_id: int) -> None:
-    from module_runner import run_module_job
-    from router.module_registry import get_module_job_run
+    from module_job_controller import run_claimed_run
+    from router.module_registry import claim_module_job_run
 
-    run = get_module_job_run(int(run_id))
+    run = claim_module_job_run(int(run_id))
     if run is None:
         return
 
-    run_module_job(
-        run["module_name"],
-        run["job_name"],
-        run_id=int(run_id),
-        trigger_type=run.get("trigger_type") or "manual",
-        triggered_by=run.get("triggered_by"),
-    )
+    run_claimed_run(run)
 
 
 @shared_task(name="buckbot.process_chuck_file_change_job", ignore_result=True)

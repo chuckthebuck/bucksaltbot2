@@ -2,7 +2,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-def test_process_module_job_run_dispatches_stored_run():
+def test_process_module_job_run_claims_and_dispatches_stored_run():
     import module_tasks
 
     run = {
@@ -14,30 +14,24 @@ def test_process_module_job_run_dispatches_stored_run():
     }
 
     with (
-        patch("router.module_registry.get_module_job_run", return_value=run),
-        patch("module_runner.run_module_job") as run_module_job,
+        patch("router.module_registry.claim_module_job_run", return_value=run),
+        patch("module_job_controller.run_claimed_run") as run_claimed_run,
     ):
         module_tasks.process_module_job_run.run(77)
 
-    run_module_job.assert_called_once_with(
-        "chuck_file_changer",
-        "file-change",
-        run_id=77,
-        trigger_type="manual",
-        triggered_by="Alice",
-    )
+    run_claimed_run.assert_called_once_with(run)
 
 
 def test_process_module_job_run_skips_missing_run():
     import module_tasks
 
     with (
-        patch("router.module_registry.get_module_job_run", return_value=None),
-        patch("module_runner.run_module_job") as run_module_job,
+        patch("router.module_registry.claim_module_job_run", return_value=None),
+        patch("module_job_controller.run_claimed_run") as run_claimed_run,
     ):
         module_tasks.process_module_job_run.run(404)
 
-    run_module_job.assert_not_called()
+    run_claimed_run.assert_not_called()
 
 
 def test_process_chuck_file_change_job_dispatches_queue_processor(monkeypatch):

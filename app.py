@@ -138,7 +138,7 @@ if os.getenv("ENABLE_MODULE_LOADING", "0") == "1":
     enabled_module_names = load_enabled_module_names()
     logging.getLogger(__name__).warning(
         "Module loading enabled; enabled modules: %s",
-        ", ".join(sorted(enabled_module_names)) or "(all discovered)",
+        ", ".join(sorted(enabled_module_names)) or "(none)",
     )
     local_definitions = bootstrap_module_definitions(
         Path(__file__).resolve().parent / "modules",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from importlib import import_module
+import logging
 from types import ModuleType
 from typing import Any
 
@@ -18,6 +19,8 @@ from router.module_registry import (
     get_module_definition,
     user_has_module_access,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 class _FallbackLogger:
@@ -100,15 +103,52 @@ def _import_entry_point(entry_point: str) -> ModuleType:
     return import_module(module_name)
 
 
+def _resolve_blueprint(entry_point: str):
+    module_name, separator, attribute_path = entry_point.partition(":")
+    module_object = import_module(module_name)
+    if not separator:
+        blueprint = getattr(module_object, "blueprint", None)
+        if blueprint is not None:
+            return module_object, blueprint
+        factory = getattr(module_object, "get_blueprint", None)
+        return module_object, factory() if callable(factory) else None
+
+    value: Any = module_object
+    for attribute in attribute_path.split("."):
+        value = getattr(value, attribute)
+    if callable(value):
+        value = value()
+    return module_object, value
+
+
 def load_module(record: ModuleRecord) -> LoadedModule:
     """Import the module entry point if it exists."""
     module_object = None
     blueprint = None
 
+    if record.definition.blueprint_entry_point:
+        try:
+            module_object, blueprint = _resolve_blueprint(
+                record.definition.blueprint_entry_point
+            )
+        except Exception:
+            LOGGER.exception(
+                "Failed to load module blueprint %s",
+                record.definition.blueprint_entry_point,
+            )
+        return LoadedModule(
+            record=record,
+            module_object=module_object,
+            blueprint=blueprint,
+        )
+
     try:
         module_object = _import_entry_point(record.definition.entry_point)
     except Exception:
-        module_object = None
+        LOGGER.exception(
+            "Failed to import module entry point %s",
+            record.definition.entry_point,
+        )
 
     if module_object is not None:
         blueprint = getattr(module_object, "blueprint", None)
@@ -118,7 +158,10 @@ def load_module(record: ModuleRecord) -> LoadedModule:
                 try:
                     blueprint = factory()
                 except Exception:
-                    blueprint = None
+                    LOGGER.exception(
+                        "Failed to create blueprint for module %s",
+                        record.definition.name,
+                    )
 
     return LoadedModule(record=record, module_object=module_object, blueprint=blueprint)
 
@@ -148,6 +191,10 @@ def register_enabled_modules(app: Flask) -> list[str]:
         except ValueError:
             # Duplicate registration or invalid blueprint should not break the
             # whole framework startup; just skip and continue.
+            LOGGER.exception(
+                "Failed to register blueprint for module %s",
+                loaded.definition.name,
+            )
             continue
         registered.append(loaded.definition.name)
 

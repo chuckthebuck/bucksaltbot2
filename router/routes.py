@@ -72,6 +72,7 @@ from router.permissions import (
 )
 from router.diff_state import _ACCOUNT_ROLLBACK_MAX_LIMIT, _ROLLBACKABLE_WINDOW_LIMIT
 from router.module_registry import (
+    ModuleJobConcurrencyError,
     create_module_job_run,
     get_module_config,
     get_module_definition,
@@ -141,7 +142,6 @@ class _LazyTask:
 
 process_rollback_job = _LazyTask("process_rollback_job")
 resolve_diff_rollback_job = _LazyTask("resolve_diff_rollback_job")
-process_module_job_run = _LazyTask("process_module_job_run")
 
 
 def _load_diff_payload(*a, **kw):
@@ -263,6 +263,21 @@ def _can_run_module_jobs(username: str | None, module_name: str) -> bool:
             _can_manage_module(username, module_name)
             or _has_permission(username, "run_module_jobs")
             or user_has_module_right(username, module_name, "run_jobs")
+        )
+    )
+
+
+def _can_run_module_job(username: str | None, module_name: str, job) -> bool:
+    if not _can_run_module_jobs(username, module_name):
+        return False
+    required_right = str(getattr(job, "required_right", "") or "").strip()
+    if not required_right:
+        return True
+    return bool(
+        username
+        and (
+            _can_manage_module(username, module_name)
+            or user_has_module_right(username, module_name, required_right)
         )
     )
 
@@ -4062,6 +4077,8 @@ def four_award_test_run_api():
         return jsonify({"detail": "No runnable 4award module job is configured"}), 400
     if not available_jobs[job_name].enabled:
         return jsonify({"detail": "Selected 4award job is disabled"}), 403
+    if not _can_run_module_job(username, "four_award", available_jobs[job_name]):
+        return jsonify({"detail": "Forbidden"}), 403
 
     run_payload = {
         "mode": "historical_diff_dry_run",
@@ -4084,13 +4101,22 @@ def four_award_test_run_api():
             "publish_dry_run_report": False,
         },
     }
-    run_id = create_module_job_run(
-        "four_award",
-        job_name,
-        trigger_type="web_test",
-        triggered_by=username,
-        payload=run_payload,
-    )
+    try:
+        run_id = create_module_job_run(
+            "four_award",
+            job_name,
+            trigger_type="web_test",
+            triggered_by=username,
+            payload=run_payload,
+            concurrency_policy=available_jobs[job_name].concurrency_policy,
+        )
+    except ModuleJobConcurrencyError as exc:
+        return jsonify(
+            {
+                "detail": "A run is already active for this job",
+                "active_run_ids": exc.active_run_ids,
+            }
+        ), 409
 
     return jsonify(
         {
@@ -4164,9 +4190,6 @@ def module_job_run_now_api(module_name: str, job_name: str):
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
-    if not (_can_run_module_jobs(username, module_name)):
-        return jsonify({"detail": "Forbidden"}), 403
-
     record = get_module_definition(module_name)
     if record is None:
         return jsonify({"detail": "Module not found"}), 404
@@ -4185,16 +4208,46 @@ def module_job_run_now_api(module_name: str, job_name: str):
         return jsonify({"detail": "Job not found"}), 404
     if not job.enabled:
         return jsonify({"detail": "Job is disabled"}), 403
+    if not _can_run_module_job(username, module_name, job):
+        required_right = str(getattr(job, "required_right", "") or "").strip()
+        detail = (
+            f"Forbidden: module right '{required_right}' is required"
+            if required_right
+            else "Forbidden"
+        )
+        return jsonify({"detail": detail}), 403
 
-    payload = request.get_json(silent=True) or {}
-    run_id = create_module_job_run(
-        module_name,
-        job_name,
-        trigger_type="manual",
-        triggered_by=username,
-        payload=payload,
-    )
-    process_module_job_run.delay(run_id)
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        return jsonify({"detail": "Run payload must be an object"}), 400
+    if "config_overrides" in payload:
+        return jsonify(
+            {
+                "detail": (
+                    "config_overrides are not accepted by the generic run API; "
+                    "update module config through its authorized config endpoint"
+                )
+            }
+        ), 400
+
+    try:
+        run_id = create_module_job_run(
+            module_name,
+            job_name,
+            trigger_type="manual",
+            triggered_by=username,
+            payload=payload,
+            concurrency_policy=job.concurrency_policy,
+        )
+    except ModuleJobConcurrencyError as exc:
+        return jsonify(
+            {
+                "detail": "A run is already active for this job",
+                "active_run_ids": exc.active_run_ids,
+            }
+        ), 409
 
     return jsonify(
         {
@@ -4215,7 +4268,20 @@ def module_job_run_cancel_api(run_id: int):
     run = get_module_job_run(run_id)
     if run is None:
         return jsonify({"detail": "Run not found"}), 404
-    if not (_can_run_module_jobs(username, run["module_name"])):
+    record = get_module_definition(run["module_name"])
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+    job = next(
+        (
+            item
+            for item in (*record.definition.cron_jobs, *record.definition.worker_jobs)
+            if item.name == run["job_name"]
+        ),
+        None,
+    )
+    if job is None:
+        return jsonify({"detail": "Job not found"}), 404
+    if not _can_run_module_job(username, run["module_name"], job):
         return jsonify({"detail": "Forbidden"}), 403
 
     request_module_job_run_cancel(run_id)
@@ -4230,7 +4296,24 @@ def module_job_run_restart_api(run_id: int):
     run = get_module_job_run(run_id)
     if run is None:
         return jsonify({"detail": "Run not found"}), 404
-    if not (_can_run_module_jobs(username, run["module_name"])):
+    record = get_module_definition(run["module_name"])
+    if record is None:
+        return jsonify({"detail": "Module not found"}), 404
+    if not record.enabled:
+        return jsonify({"detail": "Module is disabled"}), 403
+    job = next(
+        (
+            item
+            for item in (*record.definition.cron_jobs, *record.definition.worker_jobs)
+            if item.name == run["job_name"]
+        ),
+        None,
+    )
+    if job is None:
+        return jsonify({"detail": "Job not found"}), 404
+    if not job.enabled:
+        return jsonify({"detail": "Job is disabled"}), 403
+    if not _can_run_module_job(username, run["module_name"], job):
         return jsonify({"detail": "Forbidden"}), 403
 
     request_module_job_run_cancel(run_id)
@@ -4240,8 +4323,8 @@ def module_job_run_restart_api(run_id: int):
         trigger_type="restart",
         triggered_by=username,
         payload=run.get("payload") or {},
+        concurrency_policy="replace",
     )
-    process_module_job_run.delay(new_run_id)
     return jsonify(
         {
             "previous_run_id": run_id,
@@ -4314,12 +4397,19 @@ def admin_jobs_yaml_preview():
 @app.route("/api/v1/modules/<path:module_name>/cron/<path:job_name>", methods=["POST"])
 def module_cron_job_trigger(module_name: str, job_name: str):
     """Trigger a cron job for a module.
-    
-    Called by Toolforge cron scheduler. Validates the job exists and is enabled,
-    then invokes the module's actual endpoint.
+
+    Called by Toolforge cron scheduler with a deployment-only shared token.
+    Validates the job exists and is enabled, then dispatches its local endpoint.
     """
     module_name = str(module_name or "").strip()
     job_name = str(job_name or "").strip()
+
+    configured_token = os.getenv("MODULE_CRON_TOKEN", "")
+    provided_token = request.headers.get("X-Chuckbot-Cron-Token", "")
+    if not configured_token:
+        return jsonify({"detail": "Module cron token is not configured"}), 503
+    if not secrets.compare_digest(provided_token, configured_token):
+        return jsonify({"detail": "Forbidden"}), 403
 
     # Validate module exists and is enabled
     record = get_module_definition(module_name)
@@ -4342,29 +4432,28 @@ def module_cron_job_trigger(module_name: str, job_name: str):
     if not cron_job.enabled:
         return jsonify({"detail": "Cron job is disabled"}), 403
 
-    # Invoke the module's cron endpoint via internal HTTP request
+    # Invoke the module's cron endpoint through Flask itself. A scheduled
+    # Toolforge container cannot reach the webservice through localhost.
     endpoint = cron_job.endpoint
-    timeout = cron_job.timeout_seconds
+    if not endpoint or not endpoint.startswith("/"):
+        return jsonify({"detail": "Cron job endpoint is invalid"}), 500
 
     try:
-        # Make an internal request to the module's endpoint
-        # The endpoint should be registered by the module blueprint
-        resp = requests.post(
-            f"http://localhost:5000{endpoint}",
-            timeout=timeout,
-        )
-        return jsonify(
-            {
-                "module": module_name,
-                "job": job_name,
-                "status": "invoked",
-                "endpoint_status": resp.status_code,
-            }
-        )
-    except requests.Timeout:
-        return jsonify(
-            {"detail": f"Cron job timeout after {timeout}s"}
-        ), 504
+        with app.test_client() as client:
+            endpoint_response = client.post(
+                endpoint,
+                headers={"X-Chuckbot-Cron-Token": configured_token},
+            )
     except Exception:
         logging.exception("Failed to invoke cron job %s/%s", module_name, job_name)
         return jsonify({"detail": "Failed to invoke cron job"}), 500
+
+    response_status = endpoint_response.status_code
+    return jsonify(
+        {
+            "module": module_name,
+            "job": job_name,
+            "status": "invoked" if response_status < 400 else "failed",
+            "endpoint_status": response_status,
+        }
+    ), response_status

@@ -1,13 +1,13 @@
 """Module manifest parsing and registry helpers.
 
 This is the first step toward a module-first framework: a module must be
-declared by a manifest, must expose either a UI or cron surface, and may opt
+declared by a manifest, must expose a UI, cron job, or worker job, and may opt
 into its own OAuth consumer instead of the framework default worker consumer.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from importlib import metadata
 import json
 import logging
@@ -35,6 +35,20 @@ MODULE_RUN_SCAN_LIMIT_MAX = 50000
 MODULE_RUN_SCAN_THROTTLE_AFTER = 1000
 MODULE_RUN_SCAN_THROTTLE_SECONDS = 0.05
 MODULE_RUN_CACHE_TTL_SECONDS = 86400
+ACTIVE_MODULE_RUN_STATUSES = ("queued", "launching", "running", "cancel_requested")
+
+
+class ModuleJobConcurrencyError(RuntimeError):
+    """Raised when a forbid-policy job already has active work."""
+
+    def __init__(self, module_name: str, job_name: str, active_run_ids: list[int]):
+        self.module_name = module_name
+        self.job_name = job_name
+        self.active_run_ids = active_run_ids
+        super().__init__(
+            f"Active run already exists for {module_name}/{job_name}: "
+            + ", ".join(str(run_id) for run_id in active_run_ids)
+        )
 
 
 @dataclass(frozen=True)
@@ -50,6 +64,7 @@ class ModuleCronJob:
     enabled: bool = True
     execution_mode: str = "http"
     concurrency_policy: str = "forbid"
+    required_right: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -64,6 +79,7 @@ class ModuleWorkerJob:
     timeout_seconds: int = 300
     enabled: bool = True
     concurrency_policy: str = "forbid"
+    required_right: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -109,6 +125,9 @@ class ModuleDefinition:
     title: str | None = None
     rights: tuple[str, ...] = ()
     frontend: ModuleFrontend | None = None
+    blueprint_entry_point: str | None = None
+    oauth_access_token_env: str | None = None
+    oauth_access_secret_env: str | None = None
 
     @property
     def is_cron_only(self) -> bool:
@@ -187,6 +206,22 @@ def _validate_import_path(value: str, *, field_name: str) -> str:
         raise ValueError(f"{field_name} must start with a Python dotted import path")
     if attr_part and not re.fullmatch(dotted, attr_part):
         raise ValueError(f"{field_name} attribute path is invalid")
+    return cleaned
+
+
+def _validate_env_var_name(
+    value: Any,
+    *,
+    field_name: str,
+    required: bool = False,
+) -> str | None:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        if required:
+            raise ValueError(f"module OAuth consumers require {field_name}")
+        return None
+    if not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,127}", cleaned):
+        raise ValueError(f"{field_name} must be an uppercase environment variable name")
     return cleaned
 
 
@@ -275,6 +310,10 @@ def _parse_cron_jobs(raw_jobs: Any) -> tuple[ModuleCronJob, ...]:
         concurrency_policy = (
             str(raw_job.get("concurrency_policy") or "forbid").strip().lower()
         )
+        required_right = _parse_job_required_right(
+            raw_job.get("required_right"),
+            field_name=f"cron job {index} required_right",
+        )
         timeout_seconds = _coerce_positive_int(
             raw_job.get("timeout_seconds"),
             field_name=f"cron job {index} timeout_seconds",
@@ -297,11 +336,17 @@ def _parse_cron_jobs(raw_jobs: Any) -> tuple[ModuleCronJob, ...]:
             raise ValueError(f"cron job {index} requires an endpoint or handler")
         if handler:
             _validate_import_path(handler, field_name=f"cron job {index} handler")
-        if endpoint and not endpoint.startswith(("/", "http://", "https://")):
-            raise ValueError(f"cron job {index} endpoint must be a path or URL")
+        if endpoint and not endpoint.startswith("/"):
+            raise ValueError(f"cron job {index} endpoint must be an application path")
         if execution_mode not in {"http", "handler", "k8s_job"}:
             raise ValueError(
                 f"cron job {index} execution_mode must be http, handler, or k8s_job"
+            )
+        if execution_mode == "http" and not endpoint:
+            raise ValueError(f"cron job {index} execution_mode http requires endpoint")
+        if execution_mode in {"handler", "k8s_job"} and not handler:
+            raise ValueError(
+                f"cron job {index} execution_mode {execution_mode} requires handler"
             )
         if concurrency_policy not in {"allow", "forbid", "replace"}:
             raise ValueError(
@@ -319,6 +364,7 @@ def _parse_cron_jobs(raw_jobs: Any) -> tuple[ModuleCronJob, ...]:
                 enabled=enabled,
                 execution_mode=execution_mode,
                 concurrency_policy=concurrency_policy,
+                required_right=required_right,
             )
         )
 
@@ -350,6 +396,10 @@ def _parse_worker_jobs(raw_jobs: Any) -> tuple[ModuleWorkerJob, ...]:
         concurrency_policy = (
             str(raw_job.get("concurrency_policy") or "forbid").strip().lower()
         )
+        required_right = _parse_job_required_right(
+            raw_job.get("required_right"),
+            field_name=f"worker job {index} required_right",
+        )
 
         if not name:
             raise ValueError(f"worker job {index} requires a name")
@@ -372,10 +422,20 @@ def _parse_worker_jobs(raw_jobs: Any) -> tuple[ModuleWorkerJob, ...]:
                 timeout_seconds=timeout_seconds,
                 enabled=enabled,
                 concurrency_policy=concurrency_policy,
+                required_right=required_right,
             )
         )
 
     return tuple(jobs)
+
+
+def _parse_job_required_right(value: Any, *, field_name: str) -> str | None:
+    cleaned = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if not cleaned:
+        return None
+    if not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", cleaned):
+        raise ValueError(f"{field_name} must be lowercase snake_case")
+    return cleaned
 
 
 def _parse_buildpacks(raw_buildpacks: Any) -> tuple[str, ...]:
@@ -483,6 +543,15 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
         raw.get("entry_point") or raw.get("entry"),
         field_name="entry_point",
     )
+    blueprint_entry_point_raw = raw.get("blueprint_entry_point", raw.get("blueprint"))
+    blueprint_entry_point = (
+        _validate_import_path(
+            blueprint_entry_point_raw,
+            field_name="blueprint_entry_point",
+        )
+        if blueprint_entry_point_raw
+        else None
+    )
 
     if not repo_url:
         raise ValueError("module manifest requires a repo URL")
@@ -508,23 +577,59 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
     if frontend and not ui_enabled:
         raise ValueError("frontend assets require ui=true")
 
+    job_names = [job.name for job in (*cron_jobs, *worker_jobs)]
+    duplicate_job_names = sorted(
+        {job_name for job_name in job_names if job_names.count(job_name) > 1}
+    )
+    if duplicate_job_names:
+        raise ValueError(
+            "module job names must be unique across cron and worker jobs: "
+            + ", ".join(duplicate_job_names)
+        )
+
+    undeclared_job_rights = sorted(
+        {
+            job.required_right
+            for job in (*cron_jobs, *worker_jobs)
+            if job.required_right and job.required_right not in rights
+        }
+    )
+    if undeclared_job_rights:
+        raise ValueError(
+            "job required_right values must also appear in module rights: "
+            + ", ".join(undeclared_job_rights)
+        )
+
     oauth_consumer_mode = str(raw.get("oauth_consumer_mode") or "default").strip().lower()
     if oauth_consumer_mode not in {"default", "module"}:
         raise ValueError("oauth_consumer_mode must be 'default' or 'module'")
 
-    oauth_consumer_key_env = raw.get("oauth_consumer_key_env")
-    oauth_consumer_secret_env = raw.get("oauth_consumer_secret_env")
-
     if oauth_consumer_mode == "module":
-        oauth_consumer_key_env = str(oauth_consumer_key_env or "").strip()
-        oauth_consumer_secret_env = str(oauth_consumer_secret_env or "").strip()
-        if not oauth_consumer_key_env or not oauth_consumer_secret_env:
-            raise ValueError(
-                "module OAuth consumers require oauth_consumer_key_env and oauth_consumer_secret_env"
-            )
+        oauth_consumer_key_env = _validate_env_var_name(
+            raw.get("oauth_consumer_key_env"),
+            field_name="oauth_consumer_key_env",
+            required=True,
+        )
+        oauth_consumer_secret_env = _validate_env_var_name(
+            raw.get("oauth_consumer_secret_env"),
+            field_name="oauth_consumer_secret_env",
+            required=True,
+        )
+        oauth_access_token_env = _validate_env_var_name(
+            raw.get("oauth_access_token_env") or "ACCESS_TOKEN",
+            field_name="oauth_access_token_env",
+            required=True,
+        )
+        oauth_access_secret_env = _validate_env_var_name(
+            raw.get("oauth_access_secret_env") or "ACCESS_SECRET",
+            field_name="oauth_access_secret_env",
+            required=True,
+        )
     else:
         oauth_consumer_key_env = None
         oauth_consumer_secret_env = None
+        oauth_access_token_env = None
+        oauth_access_secret_env = None
 
     redis_namespace = str(raw.get("redis_namespace") or "").strip() or _default_redis_namespace(name)
     title = str(raw.get("title") or "").strip() or None
@@ -533,6 +638,7 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
         name=name,
         repo_url=repo_url,
         entry_point=entry_point,
+        blueprint_entry_point=blueprint_entry_point,
         ui_enabled=ui_enabled,
         cron_jobs=cron_jobs,
         worker_jobs=worker_jobs,
@@ -540,6 +646,8 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
         oauth_consumer_mode=oauth_consumer_mode,
         oauth_consumer_key_env=oauth_consumer_key_env,
         oauth_consumer_secret_env=oauth_consumer_secret_env,
+        oauth_access_token_env=oauth_access_token_env,
+        oauth_access_secret_env=oauth_access_secret_env,
         redis_namespace=redis_namespace,
         title=title,
         rights=rights,
@@ -707,7 +815,7 @@ def _filter_enabled_definitions(
     definitions: Iterable[ModuleDefinition],
     enabled_names: set[str] | None,
 ) -> list[ModuleDefinition]:
-    if not enabled_names:
+    if enabled_names is None:
         return list(definitions)
     return [
         definition
@@ -756,6 +864,37 @@ def _serialize_manifest(definition: ModuleDefinition) -> str:
     return json.dumps(definition.as_dict(), sort_keys=True)
 
 
+def _definition_with_cron_runtime_overrides(
+    definition: ModuleDefinition,
+    rows: Iterable[tuple[Any, ...]],
+) -> ModuleDefinition:
+    """Overlay mutable persisted cron settings onto a discovered definition."""
+    overrides = {
+        str(row[0]): row
+        for row in rows
+        if isinstance(row, (tuple, list)) and len(row) >= 5 and row[0]
+    }
+    if not overrides:
+        return definition
+
+    cron_jobs = []
+    for job in definition.cron_jobs:
+        row = overrides.get(job.name)
+        if row is None:
+            cron_jobs.append(job)
+            continue
+        cron_jobs.append(
+            replace(
+                job,
+                schedule=str(row[1] or job.schedule),
+                schedule_text=str(row[2]).strip() if row[2] else None,
+                timeout_seconds=int(row[3] or job.timeout_seconds),
+                enabled=bool(row[4]),
+            )
+        )
+    return replace(definition, cron_jobs=tuple(cron_jobs))
+
+
 def _row_to_definition(row: tuple[Any, ...]) -> ModuleRecord:
     (
         _name,
@@ -776,9 +915,21 @@ def _row_to_definition(row: tuple[Any, ...]) -> ModuleRecord:
 
 
 def upsert_module_definition(definition: ModuleDefinition, enabled: bool = False) -> None:
-    """Persist or update a validated module definition."""
+    """Persist a definition while preserving mutable runtime state on updates."""
     with get_conn() as conn:
         with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT job_name, schedule, schedule_text, timeout_seconds, enabled
+                FROM module_cron_jobs
+                WHERE module_name=%s
+                """,
+                (definition.name,),
+            )
+            definition = _definition_with_cron_runtime_overrides(
+                definition,
+                cursor.fetchall() or (),
+            )
             cursor.execute(
                 """
                 INSERT INTO module_registry
@@ -790,7 +941,6 @@ def upsert_module_definition(definition: ModuleDefinition, enabled: bool = False
                     repo_url=VALUES(repo_url),
                     entry_point=VALUES(entry_point),
                     ui_enabled=VALUES(ui_enabled),
-                    enabled=VALUES(enabled),
                     redis_namespace=VALUES(redis_namespace),
                     oauth_consumer_mode=VALUES(oauth_consumer_mode),
                     oauth_consumer_key_env=VALUES(oauth_consumer_key_env),
@@ -901,13 +1051,16 @@ def list_module_definitions(enabled_only: bool = False) -> list[ModuleRecord]:
 def list_module_cron_jobs(module_name: str | None = None) -> list[dict[str, Any]]:
     """Return persisted cron jobs for one module or all modules."""
     query = """
-        SELECT module_name, job_name, schedule, endpoint, timeout_seconds, enabled,
-               schedule_text, handler, execution_mode, concurrency_policy
-        FROM module_cron_jobs
+        SELECT jobs.module_name, jobs.job_name, jobs.schedule, jobs.endpoint,
+               jobs.timeout_seconds, jobs.enabled, jobs.schedule_text,
+               jobs.handler, jobs.execution_mode, jobs.concurrency_policy,
+               registry.enabled
+        FROM module_cron_jobs AS jobs
+        JOIN module_registry AS registry ON registry.name=jobs.module_name
     """
     params: tuple[Any, ...] = ()
     if module_name:
-        query += " WHERE module_name=%s"
+        query += " WHERE jobs.module_name=%s"
         params = (str(module_name).strip(),)
 
     with get_conn() as conn:
@@ -927,6 +1080,7 @@ def list_module_cron_jobs(module_name: str | None = None) -> list[dict[str, Any]
             "handler": row[7],
             "execution_mode": row[8] or "http",
             "concurrency_policy": row[9] or "forbid",
+            "module_enabled": bool(row[10]),
         }
         for row in rows
     ]
@@ -992,6 +1146,7 @@ def update_module_cron_job(
         enabled=new_enabled,
         execution_mode=current.execution_mode,
         concurrency_policy=current.concurrency_policy,
+        required_right=current.required_right,
     )
     cron_jobs[job_index] = updated_job
 
@@ -999,12 +1154,16 @@ def update_module_cron_job(
         name=record.definition.name,
         repo_url=record.definition.repo_url,
         entry_point=record.definition.entry_point,
+        blueprint_entry_point=record.definition.blueprint_entry_point,
         ui_enabled=record.definition.ui_enabled,
         cron_jobs=tuple(cron_jobs),
+        worker_jobs=record.definition.worker_jobs,
         buildpacks=record.definition.buildpacks,
         oauth_consumer_mode=record.definition.oauth_consumer_mode,
         oauth_consumer_key_env=record.definition.oauth_consumer_key_env,
         oauth_consumer_secret_env=record.definition.oauth_consumer_secret_env,
+        oauth_access_token_env=record.definition.oauth_access_token_env,
+        oauth_access_secret_env=record.definition.oauth_access_secret_env,
         redis_namespace=record.definition.redis_namespace,
         title=record.definition.title,
         rights=record.definition.rights,
@@ -1062,16 +1221,93 @@ def create_module_job_run(
     trigger_type: str = "manual",
     triggered_by: str | None = None,
     payload: dict[str, Any] | None = None,
+    concurrency_policy: str = "allow",
 ) -> int:
     """Create a tracked run row for a managed module job."""
     module_name = str(module_name or "").strip()
     job_name = str(job_name or "").strip()
     if not module_name or not job_name:
         raise ValueError("module_name and job_name are required")
+    concurrency_policy = str(concurrency_policy or "allow").strip().lower()
+    if concurrency_policy not in {"allow", "forbid", "replace"}:
+        raise ValueError("concurrency_policy must be allow, forbid, or replace")
 
     payload_json = json.dumps(payload or {}, sort_keys=True)
+    active_run_ids: list[int] = []
     with get_conn() as conn:
         with conn.cursor() as cursor:
+            if concurrency_policy in {"forbid", "replace"}:
+                # Serialize concurrency decisions on the durable module row.
+                # Locking only matching run rows is insufficient when no active
+                # row exists yet, because two transactions could both observe
+                # an empty result before either inserts.
+                cursor.execute(
+                    """
+                    SELECT name
+                    FROM module_registry
+                    WHERE name=%s
+                    FOR UPDATE
+                    """,
+                    (module_name,),
+                )
+                cursor.fetchone()
+
+                placeholders = ", ".join(["%s"] * len(ACTIVE_MODULE_RUN_STATUSES))
+                cursor.execute(
+                    f"""
+                    SELECT id
+                    FROM module_job_runs
+                    WHERE module_name=%s
+                      AND job_name=%s
+                      AND status IN ({placeholders})
+                    FOR UPDATE
+                    """,
+                    (
+                        module_name,
+                        job_name,
+                        *ACTIVE_MODULE_RUN_STATUSES,
+                    ),
+                )
+                active_run_ids = [
+                    int(row[0])
+                    for row in (cursor.fetchall() or ())
+                    if isinstance(row, (tuple, list)) and row
+                ]
+
+            if concurrency_policy == "forbid" and active_run_ids:
+                conn.rollback()
+                raise ModuleJobConcurrencyError(
+                    module_name,
+                    job_name,
+                    active_run_ids,
+                )
+
+            if concurrency_policy == "replace" and active_run_ids:
+                id_placeholders = ", ".join(["%s"] * len(active_run_ids))
+                cursor.execute(
+                    f"""
+                    UPDATE module_job_runs
+                    SET error=%s,
+                        exit_code=CASE
+                            WHEN status IN ('queued', 'launching') THEN 130
+                            ELSE exit_code
+                        END,
+                        finished_at=CASE
+                            WHEN status IN ('queued', 'launching') THEN CURRENT_TIMESTAMP
+                            ELSE finished_at
+                        END,
+                        status=CASE
+                            WHEN status IN ('queued', 'launching') THEN 'canceled'
+                            ELSE 'cancel_requested'
+                        END
+                    WHERE id IN ({id_placeholders})
+                    """,
+                    (
+                        "Replaced by a newer module job run",
+                        *active_run_ids,
+                    ),
+                )
+
             cursor.execute(
                 """
                 INSERT INTO module_job_runs
@@ -1168,6 +1404,27 @@ def claim_next_queued_module_job_run() -> dict[str, Any] | None:
         conn.commit()
 
     return get_module_job_run(run_id)
+
+
+def claim_module_job_run(run_id: int) -> dict[str, Any] | None:
+    """Atomically claim a specific queued run for one execution owner."""
+    with get_conn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE module_job_runs
+                SET status='launching',
+                    started_at=COALESCE(started_at, CURRENT_TIMESTAMP)
+                WHERE id=%s AND status='queued'
+                """,
+                (int(run_id),),
+            )
+            claimed = cursor.rowcount == 1
+        conn.commit()
+
+    if not claimed:
+        return None
+    return get_module_job_run(int(run_id))
 
 
 def update_module_job_run(
@@ -1391,16 +1648,25 @@ def get_module_job_run_hit_cache(module_name: str) -> dict[str, Any] | None:
 
 
 def request_module_job_run_cancel(run_id: int) -> None:
-    """Mark a queued/running module run as cancel requested."""
+    """Cancel work that has not started, or request a running process stop."""
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
                 """
                 UPDATE module_job_runs
-                SET status=%s, error=%s
-                WHERE id=%s AND status IN ('queued', 'running')
+                SET error=%s,
+                    exit_code=CASE WHEN status='queued' THEN 130 ELSE exit_code END,
+                    finished_at=CASE
+                        WHEN status='queued' THEN CURRENT_TIMESTAMP
+                        ELSE finished_at
+                    END,
+                    status=CASE
+                        WHEN status='queued' THEN 'canceled'
+                        ELSE 'cancel_requested'
+                    END
+                WHERE id=%s AND status IN ('queued', 'launching', 'running')
                 """,
-                ("cancel_requested", "Cancellation requested from web UI", run_id),
+                ("Cancellation requested from web UI", run_id),
             )
         conn.commit()
 

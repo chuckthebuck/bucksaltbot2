@@ -1,6 +1,7 @@
 name = "four_award"
 repo = "https://github.com/chuckthebuck/module4awardhelper"
 entry_point = "chuck_the_4awardhelper.service:run_four_award_sync"
+blueprint_entry_point = "chuck_the_4awardhelper.blueprint:blueprint"
 ui = true
 redis_namespace = "four_award"
 title = "Chuck the 4awardhelper"

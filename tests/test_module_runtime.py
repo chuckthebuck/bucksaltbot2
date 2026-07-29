@@ -51,3 +51,31 @@ def test_register_enabled_modules_registers_blueprint_with_module_prefix():
 
     assert registered == ["four_award"]
     app.register_blueprint.assert_called_once_with(blueprint, url_prefix="/four_award")
+
+
+def test_load_module_uses_explicit_blueprint_entry_point():
+    import router.module_registry as registry
+    import router.module_runtime as runtime
+
+    definition = registry.parse_module_definition(
+        {
+            "name": "file_changer",
+            "repo": "https://example.invalid/file-changer",
+            "entry_point": "file_changer.service:run",
+            "blueprint_entry_point": "file_changer.blueprint:blueprint",
+            "ui": True,
+        }
+    )
+    record = registry.ModuleRecord(definition=definition, enabled=True)
+    module_object = MagicMock()
+    blueprint = Blueprint("file_changer", __name__)
+
+    with patch(
+        "router.module_runtime._resolve_blueprint",
+        return_value=(module_object, blueprint),
+    ) as resolve_blueprint:
+        loaded = runtime.load_module(record)
+
+    resolve_blueprint.assert_called_once_with("file_changer.blueprint:blueprint")
+    assert loaded.module_object is module_object
+    assert loaded.blueprint is blueprint

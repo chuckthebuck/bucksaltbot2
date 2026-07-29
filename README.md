@@ -70,6 +70,7 @@ name = "four_award"
 title = "Chuck the 4awardhelper"
 repo = "https://github.com/chuckthebuck/module4awardhelper"
 entry_point = "chuck_the_4awardhelper.service:run_four_award_sync"
+blueprint_entry_point = "chuck_the_4awardhelper.blueprint:blueprint"
 ui = true
 rights = ["manage", "run_jobs", "edit_config"]
 
@@ -90,10 +91,16 @@ docs = "chuck_the_4awardhelper:docs/four_award.md"
 **Important fields:**
 - `name` — Lowercase snake_case identifier.
 - `entry_point` — Dotted import path to a function, not a filename.
+- `blueprint_entry_point` — Optional separate Flask Blueprint object/factory;
+  job-only modules do not need one.
 - `ui` — Boolean; if true, module must declare `[frontend]`.
 - `jobs` — List of cron jobs. Each job needs `name`, `run` (human-readable or
   cron), and either `handler` (Python function) or `endpoint` (HTTP).
+- `worker_jobs` — Manually queued handler jobs that do not need a cron schedule.
 - `run` — Accepts `every 24 hours`, `every 15 minutes`, `daily at 03:00`, etc.
+- `concurrency_policy` — `forbid` (default), `replace`, or `allow`.
+- `required_right` — Optional module right required in addition to `run_jobs`
+  for sensitive jobs. It must also be listed in `rights`.
 - `rights` — Module-defined worker rights; become atoms like
   `module:four_award:run_jobs`. The framework automatically provides
   `module:<name>:view` and `module:<name>:estop`.
@@ -123,6 +130,10 @@ Do not add new module APIs at top-level paths such as
 over time. If a module needs to identify traffic to an external API such as
 Wikimedia, put that in module-owned runtime config or a future manifest
 `external_api` section, not as a CTB route.
+
+Legacy HTTP cron triggers require both `MODULE_CRON_BASE_URL` and
+`MODULE_CRON_TOKEN`. Handler jobs are preferred because they run directly in an
+isolated framework process and do not expose a public trigger endpoint.
 
 ## Module UI & Documentation
 
@@ -230,6 +241,18 @@ npm run build
    not import module Vue source directly.
 4. Run framework and module tests from whichever repo owns the behavior you
    changed.
+
+For the lowest-setup framework-bundled Pywikibot module, scaffold a headless
+handler directly:
+
+```bash
+python scripts/create_pywikibot_module.py example_bot --enable
+# Or add --schedule "every hour" for a cron handler.
+```
+
+This creates `modules/example_bot/module.toml` and `jobs.py`. Put the reviewed
+Pywikibot workflow in `run(ctx, payload)`; the framework supplies OAuth,
+configuration, logging, cancellation, timeout, concurrency, and run tracking.
 
 When the module behavior is ready to deploy, commit it in the module repo, then
 refresh `vendor/modules/<module_name>/` in this repo. You can pull from a local

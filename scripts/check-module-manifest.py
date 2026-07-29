@@ -47,6 +47,9 @@ def main() -> int:
     print(f"name={definition.name}")
     print(f"title={definition.title or definition.name}")
     print("rights=" + ",".join(definition.rights))
+    if definition.blueprint_entry_point:
+        print(f"blueprint_entry_point={definition.blueprint_entry_point}")
+    print(f"oauth_consumer_mode={definition.oauth_consumer_mode}")
     if definition.worker_jobs:
         print("worker_jobs=" + ",".join(job.name for job in definition.worker_jobs))
     if definition.frontend:

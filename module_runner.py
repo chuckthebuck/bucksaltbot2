@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 import inspect
 import importlib
+import json
 import os
 from pathlib import Path
+import signal
+import threading
 from typing import Any
 
 from logger import Logger
 from pywikibot_env import ensure_pywikibot_env
 from router.module_registry import (
+    ModuleJobConcurrencyError,
     bootstrap_installed_module_definitions,
     bootstrap_module_definitions,
     create_module_job_run,
@@ -20,7 +26,6 @@ from router.module_registry import (
     get_module_definition,
     get_module_job_run,
     load_enabled_module_names,
-    list_module_job_runs,
     update_module_job_run,
 )
 
@@ -29,12 +34,22 @@ class ModuleRunCancelled(RuntimeError):
     """Raised when a module run was canceled through the framework."""
 
 
-class _ConfigView:
+class ModuleRunTimedOut(TimeoutError):
+    """Raised when an isolated module handler exceeds its manifest timeout."""
+
+
+class _ConfigView(Mapping[str, Any]):
     def __init__(self, values: dict[str, Any]):
         self._values = dict(values)
 
-    def get(self, key: str, default: Any = None) -> Any:
-        return self._values.get(key, default)
+    def __getitem__(self, key: str) -> Any:
+        return self._values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
 
     def as_dict(self) -> dict[str, Any]:
         return dict(self._values)
@@ -92,6 +107,110 @@ def _build_logger(name: str):
         return _FallbackLogger(name)
 
 
+def _activate_module_oauth(definition) -> None:
+    """Map a module's isolated credential variables into Pywikibot's names."""
+    if definition.oauth_consumer_mode != "module":
+        return
+
+    credential_env = {
+        "CONSUMER_TOKEN": definition.oauth_consumer_key_env,
+        "CONSUMER_SECRET": definition.oauth_consumer_secret_env,
+        "ACCESS_TOKEN": definition.oauth_access_token_env,
+        "ACCESS_SECRET": definition.oauth_access_secret_env,
+    }
+    missing = [
+        source_name
+        for source_name in credential_env.values()
+        if not source_name or not os.environ.get(source_name)
+    ]
+    if missing:
+        raise RuntimeError(
+            "Missing module OAuth credential environment variables: "
+            + ", ".join(str(name) for name in missing)
+        )
+
+    for target_name, source_name in credential_env.items():
+        os.environ[target_name] = os.environ[str(source_name)]
+
+
+def _handler_call_args(handler, ctx: ModuleRunContext, payload: dict[str, Any]) -> tuple:
+    """Return the richest supported framework handler call signature."""
+    signature = inspect.signature(handler)
+    try:
+        signature.bind(ctx, payload)
+    except TypeError:
+        pass
+    else:
+        return (ctx, payload)
+
+    positional_parameters = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.kind
+        in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }
+    ]
+    one_arg_value = (
+        payload
+        if len(positional_parameters) == 1
+        and positional_parameters[0].name.lower() in {"payload", "data", "params"}
+        else ctx
+    )
+    try:
+        signature.bind(one_arg_value)
+    except TypeError:
+        pass
+    else:
+        return (one_arg_value,)
+
+    try:
+        signature.bind()
+    except TypeError as exc:
+        raise ValueError(
+            "module handlers must accept (), (ctx), (payload), or (ctx, payload)"
+        ) from exc
+    return ()
+
+
+def _invoke_handler(handler, ctx: ModuleRunContext, payload: dict[str, Any]) -> Any:
+    return handler(*_handler_call_args(handler, ctx, payload))
+
+
+@contextmanager
+def _handler_timeout(timeout_seconds: int):
+    """Enforce handler timeout in standalone scheduled runner processes."""
+    supported = (
+        os.name == "posix"
+        and threading.current_thread() is threading.main_thread()
+        and hasattr(signal, "SIGALRM")
+        and hasattr(signal, "setitimer")
+    )
+    if not supported:
+        yield
+        return
+
+    def _raise_timeout(_signum, _frame):
+        raise ModuleRunTimedOut(
+            f"Module job timed out after {int(timeout_seconds)} seconds"
+        )
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, float(timeout_seconds))
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _json_safe_result(result: Any) -> dict[str, Any]:
+    payload = result if isinstance(result, dict) else {"result": result}
+    return json.loads(json.dumps(payload, default=str))
+
+
 def _bootstrap_local_registry() -> None:
     enabled_module_names = load_enabled_module_names()
     modules_root = Path(__file__).resolve().parent / "modules"
@@ -110,7 +229,6 @@ def run_module_job(
 ) -> int:
     """Run one module job and return a process exit code."""
     os.environ.setdefault("NOTDEV", "1")
-    ensure_pywikibot_env(strict=True)
     _bootstrap_local_registry()
 
     record = get_module_definition(module_name)
@@ -135,19 +253,16 @@ def run_module_job(
         raise ValueError(f"Module job has no handler: {module_name}/{job_name}")
 
     if run_id is None:
-        if job.concurrency_policy == "forbid":
-            active_runs = list_module_job_runs(module_name, job_name=job_name, limit=20)
-            if any(
-                run.get("status") in {"queued", "launching", "running"}
-                for run in active_runs
-            ):
-                return 0
-        run_id = create_module_job_run(
-            module_name,
-            job_name,
-            trigger_type=trigger_type,
-            triggered_by=triggered_by,
-        )
+        try:
+            run_id = create_module_job_run(
+                module_name,
+                job_name,
+                trigger_type=trigger_type,
+                triggered_by=triggered_by,
+                concurrency_policy=job.concurrency_policy,
+            )
+        except ModuleJobConcurrencyError:
+            return 0
     else:
         existing_run = get_module_job_run(run_id) or {}
         if existing_run.get("status") in {"cancel_requested", "canceled"}:
@@ -163,6 +278,8 @@ def run_module_job(
     update_module_job_run(run_id, status="running")
 
     try:
+        _activate_module_oauth(record.definition)
+        ensure_pywikibot_env(strict=True)
         handler = _import_handler(job.handler)
         run = get_module_job_run(run_id) or {}
         payload = run.get("payload") or {}
@@ -180,18 +297,19 @@ def run_module_job(
             config=_ConfigView(config_values),
             logger=logger,
         )
-        parameters = inspect.signature(handler).parameters
-        if len(parameters) == 0:
-            result = handler()
-        else:
-            result = handler(ctx, payload)
+        with _handler_timeout(job.timeout_seconds):
+            result = _invoke_handler(handler, ctx, payload)
         update_module_job_run(
             run_id,
             status="completed",
             exit_code=0,
-            result=result if isinstance(result, dict) else {"result": result},
+            result=_json_safe_result(result),
         )
         return 0
+    except ModuleRunTimedOut as exc:
+        logger.log(str(exc))
+        update_module_job_run(run_id, status="failed", error=str(exc), exit_code=124)
+        return 124
     except ModuleRunCancelled as exc:
         logger.log(str(exc))
         update_module_job_run(run_id, status="canceled", error=str(exc), exit_code=130)

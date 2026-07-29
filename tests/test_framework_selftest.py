@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 
 import framework_selftest
 
@@ -150,3 +151,52 @@ def test_run_selftest_reports_missing_frontend_resources(monkeypatch):
 
     assert result.status == framework_selftest.FATAL
     assert any(check.name == "module_frontend_resources" and not check.ok for check in result.checks)
+
+
+def test_resolve_handler_module_supports_setuptools_package_dir_mapping(
+    tmp_path,
+    monkeypatch,
+):
+    vendor_repo = tmp_path / "vendor" / "modules" / "example"
+    package_root = vendor_repo / "source" / "different_directory"
+    package_root.mkdir(parents=True)
+    (package_root / "__init__.py").write_text("", encoding="utf-8")
+    (package_root / "jobs.py").write_text("def run(): pass\n", encoding="utf-8")
+    (vendor_repo / "pyproject.toml").write_text(
+        """
+[tool.setuptools.package-dir]
+public_package = "source/different_directory"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(framework_selftest, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(framework_selftest.importlib.util, "find_spec", lambda _name: None)
+
+    framework_selftest._resolve_handler_module("public_package.jobs:run")
+
+
+def test_deep_import_handler_supports_setuptools_package_dir_mapping(
+    tmp_path,
+    monkeypatch,
+):
+    vendor_repo = tmp_path / "vendor" / "modules" / "example"
+    package_root = vendor_repo / "source" / "different_directory"
+    package_root.mkdir(parents=True)
+    (package_root / "__init__.py").write_text("", encoding="utf-8")
+    (package_root / "jobs.py").write_text("def run(): return 1\n", encoding="utf-8")
+    (vendor_repo / "pyproject.toml").write_text(
+        """
+[tool.setuptools.package-dir]
+deep_public_package = "source/different_directory"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(framework_selftest, "REPO_ROOT", tmp_path)
+    sys.modules.pop("deep_public_package", None)
+    sys.modules.pop("deep_public_package.jobs", None)
+
+    try:
+        framework_selftest._deep_import_handler("deep_public_package.jobs:run")
+    finally:
+        sys.modules.pop("deep_public_package.jobs", None)
+        sys.modules.pop("deep_public_package", None)
