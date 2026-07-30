@@ -37,23 +37,23 @@ There are three supported module modes:
 | Editable package | separate local module repo | Python entry point from `pip install -e` | day-to-day module development |
 | Vendored snapshot | `vendor/modules/<module_name>/` | Python entry point from `requirements-modules.txt` | Toolforge deploys and reproducible releases |
 
-Saltlick is the reference for the last two modes. It is enabled in the default
-framework build but kept as a complete repository-shaped package under
-`vendor/modules/saltlick/`, so contributors can fork it or install a sibling
+Chuck the Salt Shack is the reference for the last two modes. It is enabled in
+the default framework build but kept as a complete repository-shaped package under
+`vendor/modules/chuck_salt_shack/`, so contributors can fork it or install a sibling
 clone editable without moving its implementation into the framework.
 
-Its canonical upstream is `https://github.com/chuckthebuck/saltlick`. When
+Its canonical upstream is `https://github.com/chuckthebuck/chuck-the-salt-shack`. When
 Salt Shack changes are first developed in the framework snapshot, commit the
 framework work and split only the module directory back to that repository:
 
 ```bash
-bash scripts/backport-saltlick-subtree.sh --dry-run
-bash scripts/backport-saltlick-subtree.sh
+bash scripts/backport-chuck-salt-shack-subtree.sh --dry-run
+bash scripts/backport-chuck-salt-shack-subtree.sh
 ```
 
-The helper accepts `SALTLICK_REMOTE` and `SALTLICK_BRANCH` overrides for a
-local bootstrap repository, fork, or release branch. The upstream repository
-must exist before the non-dry-run push.
+The helper accepts `CHUCK_SALT_SHACK_REMOTE` and
+`CHUCK_SALT_SHACK_BRANCH` overrides for a local bootstrap repository, fork, or
+release branch. The upstream repository must exist before the non-dry-run push.
 
 Use editable packages while building. Use vendored snapshots when you need a
 single framework commit that Toolforge can build without fetching another repo.
@@ -180,7 +180,7 @@ must be dotted import paths, not filenames.
 
 ```toml
 name = "four_award"
-title = "Chuck the 4awardhelper"
+title = "4awardhelper"
 repo = "https://github.com/example/chuck-the-4awardhelper"
 entry_point = "chuck_the_4awardhelper.service:run_four_award_sync"
 blueprint_entry_point = "chuck_the_4awardhelper.blueprint:blueprint"
@@ -252,7 +252,7 @@ user-agent, or edit-summary tag, keep that separate from CTB routes.
 
 A module Blueprint can own this standard namespace by declaring its Flask
 `url_prefix`, for example
-`Blueprint("saltlick", __name__, url_prefix="/api/v1/modules/saltlick")`.
+`Blueprint("chuck_salt_shack", __name__, url_prefix="/api/v1/modules/chuck_salt_shack")`.
 Blueprints without an explicit prefix retain the compatibility mount at
 `/<module_name>`.
 
@@ -264,6 +264,18 @@ package static assets and include those assets in the Python package.
 At runtime, the framework serves `/modules/<module>/ui` and loads the packaged
 script and styles declared in `[frontend]`. The page includes props as JSON in
 the element named by `props_id`.
+
+Every enabled, accessible module with a frontend is also added to the Modules
+subnav from its manifest. Do not add module names to `templates/base.html`.
+
+There are two supported frontend assembly modes:
+
+- `bundled = true` imports the module's Vue entry through
+  `module-frontend-packages.json` into the framework Vite build.
+- `bundled = false` serves the module's compiled JavaScript and CSS directly
+  through the authenticated `/module-assets/<module>/...` route. This is the
+  recommended mode for a separately forkable module such as Chuck the Salt
+  Shack.
 
 Provided props:
 
@@ -294,7 +306,8 @@ it in framework `package.json` and add a static import to
 
 `npm run build` runs `scripts/generate-module-frontend-registry.mjs` before
 Vite. That generates `client-src/moduleRegistry.generated.ts` with static imports
-only. It is not a runtime module loader.
+only for `bundled = true` entries. It is not the module subnav registry and it
+is not a runtime module loader.
 
 ## Runtime Config
 

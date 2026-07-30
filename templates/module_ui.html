@@ -1,9 +1,8 @@
 {% extends 'base.html' %}
 {% block content %}
 
-<h2>{{ module.title or module.name }}</h2>
 {% if module.frontend and module.frontend.docs %}
-<p><a href="/modules/{{ module.name }}/docs">Module documentation</a></p>
+<p class="module-docs-link"><a href="/modules/{{ module.name }}/docs">Module documentation</a></p>
 {% endif %}
 
 {% for style_url in style_urls %}

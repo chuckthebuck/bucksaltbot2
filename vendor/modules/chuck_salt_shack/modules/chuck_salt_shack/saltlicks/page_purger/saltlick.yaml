@@ -1,0 +1,52 @@
+# A Saltlick contract is UI metadata plus a bounded execution contract. The
+# script path stays in the image and is never accepted from a browser request.
+contract: 1
+display_name: Page purger
+description: Preview and perform cache purges through the framework action catalog.
+entrypoint: script.py:run
+
+inputs:
+  # Wiki inputs become Codex lookups populated from Wikimedia's site matrix.
+  wiki:
+    type: wiki
+    label: Wiki
+    required: true
+    default:
+      code: commons
+      family: commons
+
+  targets:
+    type: pages
+    label: Page titles
+    description: Search and select pages from the chosen wiki and namespace.
+    required: true
+    max_items: 250
+    namespace:
+      selectable: true
+      allowed: [0, 2, 4, 6, 10, 14]
+      default: 0
+
+  force_link_update:
+    type: boolean
+    label: Force link update
+    default: true
+
+  recursive_link_update:
+    type: boolean
+    label: Recursive link update
+    default: false
+
+outputs:
+  # Outputs are validated before the framework persists or renders them.
+  planned_count:
+    type: number
+    label: Planned purges
+
+  targets:
+    type: pages
+    label: Target pages
+
+actions:
+  # Only framework-owned action types listed here may leave this Saltlick.
+  allowed:
+    - mediawiki.page.purge

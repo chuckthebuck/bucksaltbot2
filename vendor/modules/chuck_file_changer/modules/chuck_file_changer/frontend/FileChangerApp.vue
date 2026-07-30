@@ -211,7 +211,7 @@ async function fetchRun(id: number): Promise<QueuedRun> {
   <main class="cfc">
     <section class="cfc-header">
       <div>
-        <h1>Chuck the File Changer</h1>
+        <h1>File Changer</h1>
         <p>{{ operationLabel }} · Commons file pages · queued module run</p>
       </div>
       <div class="cfc-status-pill" :class="{ live: canApply }">

@@ -41,6 +41,9 @@ TOOL_DATA_DIR=/data/project/buckbot
 NOTDEV=1
 ```
 
+Module loading defaults to enabled; keep the explicit value in audited
+Toolforge configuration so an emergency opt-out is visible.
+
 Framework and module User-Agent defaults derive their version from the deployed
 release. Set the `*_HTTP_USER_AGENT` variables only when a deployment needs a
 full custom override.

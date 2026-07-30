@@ -32,8 +32,8 @@ info "Canary: checking vendored module autoversioning"
 python3 scripts/check-module-autoversioning.py
 
 info "Canary: checking generated Salt Shack registry"
-PYTHONPATH=vendor/modules/saltlick/modules \
-	run_python -m saltlick.build --check
+PYTHONPATH=vendor/modules/chuck_salt_shack/modules \
+	run_python -m chuck_salt_shack.build --check
 
 info "Canary: generating frontend module registry"
 npm run modules:frontend
@@ -46,7 +46,7 @@ run_unit_tests -m pytest \
 	tests/test_module_registry.py \
 	tests/test_module_runtime.py \
 	tests/test_jobs_yaml_generator.py \
-	tests/test_saltlick_module.py \
+	tests/test_chuck_salt_shack_module.py \
 	tests/test_wiki_actions.py \
 	-q
 

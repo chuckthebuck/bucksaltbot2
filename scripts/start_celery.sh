@@ -3,6 +3,7 @@ set -e
 
 export C_FORCE_ROOT=true
 export NOTDEV="${NOTDEV:-1}"
+export ENABLE_MODULE_LOADING="${ENABLE_MODULE_LOADING:-1}"
 
 mkdir -p "${TOOL_DATA_DIR:-./data}/logs" "${PYWIKIBOT_DIR:-./data/pywikibot}"
 

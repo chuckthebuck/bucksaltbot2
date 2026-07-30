@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chuckbot-chuck-salt-shack"
+version = "0.2.0"
+description = "Contract-driven Saltlick scripts for Chuck the Salt Shack"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "Flask>=3.1",
+  "PyYAML>=6.0.2",
+  "pywikibot>=11.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/chuckthebuck/chuck-the-salt-shack"
+Repository = "https://github.com/chuckthebuck/chuck-the-salt-shack"
+Issues = "https://github.com/chuckthebuck/chuck-the-salt-shack/issues"
+
+[project.scripts]
+# `saltshack` runs local legacy recipes; `saltshack-build` compiles child
+# Saltlick directories into the deterministic image registry.
+saltshack = "chuck_salt_shack.cli:main"
+saltshack-build = "chuck_salt_shack.build:main"
+
+[tool.setuptools.packages.find]
+where = ["modules"]
+include = ["chuck_salt_shack*"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+# The deployable wheel owns its UI, docs, logo, registry, and child scripts.
+chuck_salt_shack = [
+  "module.toml",
+  "static/*.js",
+  "static/*.css",
+  "docs/chuck_salt_shack.md",
+  "assets/*.svg",
+  "generated/*.yaml",
+  "saltlicks/*/*.yaml",
+  "saltlicks/*/*.py",
+]
+
+[project.entry-points."chuck_buckbot.modules"]
+# Framework discovery reads the packaged manifest without importing Pywikibot.
+chuck_salt_shack = "chuck_salt_shack.manifest:module_manifest"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["modules"]

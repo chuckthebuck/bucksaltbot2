@@ -8,7 +8,7 @@ lerna-debug.log*
 
 node_modules
 package-lock.json
-!vendor/modules/saltlick/package-lock.json
+!vendor/modules/chuck_salt_shack/package-lock.json
 dist
 dist-ssr
 static/dist/

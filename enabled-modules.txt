@@ -6,4 +6,4 @@
 rollback
 four_award
 chuck_file_changer
-saltlick
+chuck_salt_shack

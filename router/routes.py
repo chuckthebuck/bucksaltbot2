@@ -462,26 +462,74 @@ def inject_nav_capabilities():
             "nav_can_config": False,
             "nav_is_admin": False,
             "nav_can_modules": False,
+            "nav_module_items": [],
             "deployment_build_info": build_info,
         }
 
     perms = _user_permissions(username)
     is_admin = bool(session.get("is_admin") or is_admin_user(username))
-    can_manage_modules = _can_view_modules(username)
+    can_view_modules = _can_view_modules(username)
     can_edit_modules = _can_manage_modules(username)
-    can_view_four_award = _four_award_operator_allowed(username)
+
+    # Build the module sub-navigation from manifests rather than hard-coding
+    # individual modules into the framework template.  A newly installed module
+    # with a frontend therefore appears after a rebuild without a Vue/template
+    # change in the framework repository.
+    module_items = []
+    for record in list_module_definitions(enabled_only=True):
+        definition = record.definition
+        if not definition.ui_enabled or definition.frontend is None:
+            continue
+        elevated_access = bool(
+            can_edit_modules
+            or _can_manage_module(username, definition.name)
+            or _can_view_module_jobs(username, definition.name)
+        )
+        if not user_has_module_access(
+            definition.name,
+            username,
+            is_maintainer=elevated_access,
+        ):
+            continue
+        module_items.append(
+            {
+                "name": definition.name,
+                "title": definition.title or definition.name,
+                # Four Award retains its purpose-built run history page. Other
+                # modules use the framework-owned generic module UI wrapper.
+                "href": (
+                    "/goto?tab=four-award"
+                    if definition.name == "four_award"
+                    else url_for("module_ui_page", module_name=definition.name)
+                ),
+                "active_type": (
+                    "four-award"
+                    if definition.name == "four_award"
+                    else "module-ui"
+                ),
+            }
+        )
+
+    can_view_modules = bool(can_view_modules or module_items)
+    can_view_four_award = any(
+        item["name"] == "four_award" for item in module_items
+    )
+    modules_href = (
+        "/goto?tab=modules"
+        if can_edit_modules
+        else (module_items[0]["href"] if module_items else "/goto?tab=modules")
+    )
 
     return {
         "nav_can_write": bool("write" in perms),
         "nav_can_all_jobs": bool("read_all" in perms or is_admin),
         "nav_can_config": bool(_can_view_runtime_config(username)),
         "nav_is_admin": is_admin,
-        "nav_can_modules": can_manage_modules,
+        "nav_can_modules": can_view_modules,
         "nav_can_manage_modules": can_edit_modules,
         "nav_can_four_award": can_view_four_award,
-        "nav_modules_href": "/goto?tab=four-award"
-        if can_view_four_award and not can_edit_modules
-        else "/goto?tab=modules",
+        "nav_module_items": module_items,
+        "nav_modules_href": modules_href,
         "deployment_build_info": build_info,
     }
 

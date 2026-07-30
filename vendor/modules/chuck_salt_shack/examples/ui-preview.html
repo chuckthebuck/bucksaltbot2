@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Salt Shack UI preview</title>
+    <link rel="stylesheet" href="../modules/chuck_salt_shack/static/style.css">
+  </head>
+  <body>
+    <div id="chuck-salt-shack-app"></div>
+    <script>
+      const contracts = [
+        {
+          contract: 1,
+          id: "page_purger",
+          display_name: "Page purger",
+          description: "Preview and perform cache purges through the framework action catalog.",
+          generated: false,
+          source_digest: "682d28d5e6639ff1c845ac36b02621566c0d841bcf5c56ace1bef256a9bb4818",
+          inputs: {
+            wiki: {
+              type: "wiki",
+              label: "Wiki",
+              required: true,
+              default: { code: "commons", family: "commons" }
+            },
+            targets: {
+              type: "pages",
+              label: "Page titles",
+              description: "Search and select pages from the chosen wiki and namespace.",
+              required: true,
+              max_items: 250,
+              namespace: {
+                selectable: true,
+                allowed: [0, 2, 4, 6, 10, 14],
+                default: 0
+              },
+              wiki_input: "wiki"
+            },
+            force_link_update: {
+              type: "boolean",
+              label: "Force link update",
+              default: true
+            },
+            recursive_link_update: {
+              type: "boolean",
+              label: "Recursive link update",
+              default: false
+            }
+          },
+          outputs: {
+            planned_count: { type: "number", label: "Planned purges" },
+            targets: { type: "pages", label: "Target pages" }
+          },
+          actions: { allowed: ["mediawiki.page.purge"] }
+        },
+        {
+          contract: 1,
+          id: "transclusion_report",
+          display_name: "Transclusion report",
+          description: "Find pages transcluding a template and return a structured report.",
+          generated: false,
+          source_digest: "618334298c3467d7beb6e87d9deb249bf11a8fdcfa2cf424425d8b1492a1a457",
+          inputs: {
+            wiki: {
+              type: "wiki",
+              label: "Wiki",
+              required: true,
+              default: { code: "en", family: "wikipedia" }
+            },
+            template: {
+              type: "page",
+              label: "Template",
+              required: true,
+              namespace: { selectable: false, allowed: [10], default: 10 },
+              wiki_input: "wiki"
+            },
+            namespace: {
+              type: "namespace",
+              label: "Result namespace",
+              default: 0,
+              wiki_input: "wiki"
+            },
+            limit: {
+              type: "integer",
+              label: "Maximum pages",
+              default: 100,
+              minimum: 1,
+              maximum: 500
+            },
+            include_redirects: {
+              type: "boolean",
+              label: "Include redirects",
+              default: false
+            }
+          },
+          outputs: {
+            count: { type: "number", label: "Matching pages" },
+            matches: {
+              type: "table",
+              label: "Transcluding pages",
+              columns: {
+                page: { type: "page", label: "Page" },
+                namespace: { type: "number", label: "Namespace" },
+                redirect: { type: "boolean", label: "Redirect" }
+              }
+            }
+          },
+          actions: { allowed: [] }
+        }
+      ];
+      const purgeResult = {
+        ok: true,
+        saltlick: {
+          id: "page_purger",
+          display_name: "Page purger",
+          source_digest: contracts[0].source_digest
+        },
+        outputs: {
+          planned_count: 2,
+          targets: [
+            { wiki: { code: "commons", family: "commons" }, namespace: 0, title: "Main Page" },
+            { wiki: { code: "commons", family: "commons" }, namespace: 10, title: "Did you know" }
+          ]
+        },
+        actions: [
+          {
+            type: "mediawiki.page.purge",
+            target: { wiki: { code: "commons", family: "commons" }, namespace: 0, title: "Main Page" },
+            params: { forcelinkupdate: true }
+          },
+          {
+            type: "mediawiki.page.purge",
+            target: { wiki: { code: "commons", family: "commons" }, namespace: 10, title: "Did you know" },
+            params: { forcelinkupdate: true }
+          }
+        ],
+        action_result: {
+          ok: true,
+          dry_run: true,
+          planned_count: 2,
+          completed_count: 0,
+          error_count: 0,
+          items: [
+            {
+              index: 0,
+              type: "mediawiki.page.purge",
+              target: { wiki: { code: "commons", family: "commons" }, namespace: 0, title: "Main Page" },
+              status: "planned"
+            },
+            {
+              index: 1,
+              type: "mediawiki.page.purge",
+              target: { wiki: { code: "commons", family: "commons" }, namespace: 10, title: "Did you know" },
+              status: "planned"
+            }
+          ]
+        },
+        dry_run: true,
+        plan_token: "4b3be848d854d48b66ce33fba983b69084782528fc458439a68fd0e83e96a892"
+      };
+      let runRequested = false;
+      window.fetch = async (input, init = {}) => {
+        const url = String(input);
+        let body;
+        let status = 200;
+        if (url.includes("meta.wikimedia.org") && url.includes("action=sitematrix")) {
+          body = {
+            sitematrix: {
+              0: {
+                code: "en",
+                name: "English",
+                site: [
+                  {
+                    code: "wiki",
+                    sitename: "English Wikipedia",
+                    url: "https://en.wikipedia.org"
+                  }
+                ]
+              },
+              specials: [
+                {
+                  code: "commonswiki",
+                  sitename: "Wikimedia Commons",
+                  url: "https://commons.wikimedia.org"
+                }
+              ]
+            }
+          };
+        } else if (url.includes("siprop=namespaces")) {
+          body = {
+            query: {
+              namespaces: {
+                0: { id: 0, name: "", canonical: "" },
+                2: { id: 2, name: "User", canonical: "User" },
+                4: { id: 4, name: "Project", canonical: "Project" },
+                6: { id: 6, name: "File", canonical: "File" },
+                10: { id: 10, name: "Template", canonical: "Template" },
+                14: { id: 14, name: "Category", canonical: "Category" }
+              },
+              namespacealiases: []
+            }
+          };
+        } else if (url.includes("action=opensearch")) {
+          document.documentElement.dataset.lastOpensearchUrl = url;
+          body = ["Ma", ["Main Page", "Main Page/Documentation"], [], []];
+        } else if (url.endsWith("/auth")) {
+          body = {
+            username: "ExampleMaintainer",
+            can_preview: true,
+            can_apply: true,
+            can_manage: true
+          };
+        } else if (url.endsWith("/saltlicks")) {
+          body = {
+            module: { id: "chuck_salt_shack", display_name: "Salt Shack" },
+            saltlicks: contracts,
+            fingerprint: "preview"
+          };
+        } else if (url.includes("/saltlicks/") && url.endsWith("/runs") && init.method === "POST") {
+          runRequested = true;
+          window.lastSaltlickRequest = JSON.parse(init.body);
+          document.documentElement.dataset.lastSaltlickRequest = init.body;
+          body = {
+            status: "queued",
+            run_id: 42,
+            job: "preview",
+            saltlick_id: "page_purger"
+          };
+          status = 202;
+        } else if (url.endsWith("/runs/42")) {
+          body = {
+            id: 42,
+            status: runRequested ? "completed" : "queued",
+            result: purgeResult
+          };
+        } else if (url.includes("/saltlicks/") && url.endsWith("/runs")) {
+          body = {
+            runs: [
+              {
+                id: 42,
+                job_name: "preview",
+                status: "completed",
+                triggered_by: "ExampleMaintainer",
+                created_at: "2026-07-29T20:00:00Z",
+                result: purgeResult
+              }
+            ]
+          };
+        } else {
+          status = 404;
+          body = { detail: `No preview response for ${url}` };
+        }
+        return new Response(JSON.stringify(body), {
+          status,
+          headers: { "Content-Type": "application/json" }
+        });
+      };
+    </script>
+    <script src="../modules/chuck_salt_shack/static/chuck-salt-shack-app.js"></script>
+  </body>
+</html>

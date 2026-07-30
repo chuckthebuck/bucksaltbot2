@@ -1,0 +1,89 @@
+name: Release Chuck the Salt Shack
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump patch version
+        id: bump
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          pyproject = Path("pyproject.toml")
+          package = Path("package.json")
+          package_lock = Path("package-lock.json")
+          text = pyproject.read_text(encoding="utf-8")
+          match = re.search(r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"\s*$', text)
+          if not match:
+              raise SystemExit("Could not find x.x.x project version in pyproject.toml")
+
+          major, minor, patch = map(int, match.groups())
+          version = f"{major}.{minor}.{patch + 1}"
+          pyproject.write_text(
+              re.sub(
+                  r'(?m)^version\s*=\s*"\d+\.\d+\.\d+"\s*$',
+                  f'version = "{version}"',
+                  text,
+                  count=1,
+              ),
+              encoding="utf-8",
+          )
+          payload = json.loads(package.read_text(encoding="utf-8"))
+          payload["version"] = version
+          package.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+          lock_payload = json.loads(package_lock.read_text(encoding="utf-8"))
+          lock_payload["version"] = version
+          lock_payload["packages"][""]["version"] = version
+          package_lock.write_text(
+              json.dumps(lock_payload, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          Path("version.env").write_text(f"VERSION={version}\n", encoding="utf-8")
+          PY
+          cat version.env >> "$GITHUB_OUTPUT"
+
+      - name: Commit version bump
+        shell: bash
+        run: |
+          source version.env
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml package.json package-lock.json
+          git commit -m "chore(release): v${VERSION}"
+
+      - name: Tag release
+        shell: bash
+        run: |
+          source version.env
+          git tag "v${VERSION}"
+          git push origin HEAD:${GITHUB_REF_NAME}
+          git push origin "v${VERSION}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          source version.env
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes "Automated Chuck the Salt Shack module release for v${VERSION}."

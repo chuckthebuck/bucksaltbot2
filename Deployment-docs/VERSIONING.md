@@ -118,15 +118,16 @@ bash scripts/backport-four-award-subtree.sh --dry-run
 The helper checks that the split contains module files only before the
 non-dry-run task pushes it.
 
-Salt Shack uses the same model:
+Chuck the Salt Shack uses the same model:
 
 ```bash
-bash scripts/backport-saltlick-subtree.sh --dry-run
-bash scripts/backport-saltlick-subtree.sh
+bash scripts/backport-chuck-salt-shack-subtree.sh --dry-run
+bash scripts/backport-chuck-salt-shack-subtree.sh
 ```
 
-This publishes only `vendor/modules/saltlick/` to the standalone Saltlick
-repository configured by `SALTLICK_REMOTE` and `SALTLICK_BRANCH`.
+This publishes only `vendor/modules/chuck_salt_shack/` to the standalone Chuck
+the Salt Shack repository configured by `CHUCK_SALT_SHACK_REMOTE` and
+`CHUCK_SALT_SHACK_BRANCH`.
 
 For a shared release, prefer a module tag from GitHub so another maintainer can
 recreate the snapshot:

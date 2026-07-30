@@ -58,21 +58,21 @@ def test_register_enabled_modules_honors_blueprint_owned_api_prefix():
 
     app = Flask(__name__)
     blueprint = Blueprint(
-        "saltlick",
+        "chuck_salt_shack",
         __name__,
-        url_prefix="/api/v1/modules/saltlick",
+        url_prefix="/api/v1/modules/chuck_salt_shack",
     )
-    record = _make_record("saltlick")
+    record = _make_record("chuck_salt_shack")
     loaded = runtime.LoadedModule(record=record, blueprint=blueprint)
 
     with patch("router.module_runtime.load_enabled_modules", return_value=[loaded]):
         app.register_blueprint = MagicMock()
         registered = runtime.register_enabled_modules(app)
 
-    assert registered == ["saltlick"]
+    assert registered == ["chuck_salt_shack"]
     app.register_blueprint.assert_called_once_with(
         blueprint,
-        url_prefix="/api/v1/modules/saltlick",
+        url_prefix="/api/v1/modules/chuck_salt_shack",
     )
 
 

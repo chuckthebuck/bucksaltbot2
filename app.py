@@ -134,7 +134,10 @@ from router.module_registry import (  # noqa: E402
 )
 from router.module_runtime import register_enabled_modules  # noqa: E402
 
-if os.getenv("ENABLE_MODULE_LOADING", "0") == "1":
+# Modules are part of the default framework image.  Deployments can still set
+# ENABLE_MODULE_LOADING=0 as an emergency opt-out, but a missing environment
+# variable must not silently remove every module-owned API blueprint.
+if os.getenv("ENABLE_MODULE_LOADING", "1") == "1":
     enabled_module_names = load_enabled_module_names()
     logging.getLogger(__name__).warning(
         "Module loading enabled; enabled modules: %s",

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REMOTE="${CHUCK_SALT_SHACK_REMOTE:-https://github.com/chuckthebuck/chuck-the-salt-shack.git}"
+BRANCH="${CHUCK_SALT_SHACK_BRANCH:-main}"
+PREFIX="vendor/modules/chuck_salt_shack"
+
+if [[ "${1:-}" == "--dry-run" ]]; then
+	DRY_RUN=1
+else
+	DRY_RUN=0
+fi
+
+if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+	echo "Not inside a git repository." >&2
+	exit 1
+fi
+
+cd "$(git rev-parse --show-toplevel)"
+
+if [[ ! -d "$PREFIX" ]]; then
+	echo "Missing subtree prefix: $PREFIX" >&2
+	exit 1
+fi
+
+if [[ -n "$(git status --porcelain -- "$PREFIX")" ]]; then
+	echo "Refusing to split uncommitted Salt Shack files." >&2
+	echo "Commit the framework snapshot first so the split includes the reviewed state." >&2
+	exit 1
+fi
+
+split_commit="$(git subtree split --prefix="$PREFIX")"
+
+for forbidden in app.py router Deployment-docs vendor requirements.txt requirements-modules.txt enabled-modules.txt; do
+	if git cat-file -e "${split_commit}:${forbidden}" 2>/dev/null; then
+		echo "Refusing to push: split commit contains framework path '$forbidden'." >&2
+		echo "Split commit was: $split_commit" >&2
+		exit 1
+	fi
+done
+
+echo "Salt Shack split commit: $split_commit"
+echo "Root files that will be pushed:"
+git ls-tree --name-only "$split_commit"
+
+if [[ "$DRY_RUN" == "1" ]]; then
+	echo "Dry run only. Nothing pushed."
+	exit 0
+fi
+
+echo "Pushing $split_commit to $REMOTE branch $BRANCH"
+git push "$REMOTE" "$split_commit:refs/heads/$BRANCH"

@@ -1,0 +1,37 @@
+# Stable framework identity. "Saltlick" is reserved for child script folders.
+name = "chuck_salt_shack"
+repo = "https://github.com/chuckthebuck/chuck-the-salt-shack"
+entry_point = "chuck_salt_shack.service:run_saltlick"
+blueprint_entry_point = "chuck_salt_shack.blueprint:blueprint"
+ui = true
+redis_namespace = "chuck_salt_shack"
+title = "Salt Shack"
+oauth_consumer_mode = "default"
+rights = ["manage", "run_jobs", "apply_changes"]
+
+# The module ships a self-contained Codex bundle so it can remain forkable in a
+# separate repository while mounting inside the framework-owned page shell.
+[frontend]
+script = "chuck_salt_shack:static/chuck-salt-shack-app.js"
+styles = ["chuck_salt_shack:static/style.css"]
+props_id = "chuck-salt-shack-props"
+mount_id = "chuck-salt-shack-app"
+docs = "chuck_salt_shack:docs/chuck_salt_shack.md"
+bundled = false
+
+# Previews may run concurrently because they cannot write to a wiki.
+[[worker_jobs]]
+name = "preview"
+handler = "chuck_salt_shack.service:run_saltlick"
+concurrency_policy = "allow"
+timeout_seconds = 900
+enabled = true
+
+# Apply jobs are serialized and require the explicit module-scoped write right.
+[[worker_jobs]]
+name = "apply"
+handler = "chuck_salt_shack.service:run_saltlick"
+concurrency_policy = "forbid"
+required_right = "apply_changes"
+timeout_seconds = 1800
+enabled = true

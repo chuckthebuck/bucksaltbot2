@@ -46,7 +46,11 @@ def test_frontend_modules_are_enabled_and_installed_for_runtime_discovery():
 
 
 def test_vendored_entry_point_packages_ship_toml_manifest():
-    for module_name in ("four_award", "chuck_file_changer"):
+    for module_name in (
+        "four_award",
+        "chuck_file_changer",
+        "chuck_salt_shack",
+    ):
         pyproject = tomllib.loads(
             (ROOT / "vendor" / "modules" / module_name / "pyproject.toml").read_text(
                 encoding="utf-8"
@@ -58,3 +62,13 @@ def test_vendored_entry_point_packages_ship_toml_manifest():
             "module.toml" in resources
             for resources in package_data.values()
         )
+
+
+def test_toolforge_web_process_imports_module_bootstrap_application():
+    start_script = (ROOT / "scripts" / "start_gunicorn.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "app:flask_app" in start_script
+    assert "router:app" not in start_script
+    assert 'ENABLE_MODULE_LOADING="${ENABLE_MODULE_LOADING:-1}"' in start_script

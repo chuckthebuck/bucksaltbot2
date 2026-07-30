@@ -119,9 +119,12 @@
       {% if nav_can_manage_modules %}
       <a class="subnav-item{% if type == 'modules' %} is-active{% endif %}" href="/goto?tab=modules">Module Management</a>
       {% endif %}
-      {% if nav_can_four_award %}
-      <a class="subnav-item{% if type == 'four-award' %} is-active{% endif %}" href="/goto?tab=four-award">4award Runs</a>
-      {% endif %}
+      {% for nav_module in nav_module_items %}
+      <a
+        class="subnav-item{% if type == nav_module.active_type and (nav_module.active_type != 'module-ui' or (module is defined and module.name == nav_module.name)) %} is-active{% endif %}"
+        href="{{ nav_module.href }}"
+      >{{ nav_module.title }}</a>
+      {% endfor %}
       {% endif %}
       {% endif %}
     </div>

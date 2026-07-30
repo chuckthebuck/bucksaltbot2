@@ -58,10 +58,10 @@ update_module \
 	"${CHUCK_FILE_CHANGER_BRANCH:-main}"
 
 update_module \
-	"Saltlick" \
-	"vendor/modules/saltlick" \
-	"${SALTLICK_REMOTE:-https://github.com/chuckthebuck/saltlick.git}" \
-	"${SALTLICK_BRANCH:-main}"
+	"Chuck the Salt Shack" \
+	"vendor/modules/chuck_salt_shack" \
+	"${CHUCK_SALT_SHACK_REMOTE:-https://github.com/chuckthebuck/chuck-the-salt-shack.git}" \
+	"${CHUCK_SALT_SHACK_BRANCH:-main}"
 
 npm install
 npm run modules:frontend

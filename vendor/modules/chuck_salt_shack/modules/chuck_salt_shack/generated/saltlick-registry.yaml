@@ -1,0 +1,138 @@
+registry: 1
+module:
+  id: chuck_salt_shack
+  display_name: Salt Shack
+saltlicks:
+- contract: 1
+  id: page_purger
+  display_name: Page purger
+  description: Preview and perform cache purges through the framework action catalog.
+  entrypoint: script.py:run
+  inputs:
+    wiki:
+      type: wiki
+      label: Wiki
+      description: ''
+      required: true
+      default:
+        code: commons
+        family: commons
+    targets:
+      type: pages
+      label: Page titles
+      description: Search and select pages from the chosen wiki and namespace.
+      required: true
+      namespace:
+        selectable: true
+        allowed:
+        - 0
+        - 2
+        - 4
+        - 6
+        - 10
+        - 14
+        default: 0
+      max_items: 250
+      wiki_input: wiki
+    force_link_update:
+      type: boolean
+      label: Force link update
+      description: ''
+      required: false
+      default: true
+    recursive_link_update:
+      type: boolean
+      label: Recursive link update
+      description: ''
+      required: false
+      default: false
+  outputs:
+    planned_count:
+      type: number
+      label: Planned purges
+      description: ''
+      optional: false
+    targets:
+      type: pages
+      label: Target pages
+      description: ''
+      optional: false
+  actions:
+    allowed:
+    - mediawiki.page.purge
+  source_digest: 0da40c5bf629de70c04cdc7653a6b91fbec6e23f23577bf53bcb620e3df87cd4
+  generated: false
+- contract: 1
+  id: transclusion_report
+  display_name: Transclusion report
+  description: Find pages transcluding a template and return a structured report.
+  entrypoint: script.py:run
+  inputs:
+    wiki:
+      type: wiki
+      label: Wiki
+      description: ''
+      required: true
+      default:
+        code: en
+        family: wikipedia
+    template:
+      type: page
+      label: Template
+      description: The template whose transclusions should be listed.
+      required: true
+      namespace:
+        selectable: false
+        allowed:
+        - 10
+        default: 10
+      wiki_input: wiki
+    namespace:
+      type: namespace
+      label: Result namespace
+      description: Limit the returned pages to this namespace.
+      required: false
+      default: 0
+      wiki_input: wiki
+    limit:
+      type: integer
+      label: Maximum pages
+      description: ''
+      required: false
+      default: 100
+      minimum: 1.0
+      maximum: 500.0
+    include_redirects:
+      type: boolean
+      label: Include redirects
+      description: ''
+      required: false
+      default: false
+  outputs:
+    count:
+      type: number
+      label: Matching pages
+      description: ''
+      optional: false
+    matches:
+      type: table
+      label: Transcluding pages
+      description: ''
+      optional: false
+      columns:
+        page:
+          type: page
+          label: Page
+          optional: false
+        namespace:
+          type: number
+          label: Namespace
+          optional: false
+        redirect:
+          type: boolean
+          label: Redirect
+          optional: false
+  actions:
+    allowed: []
+  source_digest: cce22260c28bc92ca1e22f6fdf9906be2fa6f68e34a027993bfbc9a379638ace
+  generated: false

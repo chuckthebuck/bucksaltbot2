@@ -41,7 +41,7 @@ These are safe to document and usually safe to keep in `.env.example`.
 
 | Name | Scope | Notes |
 | --- | --- | --- |
-| `ENABLE_MODULE_LOADING` | framework | Enables module registry bootstrap. |
+| `ENABLE_MODULE_LOADING` | framework | Defaults to `1`; set `0` only as an emergency opt-out from module registry and blueprint bootstrap. |
 | `ENABLED_MODULES` | framework | Optional addition to `enabled-modules.txt`; when both are empty, no modules are loaded. |
 | `BOT_NAME` / `TOOL_NAME` | framework | Tool identity and default callback host. |
 | `NOTDEV` | framework | Production flag used by deployment/runtime scripts. |

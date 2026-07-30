@@ -6,7 +6,8 @@ This document guides you through preparing Chuck the Buckbot Framework for produ
 
 ### 1. Framework Configuration
 
-- [ ] **Enable module loading** in production environment:
+- [ ] **Confirm module loading is not disabled**. It defaults to enabled; this
+  explicit setting is still useful when auditing a production environment:
   ```bash
   export ENABLE_MODULE_LOADING=1
   ```
@@ -61,8 +62,8 @@ This document guides you through preparing Chuck the Buckbot Framework for produ
   - [x] Installs from `./vendor/modules/four_award`
   - [ ] Confirm `chuck_the_4awardhelper` imports cleanly before deploy
 
-- [ ] **Salt Shack module snapshot** (`vendor/modules/saltlick/`):
-  - [ ] Run `PYTHONPATH=vendor/modules/saltlick/modules python3 -m saltlick.build --check`
+- [ ] **Chuck the Salt Shack module snapshot** (`vendor/modules/chuck_salt_shack/`):
+  - [ ] Run `PYTHONPATH=vendor/modules/chuck_salt_shack/modules python3 -m chuck_salt_shack.build --check`
   - [ ] Confirm every intended directory appears in the generated Saltlick registry
   - [ ] Run the package tests and Codex frontend typecheck/build
   - [ ] Preview a read-only Saltlick and the page-purger action Saltlick in local safe mode
@@ -87,8 +88,11 @@ This document guides you through preparing Chuck the Buckbot Framework for produ
   ```
 
 - [ ] **Test module admin UI** (local or staging):
-  - Navigate to `/modules` (maintainer-only)
+  - Navigate to `/goto?tab=modules` as a maintainer
   - Verify module list loads
+  - Verify every accessible frontend module appears in the Modules subnav
+  - Open the Salt Shack and File Changer module pages
+  - Confirm their module-owned `/auth` API requests return `200`
   - Test enable/disable toggle
   - Test user access grant form
 
@@ -298,9 +302,10 @@ Add alerts for:
 
 If modules aren't working:
 
-1. Check `ENABLE_MODULE_LOADING=1` is set
-2. Verify `module.toml` files exist and are valid TOML
-3. Check module blueprints are importable
-4. Review logs for import errors
-5. Test module bootstrap with `pytest`
-6. See [Module Development Guide](MODULE_DEVELOPMENT_GUIDE.md) for troubleshooting
+1. Check `ENABLE_MODULE_LOADING` is not `0`
+2. Confirm Gunicorn starts `app:flask_app`, not `router:app`
+3. Verify `module.toml` files exist and are valid TOML
+4. Check module blueprints are importable
+5. Review logs for import errors
+6. Test module bootstrap with `pytest`
+7. See [Module Development Guide](MODULE_DEVELOPMENT_GUIDE.md) for troubleshooting

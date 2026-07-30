@@ -19,10 +19,11 @@ Module-specific business logic should live in the module package repo whenever
 possible. For example, `chuck_the_4awardhelper` owns its parser, reviewer,
 service code, Vue page, static build assets, and module documentation.
 
-## Salt Shack: Idea to Pywikibot in Under Two Hours
+## Chuck the Salt Shack: Idea to Pywikibot in Under Two Hours
 
-Salt Shack is Chuckbot's marquee module and is included in the default
-framework build. It contains any number of independently runnable Saltlicks.
+**Chuck the Salt Shack**—shown as **Salt Shack** in compact UI titles—is
+Chuckbot's marquee module and is included in the default framework build. It
+contains any number of independently runnable Saltlicks.
 Each immediate child directory supplies one fixed Python script and an optional
 typed YAML contract for its inputs, outputs, and framework actions.
 
@@ -33,11 +34,11 @@ Saltlick author writing frontend code. The browser sends only the Saltlick ID,
 typed inputs, and compatibility arguments; it never sends script source or a
 handler path.
 
-Salt Shack lives as the standalone-repository-shaped snapshot at
-`vendor/modules/saltlick/`, is installed by `requirements-modules.txt`, and is
+Chuck the Salt Shack lives as the standalone-repository-shaped snapshot at
+`vendor/modules/chuck_salt_shack/`, is installed by `requirements-modules.txt`, and is
 listed in `enabled-modules.txt`. Preview runs produce a reviewed action-plan
 digest; apply runs must reproduce that exact plan. See
-[`vendor/modules/saltlick/README.md`](vendor/modules/saltlick/README.md) for the
+[`vendor/modules/chuck_salt_shack/README.md`](vendor/modules/chuck_salt_shack/README.md) for the
 copy-a-directory workflow, contract format, API, and framework action model.
 
 ## Module Contract
@@ -55,12 +56,12 @@ module name appears in `enabled-modules.txt`:
 ```txt
 # requirements-modules.txt
 ./vendor/modules/four_award
-./vendor/modules/saltlick
+./vendor/modules/chuck_salt_shack
 
 # enabled-modules.txt
 rollback
 four_award
-saltlick
+chuck_salt_shack
 ```
 
 The framework discovers and loads modules through:
@@ -90,7 +91,7 @@ rights, frontend asset references, and documentation references before loading.
 
 ```toml
 name = "four_award"
-title = "Chuck the 4awardhelper"
+title = "4awardhelper"
 repo = "https://github.com/chuckthebuck/module4awardhelper"
 entry_point = "chuck_the_4awardhelper.service:run_four_award_sync"
 blueprint_entry_point = "chuck_the_4awardhelper.blueprint:blueprint"
@@ -321,15 +322,15 @@ bash scripts/backport-four-award-subtree.sh --dry-run
 The helper splits only `vendor/modules/four_award` and refuses commits that
 contain framework paths. The same workflow is available as VS Code tasks.
 
-Salt Shack has the equivalent checked split for its independent repository:
+Chuck the Salt Shack has the equivalent checked split for its independent repository:
 
 ```bash
-bash scripts/backport-saltlick-subtree.sh --dry-run
+bash scripts/backport-chuck-salt-shack-subtree.sh --dry-run
 ```
 
-It defaults to `https://github.com/chuckthebuck/saltlick.git`; override
-`SALTLICK_REMOTE` or `SALTLICK_BRANCH` when bootstrapping a local repository or
-publishing through a fork.
+It defaults to `https://github.com/chuckthebuck/chuck-the-salt-shack.git`; override
+`CHUCK_SALT_SHACK_REMOTE` or `CHUCK_SALT_SHACK_BRANCH` when bootstrapping a
+local repository or publishing through a fork.
 
 ## Documentation
 

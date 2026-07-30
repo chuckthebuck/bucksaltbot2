@@ -17,7 +17,8 @@ known-good package snapshots.
 
 ## What Must Be True For Deploy
 
-- `ENABLE_MODULE_LOADING=1` in the target environment.
+- Module loading has not been explicitly disabled with
+  `ENABLE_MODULE_LOADING=0`; enabled modules load by default.
 - Required framework and module environment variables are configured.
 - `requirements.txt` plus `requirements-modules.txt` install cleanly.
 - `enabled-modules.txt` names only modules that should load.
@@ -25,6 +26,8 @@ known-good package snapshots.
   `module:<name>:view` and `module:<name>:estop`.
 - Module-owned CTB APIs live under `/api/v1/modules/<module>/...`.
 - Toolforge `jobs.yaml` has been updated if cron definitions changed.
+- The Toolforge web process starts `app:flask_app`, not the legacy
+  `router:app` Flask re-export that bypasses module bootstrap.
 
 ## Useful Commands
 

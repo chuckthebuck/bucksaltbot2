@@ -185,6 +185,54 @@ def test_bundled_module_ui_uses_framework_asset_bundle(client):
     assert "/module-assets/four_award" not in html
 
 
+def test_modules_subnav_is_built_from_accessible_frontend_manifests(client):
+    import router.module_registry as registry
+
+    _set_session(client, "alice")
+    records = [
+        registry.ModuleRecord(
+            definition=registry.parse_module_definition(
+                {
+                    "name": name,
+                    "repo": f"https://example.invalid/{name}",
+                    "entry_point": f"{name}.service:run",
+                    "ui": True,
+                    "title": title,
+                    "frontend": {
+                        "script": f"{name}:static/app.js",
+                        "mount_id": f"{name}-app",
+                        "props_id": f"{name}-props",
+                    },
+                }
+            ),
+            enabled=True,
+        )
+        for name, title in (
+            ("four_award", "4awardhelper"),
+            ("chuck_file_changer", "File Changer"),
+            ("chuck_salt_shack", "Salt Shack"),
+        )
+    ]
+
+    with (
+        patch("router.routes.list_module_definitions", return_value=records),
+        patch("router.routes._user_permissions", return_value={"manage_modules"}),
+        patch("router.routes.is_maintainer", return_value=False),
+        patch("router.routes.is_admin_user", return_value=False),
+        patch("router.routes.user_has_module_access", return_value=True),
+    ):
+        response = client.get("/modules")
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert 'href="/goto?tab=four-award"' in html
+    assert ">4awardhelper</a>" in html
+    assert 'href="/modules/chuck_file_changer/ui"' in html
+    assert ">File Changer</a>" in html
+    assert 'href="/modules/chuck_salt_shack/ui"' in html
+    assert ">Salt Shack</a>" in html
+
+
 def test_local_redirect_target_rejects_external_urls():
     import router.routes as routes
 
@@ -1723,20 +1771,41 @@ def test_four_award_generated_view_can_open_runs_without_run_jobs(client):
 
 
 def test_four_award_view_jobs_shows_runs_tab_without_module_management(client):
+    import router.module_registry as registry
+
     _set_session(client, "viewer")
+    record = registry.ModuleRecord(
+        definition=registry.parse_module_definition(
+            {
+                "name": "four_award",
+                "repo": "https://example.invalid/four_award",
+                "entry_point": "four_award.service:run",
+                "ui": True,
+                "title": "4awardhelper",
+                "frontend": {
+                    "script": "four_award:static/app.js",
+                    "mount_id": "four-award-app",
+                    "props_id": "four-award-props",
+                },
+            }
+        ),
+        enabled=True,
+    )
 
     with (
         patch("router.routes._user_permissions", return_value={"module:four_award:view_jobs"}),
         patch("router.routes.is_maintainer", return_value=False),
         patch("router.routes.is_admin_user", return_value=False),
         patch("router.routes.get_module_definition", return_value=None),
+        patch("router.routes.list_module_definitions", return_value=[record]),
+        patch("router.routes.user_has_module_access", return_value=True),
     ):
         resp = client.get("/four-award")
 
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     assert 'href="/goto?tab=four-award"' in html
-    assert "4award Runs" in html
+    assert "4awardhelper" in html
     assert "Module Management" not in html
     assert "Jobs YAML" not in html
 

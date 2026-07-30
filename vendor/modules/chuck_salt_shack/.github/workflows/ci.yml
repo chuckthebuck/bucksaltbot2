@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# The standalone repository only needs read access while validating a change.
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package and test tools
+        run: python -m pip install --upgrade pip pytest build -e .
+
+      - name: Verify generated Saltlick registry
+        run: python -m chuck_salt_shack.build --check
+
+      - name: Run package tests
+        run: python -m pytest -q
+
+      - name: Build distribution artifacts
+        run: python -m build
+
+  frontend:
+    name: Codex frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Type-check frontend
+        run: npm run typecheck
+
+      - name: Build frontend and registry
+        run: npm run build
+
+      # Production installs consume these checked-in package resources.
+      - name: Confirm generated assets are current
+        run: >-
+          git diff --exit-code --
+          modules/chuck_salt_shack/generated
+          modules/chuck_salt_shack/static

@@ -1,0 +1,67 @@
+# This read-only Saltlick demonstrates a typed report with no write actions.
+contract: 1
+display_name: Transclusion report
+description: Find pages transcluding a template and return a structured report.
+entrypoint: script.py:run
+
+inputs:
+  # The template namespace is fixed, while the result namespace is selectable.
+  wiki:
+    type: wiki
+    label: Wiki
+    required: true
+    default:
+      code: en
+      family: wikipedia
+
+  template:
+    type: page
+    label: Template
+    description: The template whose transclusions should be listed.
+    required: true
+    namespace:
+      selectable: false
+      allowed: [10]
+      default: 10
+
+  namespace:
+    type: namespace
+    label: Result namespace
+    description: Limit the returned pages to this namespace.
+    default: 0
+
+  limit:
+    type: integer
+    label: Maximum pages
+    default: 100
+    minimum: 1
+    maximum: 500
+
+  include_redirects:
+    type: boolean
+    label: Include redirects
+    default: false
+
+outputs:
+  # Table columns let the shared renderer build a useful result table.
+  count:
+    type: number
+    label: Matching pages
+
+  matches:
+    type: table
+    label: Transcluding pages
+    columns:
+      page:
+        type: page
+        label: Page
+      namespace:
+        type: number
+        label: Namespace
+      redirect:
+        type: boolean
+        label: Redirect
+
+actions:
+  # An empty allowlist makes this Saltlick read-only by contract.
+  allowed: []

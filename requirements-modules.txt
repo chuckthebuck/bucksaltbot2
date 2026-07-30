@@ -7,4 +7,4 @@
 # The framework registers only names listed in enabled-modules.txt.
 ./vendor/modules/four_award
 ./vendor/modules/chuck_file_changer
-./vendor/modules/saltlick
+./vendor/modules/chuck_salt_shack

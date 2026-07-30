@@ -49,11 +49,11 @@ The split should show the module repo root (`modules/`, `tests/`,
 framework paths such as `router/`, `Deployment-docs/`, `vendor/`, or
 `requirements.txt`.
 
-Use the equivalent Salt Shack check before publishing its independent module
+Use the equivalent Chuck the Salt Shack check before publishing its independent module
 repository:
 
 ```bash
-bash scripts/backport-saltlick-subtree.sh --dry-run
+bash scripts/backport-chuck-salt-shack-subtree.sh --dry-run
 ```
 
 ## Toolforge Deploy
@@ -81,7 +81,10 @@ toolforge jobs list
 - [ ] Webservice responds.
 - [ ] `/api/v1/modules` lists the expected enabled modules.
 - [ ] Maintainer UI can open `/modules`.
+- [ ] Modules subnav lists every enabled, accessible frontend module.
 - [ ] Module UI pages load without static asset errors.
+- [ ] Salt Shack reports its compiled Saltlick count without “Module not found.”
+- [ ] File Changer `/chuck_file_changer/api/auth` responds while signed in.
 - [ ] Rollback worker health endpoint responds.
 - [ ] Module controller and Toolforge jobs are present.
 - [ ] Recent webservice and job logs have no new import or permission errors.
