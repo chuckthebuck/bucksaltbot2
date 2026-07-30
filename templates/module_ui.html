@@ -1,15 +1,15 @@
 {% extends 'base.html' %}
 {% block content %}
 
-{% if module.frontend and module.frontend.docs %}
-<p class="module-docs-link"><a href="/modules/{{ module.name }}/docs">Module documentation</a></p>
-{% endif %}
-
 {% for style_url in style_urls %}
 <link rel="stylesheet" href="{{ style_url }}">
 {% endfor %}
 
 <div id="{{ mount_id }}"></div>
+
+{% if module.frontend and module.frontend.docs %}
+<p class="module-docs-link"><a href="/modules/{{ module.name }}/docs">Module documentation</a></p>
+{% endif %}
 
 <script id="{{ props_id }}" type="application/json">
 {{ props|tojson }}

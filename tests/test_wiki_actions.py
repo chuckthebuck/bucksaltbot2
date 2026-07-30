@@ -73,3 +73,49 @@ def test_live_purge_uses_framework_reviewed_request(monkeypatch):
             "forcelinkupdate": 1,
         }
     ]
+
+
+def test_live_edit_is_batched_and_uses_the_reviewed_page_operation(monkeypatch):
+    saved = []
+    batches = []
+
+    class FakeSite:
+        pass
+
+    class FakePage:
+        def __init__(self, _site, title, ns=0):
+            self.title_value = title
+            self.namespace = ns
+
+        def put(self, text, **kwargs):
+            saved.append((self.title_value, text, kwargs))
+
+    monkeypatch.setattr(pywikibot, "Page", FakePage)
+    actions = [
+        {
+            "type": "pywikibot.page.edit",
+            "target": {
+                "wiki": {"code": "en", "family": "wikipedia"},
+                "namespace": 0,
+                "title": title,
+            },
+            "params": {"text": f"Text for {title}", "summary": "Test"},
+        }
+        for title in ("One", "Two")
+    ]
+
+    result = execute_action_plan(
+        actions,
+        site_factory=lambda _code, _family: FakeSite(),
+        dry_run=False,
+        allowed_types=["pywikibot.page.edit"],
+        batch_size=1,
+        batch_callback=lambda number, processed, total: batches.append(
+            (number, processed, total)
+        ),
+    )
+
+    assert result["ok"] is True
+    assert result["completed_count"] == 2
+    assert [item[0] for item in saved] == ["One", "Two"]
+    assert batches == [(1, 1, 2), (2, 2, 2)]

@@ -218,7 +218,15 @@ const selectedContract = computed(
   () => saltlicks.value.find((item) => item.id === selectedId.value) ?? null,
 );
 const inputEntries = computed(() =>
-  Object.entries(selectedContract.value?.inputs ?? {}),
+  Object.entries(selectedContract.value?.inputs ?? {}).sort(
+    ([leftName, left], [rightName, right]) => {
+      // The project picker establishes the context for every linked lookup.
+      // Always place it first, even when a hand-authored YAML contract does not.
+      const leftPriority = left.type === "wiki" ? 0 : 1;
+      const rightPriority = right.type === "wiki" ? 0 : 1;
+      return leftPriority - rightPriority || leftName.localeCompare(rightName);
+    },
+  ),
 );
 const outputEntries = computed(() =>
   Object.entries(selectedContract.value?.outputs ?? {}),
@@ -267,10 +275,17 @@ function wikiKey(value: { code?: unknown; family?: unknown }): string {
 function initialField(spec: InputContract): FieldState {
   const defaultValue = spec.default !== undefined ? clone(spec.default) : undefined;
   if (spec.type === "wiki") {
-    const wiki = defaultValue ?? { code: "commons", family: "commons" };
+    const wiki = (defaultValue as Record<string, unknown> | undefined) ?? {
+      code: "commons",
+      family: "commons",
+    };
+    const option = WIKI_FALLBACKS.find(
+      (candidate) => wikiKey(candidate) === wikiKey(wiki),
+    );
     return makeFieldState({
       selected: wikiKey(wiki),
       value: wiki,
+      text: option?.label ?? `${wiki.code}:${wiki.family}`,
     });
   }
   if (spec.type === "page") {

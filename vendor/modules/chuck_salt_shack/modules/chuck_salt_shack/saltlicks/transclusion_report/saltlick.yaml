@@ -5,7 +5,8 @@ description: Find pages transcluding a template and return a structured report.
 entrypoint: script.py:run
 
 inputs:
-  # The template namespace is fixed, while the result namespace is selectable.
+  # Start with English Wikipedia; both the template and result namespaces are
+  # selectable because templates may be transcluded from local project spaces.
   wiki:
     type: wiki
     label: Wiki
@@ -20,8 +21,7 @@ inputs:
     description: The template whose transclusions should be listed.
     required: true
     namespace:
-      selectable: false
-      allowed: [10]
+      selectable: true
       default: 10
 
   namespace:

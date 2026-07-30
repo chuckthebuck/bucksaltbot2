@@ -18,6 +18,17 @@ actions, defaults, and run history.
 Apply runs must reproduce the preview's action-plan digest. If the plan changes,
 Salt Shack rejects it and requires a new preview.
 
+## Framework action catalog and batching
+
+Saltlicks declare the action types they need in `actions.allowed`. The
+framework executes the reviewed Pywikibot page catalog—`purge`, `edit`,
+`delete`, `undelete`, `move`, `protect`, `touch`, `watch`, `unwatch`, and
+`rollback`—under
+either the `mediawiki.page.*` or `pywikibot.page.*` action namespace. Live
+plans are processed in bounded batches, reusing a logged-in site per wiki and
+recording best-effort batch progress in the module's Redis namespace. A
+Saltlick cannot invoke an arbitrary Python method through this interface.
+
 ## Adding a Saltlick
 
 Saltlicks cannot be added from the browser. They are immutable image contents.

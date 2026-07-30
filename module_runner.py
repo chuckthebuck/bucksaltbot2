@@ -97,11 +97,31 @@ class ModuleRunContext:
         """Run a declarative action plan through the framework action catalog."""
         from router.wiki_actions import execute_action_plan
 
+        def record_batch(batch_number: int, processed: int, total: int) -> None:
+            """Persist best-effort action-batch progress in this module's Redis key."""
+            try:
+                from redis_state import r
+
+                r.hset(
+                    f"module:{self.module_name}:run:{self.run_id}:action-batch",
+                    mapping={
+                        "batch": batch_number,
+                        "processed": processed,
+                        "total": total,
+                    },
+                )
+                r.expire(f"module:{self.module_name}:run:{self.run_id}:action-batch", 86400)
+            except Exception:
+                # Progress reporting must never turn a completed wiki action
+                # into a failed module job when Redis is unavailable.
+                return
+
         return execute_action_plan(
             actions,
             site_factory=self.site,
             dry_run=dry_run,
             allowed_types=allowed_types,
+            batch_callback=None if dry_run else record_batch,
         )
 
 

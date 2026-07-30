@@ -476,6 +476,7 @@ def inject_nav_capabilities():
     # with a frontend therefore appears after a rebuild without a Vue/template
     # change in the framework repository.
     module_items = []
+    module_titles = set()
     for record in list_module_definitions(enabled_only=True):
         definition = record.definition
         if not definition.ui_enabled or definition.frontend is None:
@@ -491,6 +492,13 @@ def inject_nav_capabilities():
             is_maintainer=elevated_access,
         ):
             continue
+        # A previously installed alias can coexist with the canonical module
+        # record during a deploy.  Keep one user-facing destination instead of
+        # rendering two indistinguishable Salt Shack entries.
+        title_key = (definition.title or definition.name).strip().casefold()
+        if title_key in module_titles:
+            continue
+        module_titles.add(title_key)
         module_items.append(
             {
                 "name": definition.name,

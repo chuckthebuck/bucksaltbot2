@@ -82,9 +82,8 @@ saltlicks:
       description: The template whose transclusions should be listed.
       required: true
       namespace:
-        selectable: false
-        allowed:
-        - 10
+        selectable: true
+        allowed: []
         default: 10
       wiki_input: wiki
     namespace:
@@ -134,5 +133,5 @@ saltlicks:
           optional: false
   actions:
     allowed: []
-  source_digest: cce22260c28bc92ca1e22f6fdf9906be2fa6f68e34a027993bfbc9a379638ace
+  source_digest: 302c44cb4b0f814bbd9ec94c218a7dfbaab900d42259e6db6d687c5d43cf1369
   generated: false
