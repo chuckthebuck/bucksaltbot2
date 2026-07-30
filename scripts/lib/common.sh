@@ -103,6 +103,11 @@ apply_local_service_defaults() {
 	export TOOL_TOOLSDB_DATABASE="${TOOL_TOOLSDB_DATABASE:-chuckbot_local}"
 }
 
+celery_queue_name() {
+	local namespace="${BUCKBOT_REDIS_NAMESPACE:-buckbot}"
+	printf '%s\n' "${BUCKBOT_CELERY_QUEUE:-${namespace}.celery}"
+}
+
 run_python() {
 	"$(venv_python)" "$@"
 }

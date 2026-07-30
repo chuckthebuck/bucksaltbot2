@@ -35,6 +35,7 @@ services:
       TOOL_REDIS_URI: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/9
       CELERY_RESULT_BACKEND: redis://redis:6379/9
+      BUCKBOT_REDIS_NAMESPACE: buckbot-local
       TOOL_TOOLSDB_HOST: mariadb
       TOOL_TOOLSDB_USER: user
       TOOL_TOOLSDB_PASSWORD: password
@@ -58,6 +59,7 @@ services:
       TOOL_REDIS_URI: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/9
       CELERY_RESULT_BACKEND: redis://redis:6379/9
+      BUCKBOT_REDIS_NAMESPACE: buckbot-local
       TOOL_TOOLSDB_HOST: mariadb
       TOOL_TOOLSDB_USER: user
       TOOL_TOOLSDB_PASSWORD: password

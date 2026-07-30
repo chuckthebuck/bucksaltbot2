@@ -1,11 +1,17 @@
+"""Compatibility Redis client configured like the rest of the framework."""
+
+import os
+
 import redis
 
-REDIS_HOST = "redis.svc.tools.eqiad1.wikimedia.cloud"
-REDIS_PORT = 6379
-REDIS_DB = 9
+from redis_namespace import redis_namespace
 
-redis_url = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
 
-rediscl = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
+redis_url = os.getenv(
+    "TOOL_REDIS_URI", "redis://redis.svc.tools.eqiad1.wikimedia.cloud:6379/0"
+)
+rediscl = redis.Redis.from_url(redis_url)
 
-REDIS_KEY_PREFIX = "mw-toolforge-buckbot"
+# Callers should prefix their keys with this value when using this legacy
+# helper directly. New framework code uses router.framework_config instead.
+REDIS_KEY_PREFIX = redis_namespace()

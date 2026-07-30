@@ -297,7 +297,20 @@ def _can_view_module_jobs(username: str | None, module_name: str) -> bool:
 
 
 def _module_effective_rights(record) -> list[str]:
-    return sorted(record.definition.effective_rights)
+    """Return declared rights plus runtime-generated module capabilities."""
+    rights = set(record.definition.effective_rights)
+    if record.definition.name == "chuck_salt_shack":
+        # Saltlick directories are discovered at build/runtime, so their
+        # independently grantable rights cannot be hand-maintained in TOML.
+        try:
+            from chuck_salt_shack.registry import discover_saltlicks
+            from chuck_salt_shack.safety import saltlick_rights
+
+            for definition in discover_saltlicks():
+                rights.update(saltlick_rights(definition.id).values())
+        except Exception:
+            app.logger.exception("Could not discover generated Saltlick rights")
+    return sorted(rights)
 
 
 def _can_edit_module_config(username: str | None, module_name: str) -> bool:
@@ -3352,6 +3365,7 @@ def module_registry_api():
                 "can_run_jobs": bool(_can_run_module_jobs(username, definition.name)),
                 "can_edit_config": bool(_can_edit_module_config(username, definition.name)),
                 "redis_namespace": definition.redis_namespace,
+                "rights": _module_effective_rights(record),
                 "oauth_consumer_mode": definition.oauth_consumer_mode,
             }
         )
@@ -3378,6 +3392,7 @@ def module_registry_item_api(module_name: str):
         return jsonify({"detail": "Forbidden"}), 403
 
     payload = record.as_dict()
+    payload["rights"] = _module_effective_rights(record)
     payload["has_access"] = True
     payload["ui_url"] = (
         url_for("module_ui_page", module_name=record.definition.name)

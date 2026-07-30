@@ -29,6 +29,20 @@ plans are processed in bounded batches, reusing a logged-in site per wiki and
 recording best-effort batch progress in the module's Redis namespace. A
 Saltlick cannot invoke an arbitrary Python method through this interface.
 
+## Per-Saltlick access and emergency stops
+
+Every discovered Saltlick automatically exposes three module-right suffixes:
+`saltlick_<id>_preview`, `saltlick_<id>_apply`, and
+`saltlick_<id>_estop`. Grant them through the normal framework module-grant
+mechanism (for example, `module:chuck_salt_shack:saltlick_page_purger_preview`)
+to authorize only that Saltlick. Existing Shack-wide `run_jobs`,
+`apply_changes`, `estop`, and `manage` rights continue to work as broader
+operator grants.
+
+Stopping a Saltlick persists its disabled state in framework module config and
+cancels only that Saltlick's active runs. The normal Shack module emergency
+stop remains separate and disables/cancels the whole module.
+
 ## Adding a Saltlick
 
 Saltlicks cannot be added from the browser. They are immutable image contents.

@@ -62,6 +62,10 @@ saltlicks:
     - mediawiki.page.purge
   source_digest: 0da40c5bf629de70c04cdc7653a6b91fbec6e23f23577bf53bcb620e3df87cd4
   generated: false
+  rights:
+    preview: saltlick_page_purger_preview
+    apply: saltlick_page_purger_apply
+    estop: saltlick_page_purger_estop
 - contract: 1
   id: transclusion_report
   display_name: Transclusion report
@@ -135,3 +139,7 @@ saltlicks:
     allowed: []
   source_digest: 302c44cb4b0f814bbd9ec94c218a7dfbaab900d42259e6db6d687c5d43cf1369
   generated: false
+  rights:
+    preview: saltlick_transclusion_report_preview
+    apply: saltlick_transclusion_report_apply
+    estop: saltlick_transclusion_report_estop

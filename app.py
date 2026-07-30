@@ -15,6 +15,7 @@ from flask import Flask, session
 from blueprint import assets_blueprint
 from celery_init import celery_init_app
 from http_config import http_headers
+from redis_namespace import celery_queue_name, redis_namespace
 
 
 BOT_ADMIN_ACCOUNTS = {
@@ -97,10 +98,19 @@ CELERY_BROKER_URL = os.getenv(
 )
 
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+REDIS_NAMESPACE = redis_namespace()
+CELERY_QUEUE = celery_queue_name()
 
 flask_app.config["CELERY"] = {
     "broker_url": CELERY_BROKER_URL,
     "result_backend": CELERY_RESULT_BACKEND,
+    # Toolforge Redis is shared. Namespace Kombu's broker keys and Celery's
+    # result keys, then send/receive only this deployment's named queue.
+    "broker_transport_options": {"global_keyprefix": f"{REDIS_NAMESPACE}:"},
+    "result_backend_transport_options": {"global_keyprefix": REDIS_NAMESPACE},
+    "task_default_queue": CELERY_QUEUE,
+    "task_default_exchange": CELERY_QUEUE,
+    "task_default_routing_key": CELERY_QUEUE,
     "task_serializer": "json",
     "accept_content": ["json"],
     "result_serializer": "json",

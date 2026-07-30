@@ -6,7 +6,18 @@ from flask import Blueprint, jsonify, request, session
 
 from .codegen import render_jobs_py, render_module_toml
 from .contracts import public_contract, validate_arguments, validate_inputs
-from .registry import get_saltlick, registry_fingerprint, registry_payload
+from .registry import (
+    discover_saltlicks,
+    get_saltlick,
+    registry_fingerprint,
+    registry_payload,
+)
+from .safety import (
+    emergency_stop_saltlick,
+    saltlick_is_enabled,
+    saltlick_right,
+    set_saltlick_enabled,
+)
 from .spec import WorkflowSpec
 
 
@@ -57,9 +68,16 @@ def _has_access(username: str) -> bool:
             return True
     except Exception:
         pass
-    return any(
-        _has_right(username, right)
-        for right in ("manage", "run_jobs", "apply_changes")
+    return (
+        any(
+            _has_right(username, right)
+            for right in ("manage", "run_jobs", "apply_changes")
+        )
+        or any(
+            _has_right(username, saltlick_right(definition.id, capability))
+            for definition in discover_saltlicks()
+            for capability in ("preview", "apply", "estop")
+        )
     )
 
 
@@ -88,6 +106,25 @@ def _can_preview(username: str) -> bool:
 def _can_apply(username: str) -> bool:
     """Return whether the user may enqueue confirmed live jobs."""
     return _has_right(username, "apply_changes") or _has_right(username, "manage")
+
+
+def _can_saltlick_preview(username: str, saltlick_id: str) -> bool:
+    """Allow the legacy Shack grant or the generated Saltlick preview grant."""
+    return _can_preview(username) or _has_right(username, saltlick_right(saltlick_id, "preview"))
+
+
+def _can_saltlick_apply(username: str, saltlick_id: str) -> bool:
+    """Allow the legacy Shack grant or the generated Saltlick apply grant."""
+    return _can_apply(username) or _has_right(username, saltlick_right(saltlick_id, "apply"))
+
+
+def _can_estop_saltlick(username: str, saltlick_id: str) -> bool:
+    """Allow the Shack estop/manage grant or the Saltlick-specific grant."""
+    return (
+        _has_right(username, "manage")
+        or _has_right(username, "estop")
+        or _has_right(username, saltlick_right(saltlick_id, "estop"))
+    )
 
 
 def _workflow_from_request(*, allow_confirmation: bool = False) -> tuple[WorkflowSpec, dict]:
@@ -194,12 +231,24 @@ def auth_api():
     username, denied = _require_access()
     if denied:
         return denied
+    saltlick_capabilities = {
+        definition.id: {
+            "can_preview": _can_saltlick_preview(username or "", definition.id),
+            "can_apply": _can_saltlick_apply(username or "", definition.id),
+            "can_estop": _can_estop_saltlick(username or "", definition.id),
+            "enabled": saltlick_is_enabled(definition.id),
+        }
+        for definition in discover_saltlicks()
+    }
     return jsonify(
         {
             "username": username,
             "can_preview": _can_preview(username or ""),
             "can_apply": _can_apply(username or ""),
             "can_manage": _has_right(username or "", "manage"),
+            "can_estop": _has_right(username or "", "estop")
+            or _has_right(username or "", "manage"),
+            "saltlicks": saltlick_capabilities,
         }
     )
 
@@ -236,6 +285,8 @@ def saltlick_run_api(saltlick_id: str):
     definition = get_saltlick(saltlick_id)
     if definition is None:
         return jsonify({"detail": "Saltlick not found"}), 404
+    if not saltlick_is_enabled(definition.id):
+        return jsonify({"detail": "Saltlick is emergency-stopped"}), 409
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"detail": "request body must be an object"}), 400
@@ -256,7 +307,7 @@ def saltlick_run_api(saltlick_id: str):
         return jsonify({"detail": "mode must be preview or apply"}), 400
     live = mode == "apply"
     if live:
-        if not _can_apply(username or ""):
+        if not _can_saltlick_apply(username or "", definition.id):
             return jsonify(
                 {"detail": "Forbidden: apply_changes right required"}
             ), 403
@@ -270,7 +321,7 @@ def saltlick_run_api(saltlick_id: str):
                 {"detail": "Live run requires a preview_token"}
             ), 400
     else:
-        if not _can_preview(username or ""):
+        if not _can_saltlick_preview(username or "", definition.id):
             return jsonify({"detail": "Forbidden: run_jobs right required"}), 403
         preview_token = ""
     try:
@@ -299,6 +350,27 @@ def saltlick_run_api(saltlick_id: str):
             "contract": public_contract(definition.contract),
         }
     ), 202
+
+
+@blueprint.post("/saltlicks/<saltlick_id>/estop")
+def saltlick_estop_api(saltlick_id: str):
+    """Independently stop or resume one compiled Saltlick."""
+    username, denied = _require_access()
+    if denied:
+        return denied
+    definition = get_saltlick(saltlick_id)
+    if definition is None:
+        return jsonify({"detail": "Saltlick not found"}), 404
+    if not _can_estop_saltlick(username or "", definition.id):
+        return jsonify({"detail": "Forbidden: Saltlick estop right required"}), 403
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict) or set(payload) - {"enabled"}:
+        return jsonify({"detail": "request body may only contain enabled"}), 400
+    enabled = bool(payload.get("enabled", False))
+    if enabled:
+        set_saltlick_enabled(definition.id, True, actor=username)
+        return jsonify({"saltlick_id": definition.id, "enabled": True, "canceled_runs": []})
+    return jsonify(emergency_stop_saltlick(definition.id, actor=username))
 
 
 @blueprint.get("/saltlicks/<saltlick_id>/runs")

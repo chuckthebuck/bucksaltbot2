@@ -2,9 +2,15 @@
 
 import os
 
+from redis_namespace import redis_namespace
+
 BOT_NAME = os.getenv("BOT_NAME") or os.getenv("TOOL_NAME") or "buckbot"
 
-REDIS_KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "rollback").strip() or "rollback"
+# REDIS_KEY_PREFIX remains available as a compatibility override. By default,
+# all framework state follows the deployment-wide Redis namespace.
+REDIS_KEY_PREFIX = (
+    os.getenv("REDIS_KEY_PREFIX", redis_namespace()).strip() or redis_namespace()
+)
 
 WIKI_API_URL = os.getenv("WIKI_API_URL", "https://commons.wikimedia.org/w/api.php")
 MWOAUTH_BASE_URL = os.getenv("MWOAUTH_BASE_URL", "https://meta.wikimedia.org")

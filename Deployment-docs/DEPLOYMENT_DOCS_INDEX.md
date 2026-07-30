@@ -6,6 +6,13 @@ packages.
 
 ## Start Here
 
+- [QUICKSTART.md](QUICKSTART.md) — Safe first local run, everyday checks, and
+  the shortest path to a working development stack.
+- [TOOLFORGE_FIRST_DEPLOY.md](TOOLFORGE_FIRST_DEPLOY.md) — First-time Toolforge
+  account setup, environment configuration, database bootstrap, build, and
+  generated jobs loading.
+- [SALTLICK_AUTHORING_GUIDE.md](SALTLICK_AUTHORING_GUIDE.md) — Create, test,
+  review, and publish a contract-driven Salt Shack workflow.
 - [README.md](../README.md) — Current framework overview, module contract, UI
   ownership, permission model, and Toolforge flow.
 - [MODULE_DEVELOPMENT_GUIDE.md](MODULE_DEVELOPMENT_GUIDE.md) — How to build a

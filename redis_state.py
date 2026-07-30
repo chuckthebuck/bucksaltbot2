@@ -2,6 +2,8 @@ import os
 import json
 import redis
 
+from redis_namespace import redis_namespace
+
 REDIS_URL = os.environ.get(
     "TOOL_REDIS_URI", "redis://redis.svc.tools.eqiad1.wikimedia.cloud:6379"
 )
@@ -10,7 +12,7 @@ r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 
 def job_key(job_id):
-    return f"rollback:job:{job_id}"
+    return f"{redis_namespace()}:rollback:job:{job_id}"
 
 
 def set_progress(job_id, data, ttl=86400):

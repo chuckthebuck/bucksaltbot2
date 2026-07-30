@@ -35,8 +35,11 @@ npm run dev &
 pids+=("$!")
 
 info "Starting Celery rollback worker in local safe mode"
+CELERY_QUEUE="$(celery_queue_name)"
 C_FORCE_ROOT=true run_python -m celery -A celery_worker:app worker \
 	--loglevel=INFO \
+	--queues "$CELERY_QUEUE" \
+	--hostname "${BUCKBOT_CELERY_WORKER_NAME:-buckbot-local-celery}@%h" \
 	--concurrency=1 \
 	--max-tasks-per-child=20 &
 pids+=("$!")

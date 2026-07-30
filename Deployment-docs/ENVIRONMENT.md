@@ -50,6 +50,9 @@ These are safe to document and usually safe to keep in `.env.example`.
 | `TOOL_REDIS_URI` | services | Redis URL for framework status/progress state. |
 | `CELERY_BROKER_URL` | services | Celery broker URL. |
 | `CELERY_RESULT_BACKEND` | services | Celery result backend URL. |
+| `BUCKBOT_REDIS_NAMESPACE` | services | Redis key namespace for this deployment. Defaults to `buckbot`; set a distinct value for every tool or environment sharing a Redis database. |
+| `BUCKBOT_CELERY_QUEUE` | services | The only Celery queue Buckbot sends to and consumes. Defaults to `<BUCKBOT_REDIS_NAMESPACE>.celery`. |
+| `BUCKBOT_CELERY_WORKER_NAME` | worker | Optional worker node-name prefix; defaults to `<BUCKBOT_REDIS_NAMESPACE>-celery`. |
 | `TOOL_TOOLSDB_HOST` | DB | Optional DB host override. Toolforge defaults to `tools.db.svc.wikimedia.cloud`; local canary defaults to `127.0.0.1`. |
 | `TOOL_TOOLSDB_USER` | DB | DB user override. |
 | `TOOL_TOOLSDB_DATABASE` | DB | DB name override. |
@@ -62,3 +65,23 @@ These are safe to document and usually safe to keep in `.env.example`.
 Use environment variables for secrets and deploy-specific hostnames. Use module
 config/runtime UI for operational toggles that maintainers may change without
 rotating credentials.
+
+## Shared Redis and Toolforge
+
+Toolforge Redis may be shared by more than one tool. Buckbot isolates Redis in
+four layers: framework-state keys use `BUCKBOT_REDIS_NAMESPACE`, Kombu prefixes
+broker keys with that namespace, Celery result keys use the same namespace, and
+the worker consumes only `<namespace>.celery`. Set the same namespace and queue
+values for the web process, Celery worker, and any administrative shell that
+runs Celery commands.
+
+For the production Buckbot tool, the defaults (`buckbot` and
+`buckbot.celery`) are appropriate. A staging, fork, or second Toolforge tool
+must set a different `BUCKBOT_REDIS_NAMESPACE`, such as `buckbot-staging`,
+before it starts any processes. Do not point two deployments at the same
+namespace unless they intentionally share work.
+
+The first deployment using queue isolation leaves messages already sitting on
+the old shared `celery` queue untouched. Before switching a live deployment,
+drain that queue with the old Buckbot worker, or explicitly discard it only
+after confirming no other tool uses it.

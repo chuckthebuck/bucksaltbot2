@@ -6,6 +6,18 @@ small framework that can run multiple independently deployable bot modules
 without making every module carry its own Flask, Redis, SQL, OAuth, and
 Toolforge job-control code.
 
+## Start Here
+
+New contributors should begin with the [local quickstart](Deployment-docs/QUICKSTART.md).
+It prepares a safe local environment, runs the focused canary, and starts the
+complete development stack. For the complete documentation map, see the
+[documentation index](Deployment-docs/DEPLOYMENT_DOCS_INDEX.md).
+
+For a brand-new Toolforge account, use the reviewed
+[first-deploy guide](Deployment-docs/TOOLFORGE_FIRST_DEPLOY.md). Salt Shack
+workflow authors should use the
+[Saltlick authoring guide](Deployment-docs/SALTLICK_AUTHORING_GUIDE.md).
+
 ## What Lives Here
 
 - The Flask webservice, OAuth login, navigation, and shared APIs.

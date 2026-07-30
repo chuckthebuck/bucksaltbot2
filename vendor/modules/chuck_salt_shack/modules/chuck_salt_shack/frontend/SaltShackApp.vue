@@ -65,6 +65,13 @@ interface AuthState {
   can_preview?: boolean;
   can_apply?: boolean;
   can_manage?: boolean;
+  can_estop?: boolean;
+  saltlicks?: Record<string, {
+    can_preview: boolean;
+    can_apply: boolean;
+    can_estop: boolean;
+    enabled: boolean;
+  }>;
 }
 
 interface FieldState {
@@ -233,10 +240,19 @@ const outputEntries = computed(() =>
 );
 const previewCanApply = computed(
   () =>
-    Boolean(auth.value.can_apply) &&
+    canApplySelected.value &&
     Boolean(result.value?.dry_run) &&
     Boolean(result.value?.plan_token) &&
     (result.value?.actions?.length ?? 0) > 0,
+);
+const selectedCapabilities = computed(
+  () => auth.value.saltlicks?.[selectedId.value],
+);
+const canPreviewSelected = computed(
+  () => Boolean(auth.value.can_preview || selectedCapabilities.value?.can_preview),
+);
+const canApplySelected = computed(
+  () => Boolean(auth.value.can_apply || selectedCapabilities.value?.can_apply),
 );
 
 function clone<T>(value: T): T {
@@ -1158,7 +1174,7 @@ function formatDate(value?: string) {
                   type="submit"
                   action="progressive"
                   weight="primary"
-                  :disabled="busy || !auth.can_preview"
+                  :disabled="busy || !canPreviewSelected"
                 >
                   {{ busy && runStatus ? `Run ${runStatus}…` : "Run dry preview" }}
                 </cdx-button>

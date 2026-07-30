@@ -313,6 +313,10 @@ def execute_saltlick(
     definition = get_saltlick(saltlick_id)
     if definition is None:
         raise ValueError(f"unknown Saltlick: {saltlick_id}")
+    from .safety import saltlick_is_enabled
+
+    if not saltlick_is_enabled(definition.id):
+        raise RuntimeError(f"Saltlick is emergency-stopped: {definition.id}")
     inputs = validate_inputs(definition.contract, payload.get("inputs"))
     arguments = validate_arguments(payload.get("arguments"))
 

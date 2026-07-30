@@ -72,3 +72,23 @@ def test_toolforge_web_process_imports_module_bootstrap_application():
     assert "app:flask_app" in start_script
     assert "router:app" not in start_script
     assert 'ENABLE_MODULE_LOADING="${ENABLE_MODULE_LOADING:-1}"' in start_script
+    assert 'cd "$REPO_ROOT"' in start_script
+
+
+def test_toolforge_celery_worker_uses_its_isolated_queue():
+    start_script = (ROOT / "scripts" / "start_celery.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'CELERY_QUEUE="${BUCKBOT_CELERY_QUEUE:-${REDIS_NAMESPACE}.celery}"' in start_script
+    assert '--queues "$CELERY_QUEUE"' in start_script
+    assert '--hostname "${CELERY_WORKER_NAME}@%h"' in start_script
+
+
+def test_toolforge_celery_ping_loads_the_configured_application():
+    ping_script = (ROOT / "scripts" / "ping_celery.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'cd "$REPO_ROOT"' in ping_script
+    assert "python -m celery -A celery_worker:app inspect ping" in ping_script

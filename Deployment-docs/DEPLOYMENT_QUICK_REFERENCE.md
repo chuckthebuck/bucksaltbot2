@@ -23,6 +23,16 @@ toolforge build start https://github.com/<owner>/<repo>
 toolforge webservice buildservice restart
 ```
 
+For a new Toolforge tool account, use the reviewed first-deploy wrapper instead
+of these update commands:
+
+```bash
+bash scripts/toolforge-bootstrap.sh --tool-name buckbot
+bash scripts/toolforge-bootstrap.sh --apply --configure-env --tool-name buckbot
+```
+
+See [TOOLFORGE_FIRST_DEPLOY.md](TOOLFORGE_FIRST_DEPLOY.md) before running it.
+
 ## Cron Changes
 
 ```bash

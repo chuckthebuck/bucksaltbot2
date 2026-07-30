@@ -14,6 +14,7 @@ from typing import Any, Callable
 import yaml
 
 from .contracts import default_contract, normalize_contract, public_contract
+from .safety import saltlick_rights
 
 
 SALTLICK_CONTRACT_FILENAMES = ("saltlick.yaml", "saltlick.yml")
@@ -97,6 +98,7 @@ class SaltlickDefinition:
         )
         contract["source_digest"] = self.source_digest
         contract["generated"] = bool(self.generated)
+        contract["rights"] = saltlick_rights(self.id)
         return contract
 
 
