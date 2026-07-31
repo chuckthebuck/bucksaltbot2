@@ -180,7 +180,7 @@ PYTHONPATH=vendor/modules/chuck_salt_shack/modules \
 python3 -m pytest -q vendor/modules/chuck_salt_shack/tests
 ```
 
-Then backport the reviewed subtree to the standalone repository:
+Then preview the reviewed Salt Shack-only backport to the standalone repository:
 
 ```bash
 bash scripts/backport-chuck-salt-shack-subtree.sh --dry-run

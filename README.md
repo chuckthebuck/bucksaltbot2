@@ -340,7 +340,9 @@ Chuck the Salt Shack has the equivalent checked split for its independent reposi
 bash scripts/backport-chuck-salt-shack-subtree.sh --dry-run
 ```
 
-It defaults to `https://github.com/chuckthebuck/chuck-the-salt-shack.git`; override
+It clones the target branch, overlays only `vendor/modules/chuck_salt_shack`,
+and commits that Salt Shack-only diff. It defaults to
+`https://github.com/chuckthebuck/chuck-the-salt-shack.git`; override
 `CHUCK_SALT_SHACK_REMOTE` or `CHUCK_SALT_SHACK_BRANCH` when bootstrapping a
 local repository or publishing through a fork.
 
