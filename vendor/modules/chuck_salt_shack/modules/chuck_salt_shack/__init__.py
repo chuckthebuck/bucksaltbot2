@@ -3,14 +3,6 @@
 from importlib import import_module
 from typing import Any
 
-__all__ = [
-    "WorkflowSpec",
-    "discover_saltlicks",
-    "execute_workflow",
-    "get_saltlick",
-    "run_saltlick",
-]
-
 _LAZY_EXPORTS = {
     "WorkflowSpec": (".spec", "WorkflowSpec"),
     "discover_saltlicks": (".registry", "discover_saltlicks"),
@@ -19,6 +11,7 @@ _LAZY_EXPORTS = {
     "run_saltlick": (".service", "run_saltlick"),
 }
 
+__all__ = tuple(_LAZY_EXPORTS)
 
 def __getattr__(name: str) -> Any:
     """Load public helpers lazily so manifest discovery stays dependency-light."""
