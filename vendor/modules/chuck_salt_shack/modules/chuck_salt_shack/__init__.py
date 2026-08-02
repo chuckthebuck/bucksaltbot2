@@ -1,15 +1,7 @@
 """Salt Shack: contract-driven, forkable Pywikibot Saltlicks."""
 
 from importlib import import_module
-from typing import Any
-
-__all__ = [
-    "WorkflowSpec",
-    "discover_saltlicks",
-    "execute_workflow",
-    "get_saltlick",
-    "run_saltlick",
-]
+from typing import TYPE_CHECKING, Any
 
 _LAZY_EXPORTS = {
     "WorkflowSpec": (".spec", "WorkflowSpec"),
@@ -18,6 +10,13 @@ _LAZY_EXPORTS = {
     "get_saltlick": (".registry", "get_saltlick"),
     "run_saltlick": (".service", "run_saltlick"),
 }
+
+__all__ = tuple(_LAZY_EXPORTS)
+
+if TYPE_CHECKING:
+    from .registry import discover_saltlicks, get_saltlick
+    from .service import execute_workflow, run_saltlick
+    from .spec import WorkflowSpec
 
 
 def __getattr__(name: str) -> Any:
