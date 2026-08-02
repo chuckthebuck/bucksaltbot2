@@ -1,7 +1,7 @@
 """Salt Shack: contract-driven, forkable Pywikibot Saltlicks."""
 
 from importlib import import_module
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 _LAZY_EXPORTS = {
     "WorkflowSpec": (".spec", "WorkflowSpec"),
@@ -12,12 +12,6 @@ _LAZY_EXPORTS = {
 }
 
 __all__ = tuple(_LAZY_EXPORTS)
-
-if TYPE_CHECKING:
-    from .registry import discover_saltlicks, get_saltlick
-    from .service import execute_workflow, run_saltlick
-    from .spec import WorkflowSpec
-
 
 def __getattr__(name: str) -> Any:
     """Load public helpers lazily so manifest discovery stays dependency-light."""
