@@ -1,1 +1,1 @@
-"""Read-only template transclusion report Saltlick."""
+"""Bounded, read-only template transclusion report Saltlick."""

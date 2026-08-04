@@ -2,6 +2,10 @@
 id = "org.toolforge.buckbot"
 name = "buckbot"
 
+# Python is the primary runtime and Procfile supplies image process commands.
+# Toolforge additionally injects Node when a root package.json accompanies one
+# language runtime; the Node CNB runs package.json's build script and produces
+# the ignored static/dist assets inside the image.
 [[build.buildpacks]]
 id = "heroku/python"
 

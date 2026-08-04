@@ -1,77 +1,92 @@
-"""Bot framework: extension points for building new bots on top of this package.
+"""Current architecture map for the Chuck the Buckbot framework.
 
-The ``router`` package is structured as a reusable framework for building
-Wiki-bot web applications.  It is split into generic and bot-specific layers:
+The application now has two extension layers.  Core rollback behavior still
+lives in the host application, while additional tools are declared as modules
+with validated manifests.  The old flow of copying ``app.py``, ``jobs.py``, and
+``routes.py`` to create a separate bot is no longer the supported extension
+path.
 
-Generic (reusable) modules
---------------------------
+Startup and compatibility facade
+--------------------------------
+``app.py`` constructs Flask and Celery, then imports :mod:`router`.  The package
+initializer re-exports historically public helpers because workers and tests
+still call or patch ``router.X``.  It imports :mod:`router.routes` last, after
+those compatibility names exist, to avoid decorator-time circular imports.
+Helpers that use ``_r()`` deliberately resolve this assembled package at call
+time; that seam is retained for compatibility, not as a plugin API.
+
+When module loading is enabled, startup reads ``enabled-modules.txt`` plus the
+``ENABLED_MODULES`` environment override, discovers local and installed-package
+manifests, persists their definitions, and registers enabled Flask blueprints.
+The allowlist contains module names only.  Python packages are vendored/pinned
+in ``requirements-modules.txt`` and installed with the application image;
+runtime cloning or remote module installation is intentionally unsupported.
+
+Core framework boundaries
+-------------------------
+:mod:`router.framework_config`
+    Environment-backed deployment constants and URL/key-prefix helpers.
+
 :mod:`router.authz`
-    MediaWiki group lookups, runtime configuration, user-grant expansion.
-    Depends only on :mod:`app` (Flask app + ``is_maintainer``) via the
-    ``_r()`` hook pattern — replaceable per-bot.
+    Runtime authorization configuration, explicit/role/automatic grant
+    expansion, MediaWiki group lookups, and canonical module-right atoms.
 
 :mod:`router.permissions`
-    Per-user permission evaluation.  Calls ``is_maintainer``, ``is_tester``,
-    and ``_effective_runtime_authz_config`` through ``_r()`` so they can be
-    swapped out for a different bot's implementations.
+    Converts identity and grant atoms into route-facing capabilities such as
+    read, write, review, configuration, and module administration.
 
-:mod:`router.diff_state`
-    Redis-backed job state helpers (diff payloads, error keys, stale-job
-    detection).  Generic except for the Redis key prefix (``rollback:``).
+:mod:`router.module_registry`
+    Validates JSON/TOML manifests; persists module definitions, mutable cron
+    settings, access grants, non-secret configuration, and job-run lifecycle
+    rows; and enforces durable job concurrency policies.
 
-:mod:`router.wiki_api`
-    MediaWiki API wrappers (diff metadata, account contributions, timestamps).
-    No bot-specific logic.
+:mod:`router.module_runtime`
+    Imports trusted enabled packages and registers optional web blueprints.
+    Blueprint imports happen in the Flask process and are not sandboxed.
 
-Bot-specific modules
---------------------
-:mod:`router.jobs`
-    Job constants, creation helpers, and Celery task wiring specific to the
-    BuckSaltBot rollback use-case.
+:mod:`router.module_schedule` and :mod:`router.module_estop`
+    Translate supported human schedules to cron, and coordinate durable run
+    cancellation with process/platform emergency-stop attempts.
 
-:mod:`router.routes`
-    Flask route handlers specific to the BuckSaltBot rollback workflow.
+:mod:`router.wiki_api` and :mod:`router.wiki_actions`
+    Provide MediaWiki reads plus the constrained declarative write-action
+    catalog shared by core and module jobs.
 
-Extension guide
----------------
-To build a new bot on top of this framework:
+:mod:`router.diff_state`, :mod:`router.jobs`, and :mod:`router.routes`
+    Implement the host rollback workflow, its Redis/ToolsDB state, and the
+    authenticated HTML/JSON surface.  They also expose framework-owned module
+    registry, asset, configuration, job, and emergency-stop endpoints.
 
-1. Create your own ``app.py`` exposing at minimum:
+Supported module contract
+-------------------------
+A module supplies ``module.toml`` or ``module.json`` with a canonical name,
+repository provenance URL, dotted Python entry point, and at least one UI,
+cron-job, or worker-job surface.  Optional fields declare a blueprint, packaged
+frontend resources/docs, module-local rights, Redis namespace, OAuth credential
+*variable names*, and deployment buildpack metadata.  Buildpack declarations
+are recorded in order; the registry does not download or run buildpacks.
 
-   - ``flask_app``: a :class:`flask.Flask` instance
-   - ``BOT_ADMIN_ACCOUNTS``: a ``frozenset[str]`` of privileged account names
-   - ``is_maintainer(username: str) -> bool``: returns ``True`` when the given
-     user should have maintainer-level rights
-   - ``MAX_JOB_ITEMS``: maximum number of items per rollback job
+Installed packages may advertise a definition through the
+``chuck_buckbot.modules`` Python entry-point group.  Only definitions whose
+names are allowlisted are persisted and enabled during normal startup.  A
+rediscovered manifest updates code-owned metadata while preserving operator
+enablement and mutable cron overrides.
 
-2. Create ``jobs.py`` with bot-specific job types, Celery tasks, and
-   constants.
+Web blueprints execute in the host Flask process.  Job handlers execute through
+``module_runner``; manually queued runs are supervised in child processes by
+``module_job_controller`` for hard timeout and cancellation.  This process
+boundary protects web availability from a stuck job, but neither path is a
+security sandbox—module packages are trusted deployment dependencies.
 
-3. Create ``routes.py`` registering your Flask endpoints.  Import the generic
-   helpers from :mod:`router.authz`, :mod:`router.permissions`, and
-   :mod:`router.wiki_api` as needed.
+Authorization and state ownership
+---------------------------------
+Framework rights use ``module:<name>:<right>`` atoms.  ``view`` and ``estop``
+exist for every module; manifests may add rights referenced by sensitive jobs.
+Maintainer and role-derived policy is evaluated before the legacy explicit
+``module_access`` table, which remains supported for direct per-user grants.
 
-4. Create ``router/__init__.py`` that re-exports your public surface (mirrors
-   the existing one) so tests can patch ``router.X``.
-
-The ``_r()`` helper
--------------------
-Throughout the framework modules, patchable singletons are accessed via a
-small ``_r()`` helper::
-
-    def _r():
-        import sys
-        return sys.modules.get('router')
-
-Any attribute ``X`` on the top-level ``router`` module shadows the local
-default.  This lets tests (and bot authors) patch behaviour at the
-``router.X`` level without touching the underlying module.
-
-Naming conventions
-------------------
-- ``_user_permissions(username)`` → ``frozenset[str]`` of permission flags
-- ``_effective_runtime_authz_config()`` → current runtime config dict
-- ``is_maintainer(username)`` → bool (bot-specific override)
-- ``is_tester(username)`` → bool (optional, defaults to ``False``)
-- ``BOT_ADMIN_ACCOUNTS`` → ``frozenset[str]`` (highest privilege accounts)
+Secrets stay in environment variables and manifests store only their names.
+Operator-editable, non-secret settings live in ``module_config``.  ToolsDB is
+authoritative for registry/run state, while Redis caches and progress records
+are best-effort accelerators rather than lifecycle truth.
 """

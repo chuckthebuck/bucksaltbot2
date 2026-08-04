@@ -1,4 +1,10 @@
-"""MediaWiki API helpers: diff metadata, user contributions, timestamps."""
+"""Query MediaWiki for the revision and contribution facts rollback needs.
+
+These helpers are read-only.  They normalize the several diff/user input forms,
+paginate Action API results with hard safety bounds, and optionally emit bounded
+diagnostics into a caller-owned cache.  Mutating wiki work belongs to workers,
+never to this request-time query layer.
+"""
 
 import time
 from datetime import datetime, timezone
@@ -17,6 +23,7 @@ from router.framework_config import WIKI_API_URL
 
 
 def _extract_oldid(diff_value):
+    """Extract a numeric revision ID from a raw ID or MediaWiki diff URL."""
     if diff_value is None:
         raise ValueError("Missing diff parameter")
 
@@ -43,6 +50,7 @@ def _extract_oldid(diff_value):
 
 
 def _normalize_target_user_input(raw_value):
+    """Normalize copied User: labels, quotes, underscores, and whitespace."""
     cleaned = str(raw_value or "").strip()
 
     if cleaned.lower().startswith("user:"):
@@ -58,6 +66,7 @@ def _normalize_target_user_input(raw_value):
 
 
 def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
+    """Return the author and timestamp for a MediaWiki revision ID."""
     url = WIKI_API_URL
     params = {
         "action": "query",
@@ -73,6 +82,8 @@ def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
         resp.raise_for_status()
         data = resp.json()
 
+        # Diagnostics are intentionally bounded because callers persist them in
+        # the expiring diff payload exposed to job polling.
         if callable(debug_callback):
             debug_callback(
                 {
@@ -116,6 +127,7 @@ def fetch_diff_author_and_timestamp(oldid, debug_callback=None):
 
 
 def _utc_now_iso() -> str:
+    """Return the Action API's UTC timestamp format for contribution queries."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -364,6 +376,12 @@ def iter_contribs_after_timestamp(
     rollbackable_only=False,
     debug_callback=None,
 ):
+    """Yield a user's contributions in a bounded forward-time API walk.
+
+    ``rollbackable_only`` asks MediaWiki for current/top edits only.  ``limit``
+    bounds returned items, while the independent 10,000-item guard protects an
+    unbounded request from monopolizing a web worker.
+    """
     url = WIKI_API_URL
 
     continue_params = None
@@ -396,6 +414,8 @@ def iter_contribs_after_timestamp(
             params["ucend"] = end_timestamp
 
         if continue_params:
+            # MediaWiki continuation fields are opaque; echo every field rather
+            # than reconstructing offsets from timestamps or revision IDs.
             params.update(continue_params)
 
         started = time.perf_counter()
@@ -459,6 +479,7 @@ def iter_contribs_after_timestamp(
 
 
 def fetch_contribs_after_timestamp(target_user, start_timestamp, limit=None):
+    """Materialize the contribution iterator for compatibility callers."""
     return list(
         iter_contribs_after_timestamp(target_user, start_timestamp, limit=limit)
     )

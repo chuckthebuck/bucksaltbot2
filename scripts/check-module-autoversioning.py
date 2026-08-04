@@ -16,6 +16,7 @@ STALE_UA_RE = re.compile(
 
 
 def pyproject_version(path: Path) -> str:
+    """Extract the strict SemVer project version from a pyproject file."""
     match = VERSION_RE.search(path.read_text(encoding="utf-8"))
     if not match:
         raise ValueError(f"{path} does not contain a SemVer project version")
@@ -23,6 +24,7 @@ def pyproject_version(path: Path) -> str:
 
 
 def package_version(path: Path) -> str | None:
+    """Return a package.json SemVer version when that frontend file exists."""
     if not path.exists():
         return None
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -33,6 +35,7 @@ def package_version(path: Path) -> str | None:
 
 
 def check_module(module_dir: Path) -> list[str]:
+    """Return release-workflow and cross-package version errors for a module."""
     errors: list[str] = []
     workflow = module_dir / ".github" / "workflows" / "release.yml"
     pyproject = module_dir / "pyproject.toml"
@@ -66,6 +69,7 @@ def check_module(module_dir: Path) -> list[str]:
 
 
 def check_user_agent_versions(root: Path) -> list[str]:
+    """Find hard-coded User-Agent versions that would drift after a release."""
     errors: list[str] = []
     paths = [
         root / ".env.example",
@@ -89,6 +93,7 @@ def check_user_agent_versions(root: Path) -> list[str]:
 
 
 def main() -> int:
+    """Check every vendored module and print actionable release errors."""
     root = Path.cwd()
     module_root = root / "vendor" / "modules"
     errors: list[str] = []

@@ -1,4 +1,10 @@
-"""Shared Pywikibot environment bootstrapping helpers."""
+"""Create a safe, writable Pywikibot configuration for framework processes.
+
+Containers do not always have a conventional home directory.  The resolver tries
+operator configuration first and then controlled fallbacks.  Generated files are
+marked and updated atomically; an unmarked user-managed configuration is never
+overwritten.
+"""
 
 from __future__ import annotations
 
@@ -74,6 +80,8 @@ def resolve_pywikibot_dir() -> Path:
     candidates.append(Path("/workspace") / ".pywikibot")
     candidates.append(Path("/tmp") / f".pywikibot-{os.getuid()}")
 
+    # Probe actual file writes rather than trusting directory mode bits, which
+    # can be misleading on container mounts and Toolforge network filesystems.
     for candidate in candidates:
         try:
             candidate.mkdir(parents=True, exist_ok=True)

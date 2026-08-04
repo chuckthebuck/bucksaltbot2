@@ -1,6 +1,7 @@
+/** Mount the one framework Vue surface selected by server-rendered page props. */
 console.log("🔥 ENTRY FILE RUNNING 🔥");
 import "@wikimedia/codex/dist/codex.style.css";
-import "./styles.less"; // 👈 you already have this file, USE IT
+import "./styles.less";
 import { createApp } from "vue";
 import App from "./App.vue";
 import BatchApp from "./BatchApp.vue";
@@ -13,8 +14,12 @@ import ModulesApp from "./ModulesApp.vue";
 import JobsYamlApp from "./JobsYamlApp.vue";
 import moduleFrontends from "./moduleRegistry.generated";
 
+// Importing the generated registry makes Vite include independently bundled
+// module entry points; the framework page still mounts exactly one root below.
 void moduleFrontends;
 
+// Templates expose a unique props element for each page.  Use those stable
+// markers instead of inspecting URLs so aliases and redirects share one mount.
 if (document.getElementById("batch-props")) {
   createApp(BatchApp).mount("#app");
 } else if (document.getElementById("all-jobs-props")) {

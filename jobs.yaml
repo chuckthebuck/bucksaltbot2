@@ -1,3 +1,6 @@
+# Framework-owned continuous processes remain outside the generated markers.
+# The deploy wrapper loads this committed file; ToolsDB schedule edits alone do
+# not change Toolforge jobs.
 - command: bash scripts/start_celery.sh
   continuous: true
   cpu: '1.0'
@@ -19,6 +22,8 @@
   schedule: "*/15 * * * *"
   cpu: 0.1
   mem: 256Mi
+# Replace only the contents of this marked block with reviewed /jobs-yaml output.
+# scripts/update_generated_jobs_yaml.py preserves the framework jobs above.
 # BEGIN GENERATED MODULE JOBS
 - name: four-award-four-award-sync
   command: bash -c 'export NOTDEV=1; export ENABLE_MODULE_LOADING=1; timeout 610 python3 -m module_runner --module four_award --job four-award-sync --trigger schedule'

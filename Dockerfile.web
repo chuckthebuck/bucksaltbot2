@@ -2,11 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# The web image owns both Flask and the root Vue bundle, so it needs a small
+# Node toolchain in addition to Python.  Keep system packages in their own layer
+# so application-only changes can reuse it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl lsb-release \
     && rm -rf /var/lib/apt/lists/*
 
-# Install nodejs, npm
+# NodeSource supplies the current LTS release used by the frontend build.
 RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
 RUN apt-get install -y --no-install-recommends nodejs npm \
     && rm -rf /var/lib/apt/lists/*
@@ -17,9 +20,13 @@ RUN npm install
 COPY requirements.txt requirements-modules.txt ./
 COPY vendor ./vendor
 RUN pip install -r requirements.txt
+# Validate that the checked-in Saltlick registry matches its source manifests
+# before building a deployable image.
 RUN saltshack-build --check
 
 COPY . .
+# Generate source imports for enabled `bundled = true` modules before the root
+# Vite build. `bundled = false` modules keep serving their package-owned assets.
 RUN npm run modules:frontend && npm run build
 
 

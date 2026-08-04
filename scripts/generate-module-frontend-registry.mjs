@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/** Generate side-effect imports for module frontends included in the root bundle. */
 import fs from "node:fs";
 import path from "node:path";
 
@@ -8,6 +9,8 @@ const outputPath = path.join(repoRoot, "client-src", "moduleRegistry.generated.t
 
 const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
 const modules = Array.isArray(raw.modules) ? raw.modules : [];
+// Disabled or incomplete entries must not become build-time imports: Vite would
+// otherwise fail the entire framework build on an intentionally absent module.
 const enabledModules = modules.filter((item) => item?.enabled !== false && item?.import);
 
 const imports = enabledModules
@@ -18,5 +21,6 @@ const entries = enabledModules
   .join(", ");
 const body = `${imports}${imports ? "\n\n" : ""}export default [${entries}];\n`;
 
+// This file is generated deterministically so CI can detect a stale registry.
 fs.writeFileSync(outputPath, body, "utf8");
 console.log(`Wrote ${path.relative(repoRoot, outputPath)} with ${enabledModules.length} module frontend(s).`);

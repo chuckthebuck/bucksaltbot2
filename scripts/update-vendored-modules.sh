@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Refresh supported module snapshots from their configured upstream revisions.
 set -euo pipefail
 
 if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
@@ -9,6 +10,7 @@ fi
 cd "$(git rev-parse --show-toplevel)"
 
 require_cmd() {
+	# Fail early when a required source-control/build command is unavailable.
 	command -v "$1" >/dev/null 2>&1 || {
 		echo "Missing required command: $1" >&2
 		exit 1
@@ -25,6 +27,7 @@ if [[ -n "$(git status --porcelain)" && "${ALLOW_DIRTY_MODULE_UPDATE:-0}" != "1"
 fi
 
 update_module() {
+	# Replace one vendored subtree, retaining only its standalone repository files.
 	local name="$1"
 	local prefix="$2"
 	local remote="$3"

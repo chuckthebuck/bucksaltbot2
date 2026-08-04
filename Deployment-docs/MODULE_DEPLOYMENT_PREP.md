@@ -1,311 +1,143 @@
-# Chuck the Buckbot Framework Deployment Prep
+# Module Deployment Preparation
 
-This document guides you through preparing Chuck the Buckbot Framework for production deployment.
+This is the operational checklist for shipping packaged modules with the
+framework. Use [MODULE_DEVELOPMENT_GUIDE.md](MODULE_DEVELOPMENT_GUIDE.md) for
+package/manifest design and
+[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) for the release gate.
 
-## Pre-Deployment Checklist
+## Confirm the bundle
 
-### 1. Framework Configuration
+The current deploy contains built-in Rollback plus vendored 4Award, File
+Changer, and Salt Shack. External modules are committed repository snapshots;
+Toolforge does not clone them at build time, and the removed remote-install API
+returns `410`.
 
-- [ ] **Confirm module loading is not disabled**. It defaults to enabled; this
-  explicit setting is still useful when auditing a production environment:
-  ```bash
-  export ENABLE_MODULE_LOADING=1
-  ```
-  
-- [ ] **Verify module job launching is configured**:
-  - Rollback continues to use Celery as a continuous queue worker
-  - Module cron jobs are isolated run-to-completion jobs
-  - The webservice owns registry, config, and run history state
-  - `buckbot-module-controller` handles web-triggered manual runs/restarts
-
-- [ ] **Confirm the module job launcher can start module jobs**:
-  - Scheduled/manual runs should create `module_job_runs` rows
-  - The launcher should map those runs to Toolforge/K8s jobs
-
-### 2. Database Schema
-
-- [ ] **Module tables auto-created on startup**:
-  ```
-  module_registry — Module definitions and enabled state
-  module_cron_jobs — Scheduled module job metadata
-  module_job_runs — Run history and web control state
-  module_config — DB-backed non-secret module configuration
-  module_access — User access grants (non-maintainer)
-  ```
-
-- [ ] **Load Toolforge job definitions** after build:
-  ```bash
-  toolforge jobs load jobs.yaml
-  ```
-
-### 3. Bundled Modules
-
-- [ ] **Vendored external modules**:
-  - [ ] Update module subtree snapshots under `vendor/modules/<module_name>/`
-  - [ ] Install local module paths in `requirements-modules.txt`
-  - [ ] List enabled module manifest names in `enabled-modules.txt`
-  - [ ] If a module has an npm client package, pin it in `package.json`
-  - [ ] If using npm client imports, list them in `module-frontend-packages.json`
-  - [ ] Run `npm run build` before deploy if frontend assets changed
-
-- [ ] **Rollback module** (`modules/rollback/`):
-  - [x] Manifest exists and is valid
-  - [x] Blueprint entry point is correctly specified
-  - [x] Uses framework's Python 3.11 buildpacks
-  - [x] Provides UI and redirects to legacy routes
-  - [ ] Test locally: `curl http://localhost:5000/rollback/`
-
-- [ ] **Chuck the 4awardhelper module snapshot** (`vendor/modules/four_award/`):
-  - [x] Package manifest exists and is valid
-  - [x] Provides `chuck_buckbot.modules` entry point
-  - [x] Runs through `python3 -m module_runner`
-  - [x] Installs from `./vendor/modules/four_award`
-  - [ ] Confirm `chuck_the_4awardhelper` imports cleanly before deploy
-
-- [ ] **Chuck the Salt Shack module snapshot** (`vendor/modules/chuck_salt_shack/`):
-  - [ ] Run `PYTHONPATH=vendor/modules/chuck_salt_shack/modules python3 -m chuck_salt_shack.build --check`
-  - [ ] Confirm every intended directory appears in the generated Saltlick registry
-  - [ ] Run the package tests and Codex frontend typecheck/build
-  - [ ] Preview a read-only Saltlick and the page-purger action Saltlick in local safe mode
-
-### 4. Testing
-
-- [ ] **Run focused tests for the areas changed**:
-  ```bash
-  python3 -m pytest -q tests/test_module_registry.py tests/test_module_runtime.py
-  ```
-
-  Add broader tests as needed, including:
-  - Module registry tests (manifest parsing, DB persistence)
-  - Module runtime tests (blueprint registration)
-  - Module job tests (schedule calculation, manifest parsing, jobs.yaml generation)
-  - Rollback module integration tests
-  - Router API tests (module management endpoints)
-
-- [ ] **Test module bootstrap**:
-  ```bash
-  ENABLE_MODULE_LOADING=1 python scripts/check-module-install.py
-  ```
-
-- [ ] **Test module admin UI** (local or staging):
-  - Navigate to `/goto?tab=modules` as a maintainer
-  - Verify module list loads
-  - Verify every accessible frontend module appears in the Modules subnav
-  - Open the Salt Shack and File Changer module pages
-  - Confirm their module-owned `/auth` API requests return `200`
-  - Test enable/disable toggle
-  - Test user access grant form
-
-- [ ] **Test module runner**:
-  ```bash
-  python3 -m module_runner --module four_award --job four-award-sync
-  ```
-  Use a dry-run/safe module config for live wikis.
-
-### 5. Dependencies
-
-- [ ] **Existing packages versions stable**:
-  - Flask, Celery, Redis, PyMySQL unchanged
-  - All in `requirements.txt`
-
-### 6. Vue Admin Interface
-
-- [ ] **Module management tab visible** to maintainers:
-  - Header nav includes "Modules" tab
-  - Clicking goes to `/goto?tab=modules`
-  - Page loads module list from API
-
-- [ ] **API endpoints respond**:
-  ```bash
-  curl -H "Cookie: session=..." http://localhost:5000/api/v1/modules
-  curl -H "Cookie: session=..." http://localhost:5000/api/v1/modules/rollback
-  ```
-
-### 7. Environment Variables
-
-Required for production:
+Refresh upstream snapshots from a clean worktree with:
 
 ```bash
-export ENABLE_MODULE_LOADING=1
-export TOOL_DATA_DIR=/data/project/buckbot          # Toolforge standard
-export NOTDEV=1                                     # Production flag
+npm run modules:update
 ```
 
-Optional:
+Review the entire replacement diff, versions, compiled assets, and `SUBTREE.md`
+metadata. Defaults are 4Award `framework-dev`, File Changer `main`, and Salt
+Shack `main`; use `*_REMOTE`/`*_BRANCH` overrides only for reviewed sources.
+
+## Verify installation and manifests
+
+`requirements-modules.txt`, `enabled-modules.txt`, package
+`chuck_buckbot.modules` entry points, manifests, and frontend registry entries
+must agree. Run:
 
 ```bash
-export CELERY_BROKER_URL=redis://broker:6379/9
-export CELERY_RESULT_BACKEND=redis://broker:6379/9
+bash scripts/install-framework.sh
+bash scripts/install-modules.sh
+.venv/bin/python scripts/check-module-install.py
+bash scripts/canary-build.sh
 ```
 
-Framework and module User-Agent defaults include the deployed release version.
-Set `BUCKBOT_HTTP_USER_AGENT` or a module-specific `*_HTTP_USER_AGENT` only when
-the deployment needs to replace the full identity string.
+Run each changed module's own backend/frontend tests too. The default canary
+runs focused integration coverage, not every vendored test suite.
 
-### 8. Deployment Steps
+## Know the execution owner
 
-1. **Pull code** and run migrations:
-   ```bash
-   git pull origin main
-   ```
+| Work | Current owner |
+| --- | --- |
+| Scheduled manifest handler | Toolforge schedule runs `python3 -m module_runner`. |
+| Generic manual manifest run | `buckbot-module-controller` claims a `queued` `module_job_runs` row and starts `module_runner`. |
+| Rollback work | Shared Celery worker and rollback-owned tables. |
+| Salt Shack custom API | Celery task atomically claims a framework module run row. |
+| File Changer preview/apply | Celery task processes separate File Changer job/item tables. |
 
-2. **Install/upgrade dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   pip install -r requirements-modules.txt
-   npm install
-   npm run build
-   ```
+Manifest `handler` and `k8s_job` execution modes currently generate the same
+Toolforge command. `http` is a token-protected compatibility mode.
 
-3. **Start services**:
-   ```bash
-   # Web service
-   gunicorn -w 4 -b 0.0.0.0:5000 'app:flask_app'
-   
-   # Celery worker for rollback
-   celery -A celery_worker worker -l info
+## Module checks
 
-   # Manual run controller for module jobs
-   python3 -m module_job_controller
-   ```
+### Rollback
 
-4. **Verify bootstrap**:
-   ```bash
-   curl http://localhost:5000/api/v1/modules
-   ```
-   Should list all bundled modules (rollback, etc.)
+- Open `/rollback/` while signed in.
+- Verify submission, review/approval, dry-run/live controls, and worker health.
+- Confirm `buckbot-celery` consumes only this deployment's queue.
 
-5. **Check logs**:
-   - Web service: Should show module registration on startup
-   - Rollback worker: Should show normal Celery worker startup
-   - Module controller/jobs: Should show manual or scheduled runs starting when requested
+### 4Award
 
-6. **Install external modules**:
-   - Remote runtime installation is disabled. `POST /api/v1/modules/install`
-     intentionally returns `410`.
-   - For local development, install the module repo editable in the framework
-     virtualenv with `python -m pip install -e ../module4awardhelper`.
-   - For Toolforge deployment, vendor the module under
-     `vendor/modules/<module_name>/`, pin that path in
-     `requirements-modules.txt`, and list the module manifest name in
-     `enabled-modules.txt`.
+- Confirm `/modules/four_award/ui` mounts the Four Award entry compiled into the
+  framework's root Vite bundle. Its packaged static artifact is not the runtime
+  source while `frontend.bundled = true`.
+- Run a historical-diff dry run and inspect the records-table preview.
+- Keep runtime `dry_run` enabled until action switches and automated approval
+  are reviewed separately.
+- Confirm the generated `four-award-sync` schedule.
 
-7. **Set up Toolforge cron jobs** (one-time, after deployment):
-   - Log into Toolforge
-   - Generate jobs.yaml entries:
-     ```bash
-     curl -H "Cookie: session=<your_cookie>" http://localhost:5000/admin/jobs-yaml-preview
-     ```
-   - Copy the output to your local `jobs.yaml` (keeping the existing buckbot-celery and other framework jobs)
-   - Commit and push the updated `jobs.yaml` to the repo
-   - Load the updated file with `toolforge jobs load jobs.yaml`
-   - **Note**: Cron jobs won't auto-update when modules are installed/removed; regenerate and update jobs.yaml manually as needed
+### File Changer
 
-### 9. Rollback Plan
+- Confirm `/chuck_file_changer/api/auth` reports expected signed-in rights.
+- Test manual and one remote/VFC-style source.
+- Preview a no-op and changed target before testing apply.
+- Verify chunk rows and Celery progress.
+- Remember generic E-STOP does not cancel its separate
+  `chuck_file_change_jobs` rows today.
 
-If issues occur:
+### Salt Shack
 
-1. **Disable modules** without redeploying:
-   ```bash
-   export ENABLE_MODULE_LOADING=0
-   # Restart web service
-   ```
-   
-2. **Disable specific module**:
-   - Toggle in `/modules` admin UI, or
-   - API: `PUT /api/v1/modules/rollback/enabled {"enabled": false}`
-   
-3. **Clear module access grants**:
-   ```sql
-   DELETE FROM module_access WHERE module_name='rollback';
-   ```
+- Run the generated-registry check and module-owned tests.
+- Confirm intended child directories and contracts are discovered.
+- Preview read-only and mutation Saltlicks in local safe mode.
+- Verify apply requires matching preview token plus live confirmation.
+- Verify per-Saltlick rights/E-STOP affect only that Saltlick.
 
-4. **Revert to previous version** (if major issues):
-   ```bash
-   git revert HEAD
-   git push
-   # Restart services
-   ```
+## UI and authorization checks
 
-## Post-Deployment Verification
+Use signed-in browser sessions for a maintainer, a scoped module user, and a
+denied user. Unauthenticated `curl` does not prove behavior.
 
-After deploying, run these checks:
+- `/modules` is the generic registry page.
+- `/modules/<module>/ui` is the generic UI shell.
+- `/api/v1/modules/...` contains generic APIs and Salt Shack's owned namespace.
+- File Changer retains `/chuck_file_changer/api/...` for compatibility.
+- New module APIs should stay under `/api/v1/modules/<module>/...`.
 
-### Health Checks
+The framework generates `view` and `estop`; manifests declare operation rights.
+Salt Shack also generates per-Saltlick preview/apply/E-STOP rights.
+
+Disabling blocks generic dispatch but does not unmount an already registered
+custom Blueprint until restart. Custom endpoints must enforce current state and
+authorization themselves.
+
+## Commit schedules
+
+ToolsDB cron state is not a live Toolforge scheduler API. After a change, open
+`/jobs-yaml`, review the output, replace only the marked generated block in
+repository `jobs.yaml`, and commit it. The normal wrapper flushes and reloads
+that committed file.
+
+For an intentional exact jobs-only reconciliation from the tool checkout:
 
 ```bash
-# Web service responsive
-curl -I http://localhost:5000/
-
-# Module registry loaded
-curl http://localhost:5000/api/v1/modules | jq '.modules | length'
-
-# Rollback module accessible
-curl -b "session=<cookie>" http://localhost:5000/rollback/ | grep -q "Rollback"
-
-# Module controller job exists
-toolforge jobs show buckbot-module-controller
+toolforge jobs flush
+toolforge jobs load jobs.yaml
+toolforge jobs list
 ```
 
-### Database Checks
+This briefly interrupts continuous jobs. Do not use `load` alone to remove or
+rename a definition: stale Toolforge jobs may remain active.
 
-```bash
-# Module tables exist
-SELECT COUNT(*) FROM module_registry;
-SELECT COUNT(*) FROM module_cron_jobs;
-SELECT COUNT(*) FROM module_access;
+## Deploy and contain incidents
 
-# Rollback module registered
-SELECT * FROM module_registry WHERE name='rollback';
+Push the reviewed commit to `main` or dispatch the Toolforge deploy workflow.
+Build Service owns dependency installation and `Procfile` process startup; do
+not create a parallel manual Gunicorn/Celery production stack.
 
-# Cron jobs populated
-SELECT * FROM module_cron_jobs;
-```
+Contain incidents at the smallest scope. Per-Saltlick E-STOP affects one
+Saltlick. Generic E-STOP disables a module, requests cancellation of active
+`module_job_runs`, and attempts Toolforge job/pod deletion. Rollback additionally
+purges the shared Buckbot Celery queue, which can discard queued Salt Shack and
+File Changer messages as well as Rollback work. File Changer has the opposite
+boundary: its custom table/Celery queue and already-mounted API are not stopped
+by generic E-STOP, so use module-native controls or a coordinated web/worker
+restart. `ENABLE_MODULE_LOADING=0` suppresses all module bootstrap only after
+restart.
 
-### Admin UI Checks
-
-1. Log in as maintainer
-2. Navigate to `/modules`
-3. Verify:
-   - Module list loads
-   - "Rollback" module shows as enabled
-   - Can toggle enable/disable
-   - Can grant user access
-   - Page doesn't show errors
-
-### Cron Job Checks (if applicable)
-
-1. Wait 60+ seconds
-2. Check Toolforge job logs for task execution
-3. Verify the module runner started:
-   ```bash
-   toolforge jobs logs four-award-four-award-sync
-   ```
-
-## Monitoring
-
-Add alerts for:
-
-1. **Module registry failures**:
-   - Monitor module runner job failures
-   - Alert on repeated failures (>3 in 5 minutes)
-
-2. **Cron job lateness**:
-   - Compare Toolforge job schedules with expected module run cadence
-   - Alert if jobs fall >5 minutes behind
-
-3. **Module access errors**:
-   - Monitor 403 responses to module routes
-   - Log who's denied and why
-
-## Support
-
-If modules aren't working:
-
-1. Check `ENABLE_MODULE_LOADING` is not `0`
-2. Confirm Gunicorn starts `app:flask_app`, not `router:app`
-3. Verify `module.toml` files exist and are valid TOML
-4. Check module blueprints are importable
-5. Review logs for import errors
-6. Test module bootstrap with `pytest`
-7. See [Module Development Guide](MODULE_DEVELOPMENT_GUIDE.md) for troubleshooting
+There is no generic module stop hook. After containment, revert the faulty
+framework/snapshot commit, rerun the canary, and deploy the restored `main`
+bundle.

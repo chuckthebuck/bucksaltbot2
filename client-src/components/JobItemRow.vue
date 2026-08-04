@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// One editable batch item: page lookup, recent editor choice, and edit summary.
 import { computed, ref, watch } from "vue";
 import { CdxButton, CdxField, CdxLookup, CdxSelect, CdxTextInput } from "@wikimedia/codex";
 import { loadEditorsForTitle, searchTitles } from "../api";
@@ -27,11 +28,15 @@ const meta = ref("");
 let lookupRequestId = 0;
 let editorsRequestId = 0;
 
+// Incrementing request IDs prevent a slow response for an older selection from
+// overwriting the results for the user's latest input.
+
 const canEmit = computed(() => {
   return selected.value !== null && selectedUser.value !== null;
 });
 
 async function onLookupInput(value: string | number) {
+  /** Refresh title autocomplete while discarding out-of-order responses. */
   const query = String(value || "").trim();
   const requestId = ++lookupRequestId;
 
@@ -52,6 +57,7 @@ async function onLookupInput(value: string | number) {
 
 
 async function onSelectionChanged(v: string | number | null) {
+  /** Load recent editors and seed summary metadata for the selected page. */
   const title = v === null ? "" : String(v);
   const requestId = ++editorsRequestId;
 
@@ -89,6 +95,7 @@ async function onSelectionChanged(v: string | number | null) {
 watch(selected, onSelectionChanged);
 
 watch([selected, selectedUser, summary], () => {
+  // Emit only complete rows; the parent omits incomplete items from submission.
   if (!canEmit.value) {
     emit("update", null);
     return;

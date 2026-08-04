@@ -10,7 +10,7 @@ blueprint = Blueprint("template_module", __name__)
 
 @blueprint.route("/")
 def index():
-    """Module landing page."""
+    """Render the authenticated placeholder landing page for a new module."""
     username = session.get("username")
     if not username:
         abort(401)
@@ -32,7 +32,7 @@ def index():
 
 @blueprint.route("/api/v1/template_module/status")
 def status():
-    """Health check endpoint."""
+    """Return a dependency-free health response for blueprint verification."""
     return jsonify({
         "status": "ok",
         "module": "template_module",

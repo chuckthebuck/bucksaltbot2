@@ -1,3 +1,11 @@
+"""Create idempotent nomination replies and credited-user talk notifications.
+
+Approved and hard-failed reviews notify each credited user; manual-review results
+leave the nomination in place and append an explanatory note.  Hidden markers
+make repeated scheduled runs safe, while the wiki adapter keeps the same message
+generation path for dry-run previews and live publication.
+"""
+
 from __future__ import annotations
 
 from .config import BOT_MARKER_PREFIX, ENABLE_REPLIES, ENABLE_TALK_NOTICES, FOUR_PAGE
@@ -6,17 +14,21 @@ from .wiki import get_wiki
 
 
 def _marker(nomination: FourAwardNomination, status: str) -> str:
-    """Build an idempotency marker for replies and user-talk notices."""
+    """Build the article/status marker used to suppress duplicate messages."""
     return f"<!-- {BOT_MARKER_PREFIX}:{status}:{nomination.article.replace(' ', '_')} -->"
 
 
 def _issue_text(result: NominationResult) -> str:
-    """Return a compact human-readable issue summary."""
+    """Join structured review issues into compact message-ready prose."""
     return "; ".join(issue.reason for issue in result.issues) if result.issues else "No additional details were provided."
 
 
 def _notify_user(user: str, article: str, result: NominationResult) -> None:
-    """Notify a credited user about an approved or failed nomination."""
+    """Append one approved/failed notice to a credited user's talk page.
+
+    The marker check is scoped to that user's page, so every credited user gets a
+    notice while reruns do not duplicate it.
+    """
     if not ENABLE_TALK_NOTICES:
         return
     wiki = get_wiki()
@@ -39,10 +51,12 @@ def _notify_user(user: str, article: str, result: NominationResult) -> None:
 
 
 def _reply_on_nomination(nomination: FourAwardNomination, result: NominationResult) -> None:
-    """Leave a manual-review note below a nomination without removing it."""
+    """Append one manual-review note only while the source block still exists."""
     wiki = get_wiki()
     text = wiki.get_text(FOUR_PAGE)
     marker = _marker(nomination, result.status)
+    # A concurrent page edit may have removed the nomination after parsing.  Do
+    # not recreate it merely to attach a note.
     if marker in text or nomination.raw_text not in text:
         return
     body = f"\n: {marker} '''FourAwardHelper note:''' Manual review is needed. {_issue_text(result)} ~~~~\n"
@@ -51,7 +65,7 @@ def _reply_on_nomination(nomination: FourAwardNomination, result: NominationResu
 
 
 def reply_result(nomination: FourAwardNomination, result: NominationResult) -> None:
-    """Route a review result to user-talk notices or an on-page reply."""
+    """Route terminal results to talk pages and manual results to the source page."""
     if not ENABLE_REPLIES:
         return
     if result.status in {"approved", "failed_to_verify"}:

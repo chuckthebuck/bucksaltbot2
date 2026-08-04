@@ -38,6 +38,7 @@ const SUMMARY_COLUMNS = [
   "reason",
 ];
 
+/** Normalize supported Quarry identifiers and URLs to their latest JSON result. */
 export function quarryResultUrl(input: string): string | null {
   const value = input.trim();
   if (!value) return null;
@@ -78,6 +79,7 @@ export function quarryResultUrl(input: string): string | null {
   return null;
 }
 
+/** Convert Quarry's header/row JSON shape into selected rollback items. */
 export function parseQuarryJson(payload: QuarryJson): BatchRollbackItem[] {
   if (!Array.isArray(payload.headers) || !Array.isArray(payload.rows)) {
     throw new Error("Quarry JSON must include headers and rows");
@@ -91,6 +93,7 @@ export function parseQuarryJson(payload: QuarryJson): BatchRollbackItem[] {
     .filter((item): item is BatchRollbackItem => item !== null);
 }
 
+/** Parse a CSV/TSV table whose first row names target fields. */
 export function parseDelimitedRows(text: string): BatchRollbackItem[] {
   const rows = parseDelimited(text);
   if (rows.length < 2) return [];
@@ -103,6 +106,7 @@ export function parseDelimitedRows(text: string): BatchRollbackItem[] {
     .filter((item): item is BatchRollbackItem => item !== null);
 }
 
+/** Parse Quarry JSON, framework item JSON, or delimited text with one entry point. */
 export function parseQuarryText(text: string): BatchRollbackItem[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
@@ -121,6 +125,7 @@ export function parseQuarryText(text: string): BatchRollbackItem[] {
 }
 
 function rowToRecord(headers: string[], row: unknown): Record<string, unknown> {
+  // Quarry may encode rows positionally or as objects depending on the export.
   if (Array.isArray(row)) {
     return Object.fromEntries(headers.map((header, index) => [header, row[index]]));
   }
@@ -133,6 +138,8 @@ function rowToRecord(headers: string[], row: unknown): Record<string, unknown> {
 }
 
 function recordToItem(record: Record<string, unknown>): BatchRollbackItem | null {
+  // Require both values before normalization so malformed rows disappear rather
+  // than creating requests with an inferred but unusable title.
   const title = stringFromRecord(record, TITLE_COLUMNS);
   const user = stringFromRecord(record, USER_COLUMNS);
 
@@ -150,6 +157,8 @@ function stringFromRecord(
   record: Record<string, unknown>,
   names: string[]
 ): string {
+  // Column aliases are case-insensitive because Quarry queries commonly expose
+  // SQL names, MediaWiki names, or user-renamed export headings.
   const lookup = new Map(
     Object.entries(record).map(([key, value]) => [key.toLowerCase(), value])
   );
@@ -166,12 +175,15 @@ function stringFromRecord(
 }
 
 function normalizeTitle(title: string): string {
+  // Batch rollback is file-oriented by default; preserve explicit namespaces.
   return title.startsWith("File:") || title.startsWith("Category:")
     ? title
     : `File:${title}`;
 }
 
 function parseDelimited(text: string): string[][] {
+  // This small state machine supports quoted delimiters, escaped quotes, and
+  // CRLF without pulling a heavyweight CSV parser into the browser bundle.
   const delimiter = text.includes("\t") ? "\t" : ",";
   const rows: string[][] = [];
   let row: string[] = [];

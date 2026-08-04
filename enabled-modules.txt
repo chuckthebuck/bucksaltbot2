@@ -1,8 +1,9 @@
 # Modules registered by this framework deploy.
 #
-# Keep this list as module names, not repo URLs. Python code is installed by
-# requirements-modules.txt; this file only chooses which installed manifests are
-# registered into the framework registry.
+# Keep this list as module names, not repo URLs. Framework-owned definitions
+# live under modules/ and vendored packages are installed by
+# requirements-modules.txt; this file only selects which discovered manifests
+# enter the runtime registry.
 rollback
 four_award
 chuck_file_changer

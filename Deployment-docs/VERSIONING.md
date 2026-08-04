@@ -1,196 +1,130 @@
-# Versioning
+# Versioning and Vendored Snapshots
 
-Chuckbot uses separate versions for the framework, module source repos, and the
-deployed bundle.
+Chuckbot versions the framework, each standalone module, and the final deploy
+bundle separately. A framework tag alone identifies the exact bundle because
+the module source is committed inside that framework revision.
 
-## Framework Version
+## Framework version
 
-The framework uses SemVer:
+The framework uses SemVer (`MAJOR.MINOR.PATCH`). Read the current value from
+`VERSION`; the same value must appear in `package.json`, the root entry of
+`package-lock.json`, and the lockfile's root package record. The version tests
+enforce that equality.
 
-```text
-MAJOR.MINOR.PATCH
-```
+Use:
 
-The first subtree-based framework release is:
+- `MAJOR` for an incompatible deployment, database, manifest, permission, or
+  public API contract.
+- `MINOR` for backward-compatible framework capabilities.
+- `PATCH` for fixes, documentation, scripts, tests, and compatible deployment
+  changes.
 
-```text
-4.0.0
-```
+Framework tags use `framework-v<version>`. The historical first release of the
+current vendored-module model was `framework-v4.0.0`; it is not the current
+version instruction.
 
-Increment rules:
+`.github/workflows/release.yml` owns release bumps. It runs nightly and may be
+started manually. The nightly run skips when `main` has no commit after the
+latest `framework-v*` tag. Otherwise it runs
+`scripts/bump-framework-version.py`, commits all three version files, tags the
+commit, pushes it, and creates a GitHub release. Manual dispatch may select a
+patch, minor, or major bump.
 
-- `MAJOR`: breaking deployment model, database contract, module manifest
-  contract, permission model, or public API behavior.
-- `MINOR`: backward-compatible framework features, new shared APIs, new
-  framework-owned UI, or new module integration surfaces.
-- `PATCH`: bug fixes, docs, scripts, tests, and compatible deployment fixes.
+Do not hand-create a framework tag while that workflow is expected to own the
+release.
 
-The framework version is stored in:
+## Standalone module versions
 
-```text
-VERSION
-package.json
-```
+Each standalone module owns its `pyproject.toml` version and `v<version>` tags.
+Modules that also have a `package.json` keep its version equal to the Python
+package version; `tests/test_versioning.py` checks the vendored copies.
 
-Tag framework releases as:
+The release workflows currently vendored with 4Award, File Changer, and Salt
+Shack bump their patch version after a normal push to `main`/`master`, commit
+`chore(release): v<version>`, create the tag, and publish a GitHub release. The
+workflow ignores its own release commit to avoid a loop. A module can remain
+`0.x` while its operator/config contract is still evolving.
 
-```text
-framework-v4.0.0
-```
+## What a vendored snapshot is
 
-Framework release tags are created by the nightly release workflow, not on every
-commit to `main`. The workflow checks whether `main` has commits after the
-latest `framework-v*` tag; if not, it skips the night. Maintainers can also run
-the workflow manually and choose `patch`, `minor`, or `major`.
-
-## Module Versions
-
-Each module repo owns its own SemVer tags:
-
-```text
-v0.1.2
-v0.2.0
-v1.0.0
-```
-
-Modules may stay `0.x` while their config, output, or UI contract is still
-moving quickly. A module `1.0.0` means the module owner considers its manifest,
-config keys, and operator workflow stable.
-
-## Vendored Module Snapshots
-
-The framework repo vendors deployable module snapshots under:
+Deployable external modules live at:
 
 ```text
 vendor/modules/<module_name>/
 ```
 
-Those directories are git subtree snapshots of module repos. The framework
-deploy does not fetch module repos from GitHub; Toolforge installs local module
-paths from `requirements-modules.txt`.
+They are complete, repository-shaped source copies installed through
+`requirements-modules.txt`. They are not submodules, editable installs, or
+runtime downloads. Toolforge never fetches a module repository while building
+the framework.
 
-A subtree snapshot is a copy with provenance, not a live dependency link. The
-connection back to the source repo is maintained by:
-
-- the subtree commit in framework git history
-- `vendor/modules/<module_name>/SUBTREE.md`
-- the module package version in its `pyproject.toml`
-- the module repo commit or tag used for the subtree pull
-
-Use editable installs for active development and subtree snapshots for
-deployable framework commits. You do not need to push the module repo to GitHub
-before testing it in the framework locally.
-
-Example:
-
-```txt
-# requirements-modules.txt
-./vendor/modules/four_award
-```
-
-Update a module snapshot from the framework repo root:
+The current refresh mechanism is `scripts/update-vendored-modules.sh`, exposed
+as:
 
 ```bash
-git subtree pull \
-  --prefix=vendor/modules/four_award \
-  https://github.com/chuckthebuck/module4awardhelper.git \
-  v0.1.2 \
-  --squash
+npm run modules:update
 ```
 
-During local iteration, the source can be a local clone instead of GitHub:
+The script requires a clean worktree. It shallow-clones the configured branch
+for each external module, uses `rsync --delete` to overlay the corresponding
+vendored root, runs `npm install`, and regenerates the bundled frontend import
+registry. Its checked defaults are:
 
-```bash
-git subtree pull \
-  --prefix=vendor/modules/four_award \
-  ../module4awardhelper \
-  main \
-  --squash
-```
+| Module | Source branch | Overrides |
+| --- | --- | --- |
+| 4Award | `framework-dev` | `FOUR_AWARD_REMOTE`, `FOUR_AWARD_BRANCH` |
+| File Changer | `main` | `CHUCK_FILE_CHANGER_REMOTE`, `CHUCK_FILE_CHANGER_BRANCH` |
+| Salt Shack | `main` | `CHUCK_SALT_SHACK_REMOTE`, `CHUCK_SALT_SHACK_BRANCH` |
 
-If 4Award changes were made directly in the vendored framework copy, backport
-only the subtree to the module repo:
+The weekly `.github/workflows/update-vendored-modules.yml` runs the same command
+and opens a review PR. It does not deploy the result automatically.
+
+After refresh:
+
+1. Review every changed file and the module package version.
+2. Update `SUBTREE.md` when its recorded provenance or version is stale.
+3. Run the module-owned tests and the framework canary.
+4. Commit the vendored diff with the framework change that consumes it.
+
+Do not describe these directories as live subtree links. Some backport helpers
+use `git subtree split`, but the normal inbound update is the clone-and-overlay
+script above.
+
+## Backporting framework-first module edits
+
+Prefer editing a sibling module checkout installed with `pip install -e`. When
+an integration change is made in a vendored directory first, commit the
+reviewed framework snapshot before backporting it.
+
+4Award and File Changer use checked subtree-split previews:
 
 ```bash
 bash scripts/backport-four-award-subtree.sh --dry-run
+bash scripts/backport-chuck-file-changer-subtree.sh --dry-run
 ```
 
-The helper checks that the split contains module files only before the
-non-dry-run task pushes it.
+Those helpers split only their module prefix and refuse a result containing
+known framework paths. Their non-dry-run mode pushes the split commit to the
+configured module branch.
 
-Chuck the Salt Shack uses the same model:
+Salt Shack uses a different checked backport because a full-history subtree
+split is too expensive:
 
 ```bash
 bash scripts/backport-chuck-salt-shack-subtree.sh --dry-run
-bash scripts/backport-chuck-salt-shack-subtree.sh
 ```
 
-This publishes only `vendor/modules/chuck_salt_shack/` to the standalone Chuck
-the Salt Shack repository configured by `CHUCK_SALT_SHACK_REMOTE` and
-`CHUCK_SALT_SHACK_BRANCH`.
+It refuses uncommitted Salt Shack files, clones the configured target branch,
+overlays only `vendor/modules/chuck_salt_shack`, and shows the staged diff. The
+non-dry-run command creates and pushes one Salt Shack-only commit.
 
-For a shared release, prefer a module tag from GitHub so another maintainer can
-recreate the snapshot:
+## Deploy bundle identity and rollback
 
-```bash
-git subtree pull \
-  --prefix=vendor/modules/four_award \
-  https://github.com/chuckthebuck/module4awardhelper.git \
-  v0.1.3 \
-  --squash
-```
+A deployed bundle is one framework commit/tag plus the module versions and
+source files stored under `vendor/modules` in that commit. Record the framework
+tag and module versions in release or incident notes.
 
-Commit message convention:
-
-```text
-vendor(four_award): update to v0.1.2
-```
-
-Each vendored module directory should include a `SUBTREE.md` file recording:
-
-- source repo
-- source commit
-- module version
-- framework module name
-- Python distribution/import names
-
-## Deploy Bundle Version
-
-A deployed bundle is the framework tag plus the vendored module snapshots in
-that framework commit.
-
-Example:
-
-```text
-framework-v4.0.0
-  four_award v0.1.2 at b777437
-  rollback bundled framework module
-```
-
-Rollback is done by redeploying a previous framework commit or by reverting the
-specific vendored module snapshot commit.
-
-## Ownership Rule
-
-Do not make casual edits inside `vendor/modules/<module_name>/` for normal
-development. Use an editable module install instead:
-
-```bash
-python -m pip install -e ../module4awardhelper
-python scripts/check-module-install.py
-```
-
-Normal flow:
-
-```text
-edit module repo
-test module repo
-tag module repo
-git subtree pull into framework repo
-run local canary
-deploy framework repo
-```
-
-Emergency hotfixes inside `vendor/modules/<module_name>/` are allowed only if
-they are immediately backported to the module repo and followed by a normal
-subtree update.
+Rollback by redeploying a known-good framework commit. For a single module
+regression, revert the vendored refresh commit, run the canary, and redeploy the
+new framework commit. A runtime disable or E-STOP is an incident-control action,
+not a substitute for restoring a known-good source bundle.

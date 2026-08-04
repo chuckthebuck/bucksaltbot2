@@ -1,3 +1,5 @@
+/* Keep all authored styles below the module namespace so the bundled sheet
+   cannot alter the surrounding framework shell. */
 .cfc {
   display: flex;
   flex-direction: column;
@@ -58,6 +60,7 @@
   color: #096450;
 }
 
+/* Source-mode controls and the two-column source/action workspace. */
 .cfc-segmented {
   display: inline-flex;
   flex-wrap: wrap;
@@ -154,6 +157,7 @@
   background: #f8f9fa;
 }
 
+/* Live-source options collapse independently of the main workspace. */
 .cfc-source-form {
   display: flex;
   flex-direction: column;
@@ -194,6 +198,7 @@
 }
 
 @media (max-width: 760px) {
+  /* Preserve readable controls and diffs inside the framework viewport. */
   .cfc-grid {
     grid-template-columns: 1fr;
   }

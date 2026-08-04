@@ -7,6 +7,9 @@ __path__ = extend_path(__path__, __name__)
 
 _VENDOR_MODULES_ROOT = Path(__file__).resolve().parents[1] / "vendor" / "modules"
 if _VENDOR_MODULES_ROOT.is_dir():
+    # Each independently packaged snapshot uses a ``modules/<package>`` source
+    # layout.  Extend this namespace in source checkouts to mirror installation
+    # without adding every repository root globally to sys.path.
     _known_paths = set(__path__)
     for _module_dir in _VENDOR_MODULES_ROOT.iterdir():
         _candidate = _module_dir / "modules"

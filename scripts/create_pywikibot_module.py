@@ -14,6 +14,7 @@ DEFAULT_REPO_URL = "https://github.com/chuckthebuck/bucksaltbot2"
 
 
 def _validate_name(value: str) -> str:
+    """Validate and return a filesystem/import-safe module identifier."""
     name = str(value or "").strip()
     if not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", name):
         raise ValueError(
@@ -29,6 +30,7 @@ def _manifest_text(
     repo_url: str,
     schedule: str | None,
 ) -> str:
+    """Render a minimal handler-based cron or manual-worker manifest."""
     lines = [
         f"name = {json.dumps(name)}",
         f"title = {json.dumps(title)}",
@@ -67,6 +69,7 @@ def _manifest_text(
 
 
 def _jobs_text(name: str) -> str:
+    """Render a documented, dry-run-first Pywikibot handler skeleton."""
     return f'''"""Framework-managed Pywikibot job for {name}."""
 
 from __future__ import annotations
@@ -94,6 +97,7 @@ def run(ctx, payload):
 
 
 def _enable_module(enabled_file: Path, name: str) -> None:
+    """Append a module to enabled-modules.txt without duplicating entries."""
     existing = enabled_file.read_text(encoding="utf-8") if enabled_file.exists() else ""
     enabled_names = {
         line.split("#", 1)[0].strip()
@@ -146,6 +150,7 @@ def scaffold_module(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse scaffold options, create the module, and print validation guidance."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("name", help="lowercase snake_case module name")
     parser.add_argument("--title", help="human-readable module title")

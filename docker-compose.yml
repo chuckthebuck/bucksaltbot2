@@ -1,4 +1,6 @@
 services:
+  # Local Redis DB 0 holds application state; Celery uses DB 9 below so queue
+  # traffic cannot collide with framework keys.
   redis:
     image: redis:latest
     container_name: chuckbot-redis
@@ -29,6 +31,9 @@ services:
       - redis
       - mariadb
     environment:
+      # Safe mode narrows framework-managed runs and disabled status writes
+      # protect the status page. It does not gate File Changer's custom apply
+      # queue, which must remain preview-only in local development.
       CHUCKBOT_LOCAL_SAFE_MODE: "1"
       ENABLE_MODULE_LOADING: "1"
       LIVE_TEST_DISABLE_STATUS_UPDATES: "1"
@@ -51,6 +56,8 @@ services:
       dockerfile: Dockerfile.web
     container_name: chuckbot-web
     environment:
+      # The web and worker containers intentionally share database, broker, data,
+      # and namespace settings so a submitted local job is visible to both.
       CHUCKBOT_LOCAL_SAFE_MODE: "1"
       ENABLE_MODULE_LOADING: "1"
       FLASK_DEBUG: "1"

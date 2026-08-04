@@ -1,3 +1,11 @@
+"""Create the Flask/Celery application and bootstrap enabled modules.
+
+Importing this module constructs the process-wide application objects used by the
+web server, Celery worker, tests, and module entry points.  Startup work is kept
+deterministic: external maintainer lookup remains lazy, module discovery is
+manifest-driven, and the optional self-test runs only when explicitly enabled.
+"""
+
 import os
 import time
 import threading
@@ -9,6 +17,7 @@ try:
     from flask_cors import CORS
 except ImportError:  # pragma: no cover - dev/test fallback when deps are incomplete
     def CORS(*_args, **_kwargs):
+        """Provide a no-op development fallback when flask-cors is unavailable."""
         return None
 from flask import Flask, session
 
@@ -35,6 +44,7 @@ _toolhub_cache_lock = threading.Lock()
 
 
 def get_toolhub_maintainers():
+    """Return Toolhub maintainers with a short, stale-on-error process cache."""
     global _toolhub_maintainers_cache, _toolhub_cache_expiry
 
     with _toolhub_cache_lock:
@@ -44,6 +54,8 @@ def get_toolhub_maintainers():
         ):
             return _toolhub_maintainers_cache
 
+        # Keep the lock across refresh so concurrent requests do not stampede the
+        # Toolhub API when a cache entry expires.
         try:
             r = requests.get(TOOLHUB_API, headers=http_headers(), timeout=5)
             r.raise_for_status()
@@ -64,13 +76,14 @@ def get_toolhub_maintainers():
 
 
 def is_maintainer(username):
+    """Return whether a username is a configured bot admin or Toolhub maintainer."""
 
     if not username:
         return False
 
     username = username.lower()
 
-    # Hardcoded overrides
+    # Emergency/local bot-admin overrides remain available if Toolhub is down.
     if username in BOT_ADMIN_ACCOUNTS:
         return True
 
@@ -124,6 +137,7 @@ celery = celery_init_app(flask_app)
 
 @flask_app.context_processor
 def inject_user_permissions():
+    """Expose coarse identity flags used by server-rendered templates."""
 
     username = session.get("username")
     is_bot_admin = bool(username and username.lower() in BOT_ADMIN_ACCOUNTS)
@@ -135,6 +149,8 @@ def inject_user_permissions():
     }
 
 
+# The router imports the fully constructed app and registers its decorators, so
+# it must load after Flask, Celery, and shared configuration are initialized.
 import router  # noqa: E402,F401
 
 from router.module_registry import (  # noqa: E402
@@ -169,6 +185,8 @@ if os.getenv("ENABLE_MODULE_LOADING", "1") == "1":
     )
 
 if os.getenv("BUCKBOT_STARTUP_SELFTEST", "0") == "1":
+    # The strict startup mode turns failed checks into container startup failure;
+    # non-strict/manual self-tests report the same checks without blocking boot.
     from framework_selftest import run_selftest  # noqa: E402
 
     startup_selftest = run_selftest(

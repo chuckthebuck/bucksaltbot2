@@ -1,89 +1,77 @@
 # First Toolforge Deployment
 
 Use this guide once for a new Buckbot Toolforge tool account. The bootstrap
-script performs the repeatable technical work; it deliberately does not create
-the Toolforge account, grant database access, or choose OAuth credentials for
-you.
+script creates the deploy services and schema; it does not create the tool
+account, OAuth consumers, GitHub credentials, or a repository checkout.
 
-## Before you begin
+The checked GitHub deploy workflow targets the `buckbot` tool and hardcodes the
+checkout `/data/project/buckbot`. A staging tool or fork must deliberately
+change the workflow target, checkout path, namespace, and repository secrets.
 
-You need:
+## Prerequisites
 
-- A Toolforge tool account (for example, `buckbot`) that you can `become`.
-- A public Git repository containing this framework.
-- Wikimedia OAuth credentials for web login and bot edits.
-- A clean checkout of the exact framework revision you want to deploy.
+You need permission to `become` the Toolforge tool account, a public framework
+repository and reviewed revision, OAuth credentials for login and bot edits,
+and a clean checkout at the exact path used by the later deploy workflow.
 
-Toolforge automatically injects `TOOL_DATA_DIR`, `TOOL_REDIS_URI`, and the
-ToolsDB credentials into buildservice web and job containers. Do not create or
-override those `TOOL_*` values in the bootstrap script. Runtime configuration
-and secrets are stored with Toolforge's envvars service, rather than in Git or
-on NFS. [Toolforge environment-variable documentation](https://wikitech.wikimedia.org/wiki/Help:Toolforge/Envvars)
+Toolforge secrets belong in `toolforge envvars`, not Git or shell history.
+Existing Toolforge `replica.my.cnf` credentials are supported and ignored by
+Git.
 
-## Bootstrap
+## Create the workflow checkout
 
-SSH to Toolforge, become the tool account, clone the repository, and inspect
-the planned actions first:
+For the checked production workflow, the repository root must itself be
+`/data/project/buckbot`; cloning into a `buckbot-framework` child creates a
+checkout the workflow will never update.
+
+On a new tool account, initialize the existing tool home as the checkout:
 
 ```bash
 ssh login.toolforge.org
 become buckbot
-git clone https://github.com/chuckthebuck/bucksaltbot2.git buckbot-framework
-cd buckbot-framework
+cd /data/project/buckbot
+git init
+git remote add origin https://github.com/chuckthebuck/bucksaltbot2.git
+git fetch origin main
+git checkout -B main origin/main
+git status --short
+```
+
+If a checkout or `origin` already exists, inspect and repair that specific
+configuration instead of repeating initialization. The bootstrap refuses a
+dirty checkout.
+
+## Review and apply bootstrap
+
+The first command is a dry run:
+
+```bash
 bash scripts/toolforge-bootstrap.sh --tool-name buckbot
 ```
 
-The command above is a dry run. When it looks correct, run the first deploy:
+After reviewing its exact operations:
 
 ```bash
 bash scripts/toolforge-bootstrap.sh --apply --configure-env --tool-name buckbot
 ```
 
-`--configure-env` sets the non-secret Buckbot defaults and has Toolforge prompt
-for each secret without placing values in shell history. Use it only for the
-first setup or an intentional secret rotation: Toolforge's `envvars create`
-updates an existing variable.
+`--configure-env` creates non-secret defaults and asks Toolforge to prompt for
+each secret without echoing it. Use it only for initial setup or intentional
+rotation.
 
-The script then:
+The applied bootstrap starts a Build Service build, runs the built image's
+`init-db` command, creates/upgrades tables and registers enabled manifests,
+generates module schedules, replaces only the marked block in `jobs.yaml`,
+starts the webservice, and loads all checked jobs.
 
-1. Builds the requested repository revision.
-2. Runs the built image's `init-db` Procfile command as a one-off job.
-3. Creates or upgrades all ToolsDB tables and registers enabled module
-   manifests.
-4. Generates module cron entries from that registered state.
-5. Replaces only the marked generated block in `jobs.yaml`; framework-owned
-   continuous jobs remain unchanged.
-6. Starts the buildservice web process and loads `jobs.yaml`.
+The generated-only YAML is also written to
+`$TOOL_DATA_DIR/buckbot-generated-jobs.yaml` for review. Repository
+`jobs.yaml` remains the deployment authority.
 
-The generated file is written temporarily to
-`$TOOL_DATA_DIR/buckbot-generated-jobs.yaml` so both the buildservice job and
-the Toolforge shell can access it. It is useful for inspection and can be
-removed after a successful deploy.
+## Configuration created by bootstrap
 
-After a successful run, review and commit the updated `jobs.yaml` from the
-Toolforge checkout before a later `git pull`:
-
-```bash
-git diff -- jobs.yaml
-git add jobs.yaml
-git commit -m "chore: refresh Toolforge jobs"
-git push
-```
-
-This matters because module schedules are persisted in ToolsDB and then copied
-into `jobs.yaml` for Toolforge. Leaving the file modified locally would block a
-future fast-forward pull; restoring it without committing would make a later
-deploy reload stale schedules.
-
-## Required configuration
-
-The bootstrap script prompts for these secrets:
-
-- `SECRET_KEY`
-- `USER_OAUTH_CONSUMER_KEY` and `USER_OAUTH_CONSUMER_SECRET`
-- `CONSUMER_TOKEN`, `CONSUMER_SECRET`, `ACCESS_TOKEN`, and `ACCESS_SECRET`
-
-It sets these non-secret runtime values using the tool name:
+The script prompts for `SECRET_KEY`, both `USER_OAUTH_*` values, and the four
+Pywikibot `CONSUMER_*`/`ACCESS_*` values. For production it creates:
 
 ```text
 BOT_NAME=buckbot
@@ -94,40 +82,43 @@ BUCKBOT_CELERY_QUEUE=buckbot.celery
 BUCKBOT_CELERY_WORKER_NAME=buckbot-celery
 ```
 
-Choose a distinct tool name/Redis namespace for every staging tool or fork.
-See [ENVIRONMENT.md](ENVIRONMENT.md) for the full map and shared-Redis rules.
+See [ENVIRONMENT.md](ENVIRONMENT.md) for database precedence and Redis
+isolation.
 
-## Verify the first deployment
+## Preserve generated schedules
+
+After bootstrap, inspect:
 
 ```bash
-toolforge build show
-toolforge webservice buildservice logs -f
+git diff -- jobs.yaml
 toolforge jobs list
-toolforge jobs logs buckbot-celery -f
 ```
 
-Open `https://buckbot.toolforge.org/`, log in, and confirm that `/modules`
-lists the enabled modules. If the one-off schema job fails, inspect its logs:
+If `jobs.yaml` changed, commit and push it from a GitHub-authenticated checkout.
+If the Toolforge checkout cannot push, copy the diff to a trusted developer
+checkout, commit/push it there, then make Toolforge match that remote commit
+before automated deploys. Do not leave an uncommitted `jobs.yaml`: the normal
+wrapper fast-forwards the checkout and reloads the checked file.
 
-```bash
-toolforge jobs logs buckbot-bootstrap-init -f
-```
+## Verify and enable normal deployment
 
-## Later deploys
+Open `https://buckbot.toolforge.org/`, complete OAuth login, and verify
+`/modules`, module UIs, Rollback worker health, and `toolforge jobs list`.
+The default bootstrap init job is named `buckbot-bootstrap-init` for log lookup.
 
-For normal updates, use `scripts/toolforge-deploy-new-version.sh` after review
-and testing. Do not rerun `--configure-env` unless you intend to update
-configuration or rotate secrets. If module cron definitions changed, use the
-module-management UI to generate and review the updated `jobs.yaml`, commit it,
-and load it before deployment.
+Configure GitHub secrets `TOOLFORGE_USERNAME` and
+`TOOLFORGE_DEPLOY_PRIVATE_KEY` as described in the root README. Pushes to
+`main` then run `.github/workflows/toolforge-deploy.yml`.
 
-## Safety notes
+Routine deployments invoke `scripts/toolforge-deploy-new-version.sh`: update
+checkout, build, restart web, flush jobs, and load committed `jobs.yaml`. It
+does not rerun `init-db` or regenerate schedules. Bootstrap is for first setup,
+not normal releases.
 
-- The bootstrap refuses to run from a dirty checkout.
-- Its default is dry run; build, database, webservice, and jobs changes require
-  `--apply`.
-- It never accepts secrets as arguments or reads them from a file.
-- It updates only the block between `# BEGIN GENERATED MODULE JOBS` and
-  `# END GENERATED MODULE JOBS` in `jobs.yaml`.
-- A first deploy starts the webservice. For an already-running service, use the
-  regular deploy script, which restarts it instead.
+## Bootstrap safety properties
+
+- Dry run is the default; state changes require `--apply`.
+- A dirty checkout is rejected.
+- Secrets are never command-line arguments or project-file inputs.
+- Only the generated jobs marker block is rewritten.
+- First deploy starts the webservice; routine deploys restart it.

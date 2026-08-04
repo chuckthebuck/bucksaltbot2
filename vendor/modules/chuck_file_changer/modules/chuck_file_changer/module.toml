@@ -1,5 +1,5 @@
 name = "chuck_file_changer"
-repo = "https://github.com/chuckthebuck/chuck-file-changer"
+repo = "https://github.com/chuckthebuck/Chuckthefilechange"
 entry_point = "chuck_file_changer.service:run_file_change"
 blueprint_entry_point = "chuck_file_changer.blueprint:blueprint"
 ui = true

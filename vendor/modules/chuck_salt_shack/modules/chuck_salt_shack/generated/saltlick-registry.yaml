@@ -60,7 +60,7 @@ saltlicks:
   actions:
     allowed:
     - mediawiki.page.purge
-  source_digest: 0da40c5bf629de70c04cdc7653a6b91fbec6e23f23577bf53bcb620e3df87cd4
+  source_digest: 364beef9ef9448d56ff030ed45b5e0b75ceab4dff3242c73d458076ffad3205b
   generated: false
   rights:
     preview: saltlick_page_purger_preview
@@ -137,7 +137,7 @@ saltlicks:
           optional: false
   actions:
     allowed: []
-  source_digest: 302c44cb4b0f814bbd9ec94c218a7dfbaab900d42259e6db6d687c5d43cf1369
+  source_digest: 67f3e3e85bade6a84c22845875e584dd719cf86ebaf77a977603c7cb3a33ced8
   generated: false
   rights:
     preview: saltlick_transclusion_report_preview

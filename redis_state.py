@@ -1,3 +1,5 @@
+"""Store best-effort rollback progress projections in shared Redis."""
+
 import os
 import json
 import redis
@@ -12,14 +14,17 @@ r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 
 def job_key(job_id):
+    """Return the deployment-namespaced progress key for one rollback job."""
     return f"{redis_namespace()}:rollback:job:{job_id}"
 
 
 def set_progress(job_id, data, ttl=86400):
+    """Replace one job's serialized progress snapshot with an expiry."""
     r.set(job_key(job_id), json.dumps(data), ex=ttl)
 
 
 def get_progress(job_id):
+    """Return one decoded progress snapshot, or ``None`` on cache miss."""
     val = r.get(job_key(job_id))
     if not val:
         return None
@@ -27,6 +32,7 @@ def get_progress(job_id):
 
 
 def update_progress(job_id, field):
+    """Best-effort increment a named counter without affecting durable work."""
     key = job_key(job_id)
     try:
         val = r.get(key)

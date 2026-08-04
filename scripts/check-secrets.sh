@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Validate required deployment secrets without printing any secret values.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
@@ -11,6 +12,7 @@ MODE="${1:-canary}"
 status=0
 
 check_required() {
+	# Record a missing/blank variable while allowing all failures to be reported.
 	local name="$1"
 	local value="${!name:-}"
 	if [[ -z "$value" ]]; then
@@ -22,6 +24,7 @@ check_required() {
 }
 
 check_optional() {
+	# Distinguish optional integration gaps from fatal deployment secrets.
 	local name="$1"
 	local value="${!name:-}"
 	if [[ -z "$value" ]]; then

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Overlay the committed File Changer snapshot into its standalone repository.
+# The dry-run path shows only the module-scoped diff and never pushes.
 set -euo pipefail
 
 REMOTE="${CHUCK_FILE_CHANGER_REMOTE:-git@github.com:chuckthebuck/Chuckthefilechange.git}"

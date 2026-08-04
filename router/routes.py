@@ -1,4 +1,12 @@
-"""Flask route handlers and route helper functions."""
+"""Expose the framework's browser pages and versioned HTTP API.
+
+Handlers in this module translate untrusted request data into calls to the
+authorization, rollback, registry, scheduling, and wiki layers.  They keep DB
+transactions and permission checks close to each mutation so no UI assumption is
+required for safety.  The small forwarding helpers at the top intentionally call
+through the public :mod:`router` package; that preserves legacy patch points and
+avoids circular imports while the split router is assembled.
+"""
 
 import logging
 import mimetypes
@@ -107,16 +115,19 @@ def _r():
 
 
 def is_maintainer(u):
+    """Resolve maintainer status through the compatibility router package."""
     _router = _r()
     return _router.is_maintainer(u) if _router else False
 
 
 def is_bot_admin(u):
+    """Resolve bot-administrator status through the compatibility router package."""
     _router = _r()
     return _router.is_bot_admin(u) if _router else False
 
 
 def _local_redirect_target(value: str | None, *, fallback: str = "/") -> str:
+    """Accept only same-origin absolute paths for post-login redirects."""
     target = str(value or "").strip()
     if target.startswith("/") and not target.startswith("//"):
         return target
@@ -124,19 +135,25 @@ def _local_redirect_target(value: str | None, *, fallback: str = "/") -> str:
 
 
 def is_admin_user(u):
+    """Resolve framework-administrator status through the public router seam."""
     _router = _r()
     return _router.is_admin_user(u) if _router else False
 
 
 def get_conn():
+    """Return a ToolsDB connection through the patchable router factory."""
     return _r().get_conn()
 
 
 class _LazyTask:
+    """Delay Celery task lookup until dispatch to avoid router import cycles."""
+
     def __init__(self, name):
+        """Remember the public router attribute that exposes the task proxy."""
         self._name = name
 
     def delay(self, *a, **kw):
+        """Forward a Celery dispatch to the currently installed task object."""
         return getattr(_r(), self._name).delay(*a, **kw)
 
 
@@ -145,27 +162,35 @@ resolve_diff_rollback_job = _LazyTask("resolve_diff_rollback_job")
 
 
 def _load_diff_payload(*a, **kw):
+    """Forward diff-payload reads through the compatibility router seam."""
     return _r()._load_diff_payload(*a, **kw)
 
 
 def _store_diff_payload(*a, **kw):
+    """Forward diff-payload writes through the compatibility router seam."""
     return _r()._store_diff_payload(*a, **kw)
 
 
 def _update_diff_payload(*a, **kw):
+    """Forward diff-payload merges through the compatibility router seam."""
     return _r()._update_diff_payload(*a, **kw)
 
 
 def _set_diff_error(*a, **kw):
+    """Forward resolve-error writes through the compatibility router seam."""
     return _r()._set_diff_error(*a, **kw)
 
 
 def _append_mw_debug(*a, **kw):  # noqa: F811
+    """Forward bounded MediaWiki diagnostics through the public router seam."""
     return _r()._append_mw_debug(*a, **kw)
 
 
 class _LazyStatusUpdater:
+    """Resolve status-updater attributes only after router initialization."""
+
     def __getattr__(self, name):
+        """Return the live status-updater attribute exported by :mod:`router`."""
         return getattr(_r().status_updater, name)
 
 
@@ -173,54 +198,67 @@ status_updater = _LazyStatusUpdater()
 
 
 def _extract_oldid(*a, **kw):
+    """Forward diff revision extraction to the wiki API layer."""
     return _r()._extract_oldid(*a, **kw)
 
 
 def _normalize_target_user_input(*a, **kw):
+    """Forward target-username normalization to the wiki API layer."""
     return _r()._normalize_target_user_input(*a, **kw)
 
 
 def _utc_now_iso(*a, **kw):
+    """Return the wiki layer's canonical UTC timestamp string."""
     return _r()._utc_now_iso(*a, **kw)
 
 
 def fetch_diff_author_and_timestamp(*a, **kw):
+    """Resolve a diff's author and timestamp through the wiki API layer."""
     return _r().fetch_diff_author_and_timestamp(*a, **kw)
 
 
 def fetch_rollbackable_window_end_timestamp(*a, **kw):
+    """Find the safe rollback window boundary through the wiki API layer."""
     return _r().fetch_rollbackable_window_end_timestamp(*a, **kw)
 
 
 def fetch_recent_rollbackable_contribs(*a, **kw):
+    """Fetch recent rollbackable contributions through the wiki API layer."""
     return _r().fetch_recent_rollbackable_contribs(*a, **kw)
 
 
 def iter_contribs_after_timestamp(*a, **kw):
+    """Iterate safe contributions after a timestamp through the wiki API layer."""
     return _r().iter_contribs_after_timestamp(*a, **kw)
 
 
 def create_rollback_jobs_from_diff(*a, **kw):
+    """Forward diff-to-job materialization to the rollback job layer."""
     return _r().create_rollback_jobs_from_diff(*a, **kw)
 
 
 def resolve_diff_rollback_job_impl(*a, **kw):
+    """Forward asynchronous diff resolution to the rollback job layer."""
     return _r().resolve_diff_rollback_job_impl(*a, **kw)
 
 
 def _user_permissions(*a, **kw):
+    """Resolve effective framework permissions through the public router seam."""
     return _r()._user_permissions(*a, **kw)
 
 
 def _has_permission(username: str | None, permission: str) -> bool:
+    """Return whether a signed-in user has one effective permission atom."""
     return bool(username and permission in _user_permissions(username))
 
 
 def _can_manage_modules(username: str | None) -> bool:
+    """Return whether a user may administer the module registry globally."""
     return bool(username and (is_maintainer(username) or _has_permission(username, "manage_modules")))
 
 
 def _can_view_modules(username: str | None) -> bool:
+    """Return whether a user may see any part of the module surface."""
     if not username:
         return False
     if _can_manage_modules(username):
@@ -231,6 +269,11 @@ def _can_view_modules(username: str | None) -> bool:
 
 
 def _can_manage_module(username: str | None, module_name: str) -> bool:
+    """Return whether a user has full authority over one module.
+
+    This capability bypasses job ``required_right`` checks and is also accepted
+    by module-owned sensitive endpoints; it is broader than registry toggling.
+    """
     return bool(
         username
         and (
@@ -242,6 +285,7 @@ def _can_manage_module(username: str | None, module_name: str) -> bool:
 
 
 def _can_estop_module(username: str | None, module_name: str) -> bool:
+    """Return whether a user may emergency-stop one module."""
     return bool(
         username
         and (
@@ -257,6 +301,7 @@ def _can_estop_module(username: str | None, module_name: str) -> bool:
 
 
 def _can_run_module_jobs(username: str | None, module_name: str) -> bool:
+    """Return whether a user may trigger jobs belonging to one module."""
     return bool(
         username
         and (
@@ -268,6 +313,11 @@ def _can_run_module_jobs(username: str | None, module_name: str) -> bool:
 
 
 def _can_run_module_job(username: str | None, module_name: str, job) -> bool:
+    """Apply module-wide and job-specific rights to a manual job trigger.
+
+    Full module managers intentionally satisfy a job's sensitive
+    ``required_right`` without a second atom.
+    """
     if not _can_run_module_jobs(username, module_name):
         return False
     required_right = str(getattr(job, "required_right", "") or "").strip()
@@ -283,6 +333,7 @@ def _can_run_module_job(username: str | None, module_name: str, job) -> bool:
 
 
 def _can_view_module_jobs(username: str | None, module_name: str) -> bool:
+    """Return whether a user may inspect a module's jobs and run history."""
     return bool(
         username
         and (
@@ -314,6 +365,7 @@ def _module_effective_rights(record) -> list[str]:
 
 
 def _can_edit_module_config(username: str | None, module_name: str) -> bool:
+    """Return whether a user may mutate one module's runtime configuration."""
     return bool(
         username
         and (
@@ -325,6 +377,10 @@ def _can_edit_module_config(username: str | None, module_name: str) -> bool:
 
 
 def _vendored_module_resource(module_name: str | None, resource_path: str):
+    """Resolve a safe file beneath a vendored module, or return ``None``."""
+    # Validate both the module identifier and relative resource before touching
+    # the filesystem.  The resolved-path containment check below is the second
+    # defense against traversal and symlink escapes.
     module_key = str(module_name or "").strip()
     resource_candidate = Path(resource_path)
     if (
@@ -355,6 +411,7 @@ def _vendored_module_resource(module_name: str | None, resource_path: str):
 
 
 def _module_resource_response(resource_spec: str, module_name: str | None = None):
+    """Serve a declared packaged or vendored module resource with safe headers."""
     spec = str(resource_spec or "").strip()
     if spec.startswith(("http://", "https://", "/")):
         abort(404)
@@ -365,6 +422,8 @@ def _module_resource_response(resource_spec: str, module_name: str | None = None
     if normalized_module_name and not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", normalized_module_name):
         abort(404)
     resource = None
+    # Installed wheels are authoritative; the vendored tree is a development
+    # and source-checkout fallback for independently packaged modules.
     try:
         packaged = resources.files(package).joinpath(resource_path)
         if packaged.is_file():
@@ -385,6 +444,7 @@ def _module_resource_response(resource_spec: str, module_name: str | None = None
 
 
 def _module_docs_text(resource_spec: str, module_name: str | None = None) -> str:
+    """Read declared UTF-8 module documentation, returning empty on absence."""
     spec = str(resource_spec or "").strip()
     if not spec or spec.startswith(("http://", "https://", "/")):
         return ""
@@ -409,6 +469,7 @@ def _module_docs_text(resource_spec: str, module_name: str | None = None) -> str
 
 
 def _framework_docs_text() -> str:
+    """Load the packaged framework documentation index for the docs page."""
     docs_path = Path(app.root_path) / "Deployment-docs" / "DEPLOYMENT_DOCS_INDEX.md"
     try:
         return docs_path.read_text(encoding="utf-8")
@@ -417,6 +478,7 @@ def _framework_docs_text() -> str:
 
 
 def _module_asset_url(module_name: str, resource_spec: str) -> str:
+    """Convert a manifest resource spec into its browser-facing asset URL."""
     spec = str(resource_spec or "").strip()
     if spec.startswith(("http://", "https://", "/")):
         return spec
@@ -428,38 +490,47 @@ def _module_asset_url(module_name: str, resource_spec: str) -> str:
 
 
 def _check_rate_limit(*a, **kw):
+    """Forward rollback rate-limit enforcement through the router seam."""
     return _r()._check_rate_limit(*a, **kw)
 
 
 def _effective_runtime_authz_config(*a, **kw):
+    """Forward effective runtime-authz reads through the router seam."""
     return _r()._effective_runtime_authz_config(*a, **kw)
 
 
 def _serialize_runtime_authz_config(*a, **kw):
+    """Forward authz serialization through the router seam."""
     return _r()._serialize_runtime_authz_config(*a, **kw)
 
 
 def _normalize_runtime_authz_updates(*a, **kw):
+    """Forward untrusted authz-update validation through the router seam."""
     return _r()._normalize_runtime_authz_updates(*a, **kw)
 
 
 def _persist_runtime_authz_updates(*a, **kw):
+    """Forward validated authz persistence through the router seam."""
     return _r()._persist_runtime_authz_updates(*a, **kw)
 
 
 def _get_user_grants_payload(*a, **kw):
+    """Forward one user's explicit grant lookup through the router seam."""
     return _r()._get_user_grants_payload(*a, **kw)
 
 
 def get_user_groups(*a, **kw):
+    """Forward wiki group resolution through the compatibility router seam."""
     return _r().get_user_groups(*a, **kw)
 
 
 def is_tester(*a, **kw):
+    """Resolve tester status through the compatibility router seam."""
     return _r().is_tester(*a, **kw)
 
 
 def MAX_JOB_ITEMS():
+    """Return the live maximum rollback item count exported by the app."""
     return _r().MAX_JOB_ITEMS
 
 
@@ -556,6 +627,11 @@ def inject_nav_capabilities():
 
 
 def _ensure_secret_key():
+    """Install the configured Flask signing key and return it.
+
+    The hard-coded fallback is development-only compatibility; production
+    deployments are expected to provide ``SECRET_KEY`` or ``FALLBACK_SECRET_KEY``.
+    """
     configured = app.config.get("SECRET_KEY") or os.environ.get("SECRET_KEY")
     if not configured:
         configured = os.environ.get(
@@ -571,6 +647,7 @@ _ensure_secret_key()
 
 
 def _user_consumer_token():
+    """Build the user-facing OAuth consumer token when both halves exist."""
     key = os.environ.get("USER_OAUTH_CONSUMER_KEY")
     secret = os.environ.get("USER_OAUTH_CONSUMER_SECRET")
 
@@ -581,9 +658,12 @@ def _user_consumer_token():
 
 
 def _serialize_request_token(request_token):
+    """Convert mwoauth request-token variants into session-safe primitives."""
     if isinstance(request_token, dict):
         return request_token
 
+    # mwoauth versions have represented tokens as mappings, named tuples, and
+    # plain pairs.  Normalize all supported shapes before Flask serializes them.
     token_fields = getattr(request_token, "_fields", None)
 
     if token_fields:
@@ -599,6 +679,7 @@ def _serialize_request_token(request_token):
 
 
 def _deserialize_request_token(payload):
+    """Recreate an mwoauth request token from its session representation."""
     if not isinstance(payload, dict):
         raise ValueError("request_token payload must be a dict")
 
@@ -615,15 +696,19 @@ def _deserialize_request_token(payload):
 
 
 def _oauth_callback_url():
+    """Return the environment-aware OAuth callback URL."""
     return oauth_callback_url()
 
 
 def _rollback_api_actor():
+    """Authenticate a rollback API caller from session or status-site token."""
     username = session.get("username")
 
     if username:
         return username
 
+    # The status-site integration is intentionally a separate machine identity;
+    # compare its shared secret in constant time and never copy it into a session.
     status_token = request.headers.get("X-Status-Token")
     expected_token = os.environ.get("STATUS_API_TOKEN")
 
@@ -638,6 +723,7 @@ def _rollback_api_actor():
 
 
 def _parse_bool(value, default=False):
+    """Parse common JSON, form, and environment boolean representations."""
     if isinstance(value, bool):
         return value
 
@@ -660,10 +746,12 @@ def _parse_bool(value, default=False):
 
 
 def _local_safe_mode_enabled() -> bool:
+    """Return whether local execution must block live wiki mutations."""
     return _parse_bool(os.environ.get("CHUCKBOT_LOCAL_SAFE_MODE"), default=False)
 
 
 def _normalize_request_type(raw_value) -> str:
+    """Normalize a rollback request type, defaulting unknown values to queue."""
     value = str(raw_value or "").strip().lower()
     if value in _ALLOWED_REQUEST_TYPES:
         return value
@@ -671,6 +759,7 @@ def _normalize_request_type(raw_value) -> str:
 
 
 def _normalize_request_endpoint(raw_value) -> str | None:
+    """Normalize an optional rollback source endpoint to its stored form."""
     value = str(raw_value or "").strip().lower().replace("-", "_")
     return value or None
 
@@ -678,6 +767,7 @@ def _normalize_request_endpoint(raw_value) -> str | None:
 def _approval_requirement_for_request(
     request_type: str, requested_endpoint: str | None
 ) -> str | None:
+    """Map a rollback request's risk level to the required approver tier."""
     if request_type == _REQUEST_TYPE_BATCH or requested_endpoint == _ENDPOINT_BATCH:
         return _APPROVAL_REQUIRED_ADMIN
     if request_type == _REQUEST_TYPE_DIFF:
@@ -686,6 +776,7 @@ def _approval_requirement_for_request(
 
 
 def _can_actor_approve_impl(actor: str, required_level: str | None) -> bool:
+    """Apply effective permissions and role tiers to an approval decision."""
     if not actor or not required_level:
         return False
 
@@ -711,6 +802,7 @@ def _can_actor_approve(actor: str, required_level: str | None) -> bool:
 
 
 def _can_review_requests_impl(username: str) -> bool:
+    """Return whether a user may enter the rollback request-review surface."""
     if not username:
         return False
     return _has_permission(username, "approve_jobs")
@@ -776,6 +868,7 @@ def _should_autoapprove_request(actor: str, required_level: str | None) -> bool:
 def _pending_batch_request_job_ids(
     cursor, batch_id: int, request_type: str
 ) -> list[int]:
+    """Return pending sibling job IDs for one batch and request type."""
     cursor.execute(
         """
         SELECT id
@@ -789,6 +882,7 @@ def _pending_batch_request_job_ids(
 
 
 def _request_payload_has_diff_anchor(payload: dict | None) -> bool:
+    """Return whether cached request state can resolve a diff-style preview."""
     if not isinstance(payload, dict):
         return False
 
@@ -809,6 +903,9 @@ def _compute_diff_request_preview(
     if endpoint not in _ALLOWED_DIFF_REQUEST_ENDPOINTS:
         raise ValueError("Unsupported endpoint for diff request preview")
 
+    # One request can be reviewed through multiple endpoints and limits.  Cache
+    # each interpretation separately so an account preview is never reused as a
+    # full from-diff approval preview.
     preview_by_endpoint = payload.get("preview_by_endpoint")
     if not isinstance(preview_by_endpoint, dict):
         preview_by_endpoint = {}
@@ -854,6 +951,9 @@ def _compute_diff_request_preview(
             raise ValueError(f"limit must be <= {_ACCOUNT_ROLLBACK_MAX_LIMIT}")
         items = fetch_recent_rollbackable_contribs(target_user, limit=effective_limit)
     else:
+        # Bound the preview at the first contribution no longer safe for native
+        # rollback.  This prevents approval of a list that would overwrite a
+        # newer third-party edit by falling back to text replacement.
         if not start_timestamp:
             raise ValueError("Diff timestamp is required for from-diff preview")
         rollbackable_end_timestamp = fetch_rollbackable_window_end_timestamp(
@@ -895,6 +995,7 @@ def _compute_diff_request_preview(
 
 @app.route("/goto")
 def goto():
+    """Authorize a named navigation tab and redirect to its canonical route."""
     username = session.get("username")
     tab = request.args.get("tab")
 
@@ -955,6 +1056,7 @@ def goto():
 
 @app.route("/api/v1/rollback/worker")
 def worker_status():
+    """Report worker liveness from the expiring Redis heartbeat."""
     hb = r.get(WORKER_HEARTBEAT_KEY)
 
     if not hb:
@@ -972,6 +1074,7 @@ def worker_status():
 
 @app.route("/api/v1/rollback/jobs/progress")
 def batch_job_progress():
+    """Return cached progress for an authenticated caller's requested job IDs."""
     if session.get("username") is None:
         return jsonify({"detail": "Not authenticated"}), 401
 
@@ -1000,6 +1103,7 @@ def batch_job_progress():
 
 @app.route("/rollback-queue")
 def rollback_queue_ui():
+    """Render the signed-in user's active and recently finished rollback jobs."""
     username = session.get("username")
 
     jobs = []
@@ -1036,6 +1140,7 @@ def rollback_queue_ui():
 
 @app.route("/api/v1/rollback/from-diff", methods=["POST"])
 def rollback_from_diff_api():
+    """Create an approval-gated rollback request anchored to a wiki diff."""
     username = session.get("username")
 
     if not username:
@@ -1052,6 +1157,8 @@ def rollback_from_diff_api():
     if not _check_rate_limit(username):
         return jsonify({"detail": "Rate limit exceeded; try again later"}), 429
 
+    # The endpoint retains query/form compatibility for older clients.  JSON is
+    # preferred, but every representation passes through the same validation.
     payload = request.get_json(silent=True) or {}
 
     diff = request.args.get("diff") or payload.get("diff") or request.form.get("diff")
@@ -1098,6 +1205,8 @@ def rollback_from_diff_api():
 
     dry_run = _parse_bool(dry_run_raw, default=False)
     rollback_through_bots = _parse_bool(rollback_through_bots_raw, default=False)
+    # Safe mode can only reduce capability: callers cannot override it by
+    # explicitly supplying dry_run=false.
     if _local_safe_mode_enabled():
         dry_run = True
 
@@ -1162,6 +1271,9 @@ def rollback_from_diff_api():
                     )
             conn.commit()
 
+        # Keep large/resolution-only inputs out of the relational job row.  The
+        # worker receives only the durable ID and resolves this expiring payload
+        # after an approver has selected the endpoint semantics.
         _store_diff_payload(
             job_id,
             {
@@ -1212,6 +1324,7 @@ def rollback_from_diff_api():
 
 @app.route("/api/v1/rollback/from-account", methods=["POST"])
 def rollback_from_account_api():
+    """Create an approval-gated request for an account's recent contributions."""
     username = session.get("username")
 
     if not username:
@@ -1230,6 +1343,8 @@ def rollback_from_account_api():
 
     payload = request.get_json(silent=True) or {}
 
+    # ``target_user`` is canonical; ``user`` and ``account`` remain accepted for
+    # existing automation and all three converge before length validation.
     target_user_raw = (
         request.args.get("target_user")
         if request.args.get("target_user") is not None
@@ -1413,6 +1528,7 @@ def rollback_from_account_api():
 
 @app.route("/rollback-from-diff")
 def rollback_from_diff_page():
+    """Render the diff-anchored rollback request form for authorized users."""
     username = session.get("username")
 
     if not username:
@@ -1435,6 +1551,7 @@ def rollback_from_diff_page():
 
 @app.route("/rollback-account")
 def rollback_account_page():
+    """Render the account rollback request form for authorized users."""
     username = session.get("username")
 
     if not username:
@@ -1457,6 +1574,7 @@ def rollback_account_page():
 
 @app.route("/rollback-requests")
 def rollback_requests_page():
+    """Render request review with capability flags for the current user."""
     username = session.get("username")
 
     if not username:
@@ -1476,6 +1594,7 @@ def rollback_requests_page():
 
 @app.route("/api/v1/rollback/requests", methods=["GET"])
 def list_rollback_requests_api():
+    """List approval-gated requests visible to the current user."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -1491,6 +1610,8 @@ def list_rollback_requests_api():
         where_parts.append("j.status=%s")
         params.append(status_filter)
 
+    # Non-reviewers are always constrained to their own rows, even when they
+    # attempt to supply another user's requested_by filter.
     if requested_by_filter:
         if (
             not can_review
@@ -1600,6 +1721,7 @@ def list_rollback_requests_api():
 
 @app.route("/api/v1/rollback/requests/<int:job_id>/preview", methods=["GET"])
 def rollback_request_preview_api(job_id: int):
+    """Build the exact item preview an approver will authorize for a request."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -1630,6 +1752,8 @@ def rollback_request_preview_api(job_id: int):
             request_type = _normalize_request_type(request_type)
 
             if request_type == _REQUEST_TYPE_BATCH:
+                # Batch items are already durable and immutable at review time;
+                # diff requests instead require the cached wiki resolution below.
                 cursor.execute(
                     """
                     SELECT file_title, target_user, summary, status, error
@@ -1708,6 +1832,7 @@ def rollback_request_preview_api(job_id: int):
 
 @app.route("/rollback-queue/all-jobs")
 def rollback_queue_all_jobs_ui():
+    """Render or serialize the privileged cross-user rollback job history."""
     username = session.get("username")
 
     if not username:
@@ -1842,6 +1967,7 @@ def rollback_queue_all_jobs_ui():
 
 @app.route("/rollback_batch")
 def rollback_batch():
+    """Render the bulk rollback request form for users with batch rights."""
     username = session.get("username")
 
     if not username:
@@ -1859,6 +1985,7 @@ def rollback_batch():
 
 @app.route("/rollback-config")
 def rollback_config_ui():
+    """Render runtime authorization configuration in read or edit mode."""
     username = session.get("username")
 
     if not username:
@@ -1877,6 +2004,7 @@ def rollback_config_ui():
 
 @app.route("/modules")
 def modules_ui():
+    """Render the module administration surface for global module managers."""
     username = session.get("username")
 
     if not username:
@@ -1896,6 +2024,7 @@ def modules_ui():
 
 @app.route("/jobs-yaml")
 def jobs_yaml_ui():
+    """Render the generated Toolforge job-definition administration page."""
     username = session.get("username")
 
     if not username:
@@ -1915,6 +2044,7 @@ def jobs_yaml_ui():
 
 @app.route("/api/v1/config/authz", methods=["GET"])
 def get_runtime_authz_api():
+    """Return effective authz configuration and valid editor choices."""
     username = session.get("username")
 
     if not username:
@@ -1924,6 +2054,8 @@ def get_runtime_authz_api():
         return jsonify({"detail": "Forbidden"}), 403
 
     config = _effective_runtime_authz_config()
+    # Project roles are open-ended configuration atoms.  Discover referenced
+    # projects so the editor can populate their current MediaWiki group choices.
     role_map = config.get("ROLE_GRANTS_JSON") or {}
     projects = {"commons", "enwiki"}
     if isinstance(role_map, dict):
@@ -1956,6 +2088,7 @@ def get_runtime_authz_api():
 
 @app.route("/api/v1/config/authz", methods=["PUT"])
 def update_runtime_authz_api():
+    """Validate and persist a partial runtime authorization update."""
     username = session.get("username")
 
     if not username:
@@ -2015,6 +2148,7 @@ def update_runtime_authz_api():
 
 @app.route("/api/v1/config/authz/user-grants/<path:target_username>", methods=["GET"])
 def get_runtime_authz_user_grants(target_username: str):
+    """Return explicit and derived grants for one normalized username."""
     username = session.get("username")
 
     if not username:
@@ -2046,6 +2180,7 @@ def get_runtime_authz_user_grants(target_username: str):
 
 @app.route("/api/v1/config/authz/user-grants/<path:target_username>", methods=["PUT"])
 def update_runtime_authz_user_grants(target_username: str):
+    """Replace one user's explicit groups, rights, and optional auto grants."""
     username = session.get("username")
 
     if not username:
@@ -2105,6 +2240,7 @@ def update_runtime_authz_user_grants(target_username: str):
 
 @app.route("/api/v1/rollback/jobs", methods=["GET"])
 def list_rollback_jobs():
+    """List the current user's active and recently terminal rollback jobs."""
     username = session.get("username")
     if username is None:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -2166,6 +2302,7 @@ def list_rollback_jobs():
 
 @app.route("/api/v1/rollback/jobs", methods=["POST"])
 def create_rollback_job():
+    """Validate, chunk, persist, and optionally dispatch a rollback batch."""
     actor = _rollback_api_actor()
 
     if actor is None:
@@ -2207,6 +2344,8 @@ def create_rollback_job():
         if batch_id <= 0:
             return jsonify({"detail": "batch_id must be a positive integer"}), 400
 
+    # Machine clients may include requested_by for audit clarity, but they may
+    # never use it to submit work under a different human identity.
     if requested_by != actor:
         return jsonify({"detail": "requested_by must match authenticated user"}), 403
 
@@ -2237,6 +2376,8 @@ def create_rollback_job():
 
     with get_conn() as conn:
         with conn.cursor() as cursor:
+            # A batch ID links chunks for approval and status display; individual
+            # job size remains bounded so one Celery task cannot monopolize a worker.
             for i in range(0, len(items), MAX_JOB_ITEMS()):
                 chunk = items[i : i + MAX_JOB_ITEMS()]
 
@@ -2332,6 +2473,7 @@ def create_rollback_job():
 
 @app.route("/api/v1/rollback/jobs/<int:job_id>/approve", methods=["POST"])
 def approve_rollback_job(job_id: int):
+    """Approve one diff request or all pending chunks of a batch request."""
     actor = _rollback_api_actor()
 
     if actor is None:
@@ -2395,6 +2537,8 @@ def approve_rollback_job(job_id: int):
                     {"detail": "Forbidden: insufficient approval rights"}
                 ), 403
 
+            # Approvers may reinterpret a diff-capable request as the safer
+            # supported account endpoint, but only explicit allowed values pass.
             approved_endpoint = endpoint_override or requested_endpoint
 
             if request_type == _REQUEST_TYPE_DIFF:
@@ -2471,6 +2615,8 @@ def approve_rollback_job(job_id: int):
 
             approved_job_ids = []
 
+            # Approval is atomic at the user-visible batch level even though the
+            # submission was split into several worker-sized jobs.
             if batch_id is not None:
                 cursor.execute(
                     """
@@ -2532,6 +2678,7 @@ def approve_rollback_job(job_id: int):
 
 @app.route("/api/v1/rollback/jobs/<int:job_id>/reject", methods=["POST"])
 def reject_rollback_request(job_id: int):
+    """Reject a pending request and cancel every pending sibling batch chunk."""
     actor = _rollback_api_actor()
 
     if actor is None:
@@ -2631,6 +2778,7 @@ def reject_rollback_request(job_id: int):
 
 @app.route("/api/v1/rollback/jobs/<int:job_id>/force-dry-run", methods=["POST"])
 def force_dry_run_rollback_request(job_id: int):
+    """Reduce a pending request to dry-run mode without approving it."""
     actor = _rollback_api_actor()
 
     if actor is None:
@@ -2714,6 +2862,7 @@ def force_dry_run_rollback_request(job_id: int):
 
 @app.route("/api/v1/rollback/jobs/<int:job_id>/run-live", methods=["POST"])
 def run_dry_run_job_live(job_id: int):
+    """Requeue an authorized completed dry run for live execution."""
     actor = _rollback_api_actor()
 
     if actor is None:
@@ -2781,6 +2930,8 @@ def run_dry_run_job_live(job_id: int):
             item_count = int(item_count_row[0]) if item_count_row else 0
 
             if item_count == 0 and request_type == _REQUEST_TYPE_DIFF:
+                # A diff dry run may finish before durable items exist.  Re-run
+                # resolution from its saved anchor instead of queuing an empty job.
                 payload = _load_diff_payload(job_id)
                 if not payload:
                     return jsonify(
@@ -2833,6 +2984,7 @@ def run_dry_run_job_live(job_id: int):
 
 @app.route("/api/v1/rollback/jobs/<int:job_id>/retry", methods=["POST"])
 def retry_job(job_id):
+    """Retry a failed/canceled job, re-resolving diff jobs when necessary."""
     actor = _rollback_api_actor()
 
     if actor is None:
@@ -2928,6 +3080,7 @@ def retry_job(job_id):
 
 @app.route("/api/v1/rollback/jobs/<int:job_id>", methods=["DELETE"])
 def cancel_rollback_job(job_id):
+    """Cooperatively cancel a job after applying owner-sensitive privileges."""
     actor = _rollback_api_actor()
 
     if actor is None:
@@ -3023,6 +3176,7 @@ def cancel_rollback_job(job_id):
 
 @app.route("/api/v1/rollback/jobs/<int:job_id>")
 def get_rollback_job(job_id):
+    """Return one visible job, its item states, and cached resolve diagnostics."""
     username = session.get("username")
 
     if username is None:
@@ -3088,6 +3242,8 @@ def get_rollback_job(job_id):
         else:
             job = (job[0], job[1], "failed", job[3], job[4])
 
+    # Plain text is consumed by lightweight status tooling; JSON remains the
+    # canonical browser/API representation below.
     if request.args.get("format") == "log":
         lines = []
 
@@ -3149,6 +3305,7 @@ def get_rollback_job(job_id):
 
 @app.route("/")
 def index():
+    """Render the framework landing page and modules visible to the user."""
     username = session.get("username")
     can_manage_modules = bool(username and _can_view_modules(username))
     module_rows = []
@@ -3174,6 +3331,7 @@ def index():
 
 @app.route("/modules/estop/<path:module_name>", methods=["POST"])
 def module_estop_form(module_name: str):
+    """Emergency-stop one authorized module from the server-rendered form."""
     username = session.get("username")
     if not username:
         return redirect(url_for("login", referrer=url_for("index")))
@@ -3189,6 +3347,7 @@ def module_estop_form(module_name: str):
 
 @app.route("/modules/estop-all", methods=["POST"])
 def module_estop_all_form():
+    """Emergency-stop every registered module for a global module manager."""
     username = session.get("username")
     if not username:
         return redirect(url_for("login", referrer=url_for("index")))
@@ -3202,6 +3361,7 @@ def module_estop_all_form():
 
 @app.route("/login")
 def login():
+    """Begin MediaWiki OAuth and store the temporary request token in session."""
     _ensure_secret_key()
 
     if request.args.get("referrer"):
@@ -3234,6 +3394,7 @@ def login():
 
 @app.route("/dev-login")
 def dev_login():
+    """Create a privileged local session only while explicit safe mode is active."""
     if not _local_safe_mode_enabled():
         abort(404)
 
@@ -3250,6 +3411,7 @@ def dev_login():
 @app.route("/mwoauth-callback")
 @app.route("/buckbot-oauth-callback")
 def oauth_callback():
+    """Complete OAuth, authorize the wiki identity, and establish its session."""
     _ensure_secret_key()
 
     if "request_token" not in session:
@@ -3280,6 +3442,8 @@ def oauth_callback():
     else:
         username = identity["username"]
 
+        # OAuth proves identity, not application access.  Resolve current groups
+        # before retaining any access token or privilege flags in the session.
         if not is_authorized(username):
             session.clear()
             return UNAUTHORIZED_MESSAGE, 403
@@ -3302,12 +3466,14 @@ def oauth_callback():
 
 @app.route("/logout")
 def logout():
+    """Clear all authentication and OAuth state from the browser session."""
     session.clear()
     return redirect(url_for("index"))
 
 
 @app.route("/docs")
 def framework_docs_page():
+    """Render the checked-in framework documentation index."""
     username = session.get("username")
     return render_template(
         "docs.html",
@@ -3319,6 +3485,7 @@ def framework_docs_page():
 
 @app.route("/api/v1/modules", methods=["GET"])
 def module_registry_api():
+    """List registered modules with capabilities calculated for the caller."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -3330,6 +3497,8 @@ def module_registry_api():
         module_admin = _can_manage_module(username, definition.name)
         module_estopper = _can_estop_module(username, definition.name)
         module_job_viewer = _can_view_module_jobs(username, definition.name)
+        # Pass elevated module capabilities into the access check so explicit UI
+        # allowlists cannot accidentally lock out the people responsible for it.
         has_access = user_has_module_access(
             definition.name,
             username,
@@ -3375,6 +3544,7 @@ def module_registry_api():
 
 @app.route("/api/v1/modules/<path:module_name>", methods=["GET"])
 def module_registry_item_api(module_name: str):
+    """Return one accessible module's manifest, state, rights, and UI links."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -3409,6 +3579,7 @@ def module_registry_item_api(module_name: str):
 
 @app.route("/module-assets/<module_name>/<path:asset_spec>")
 def module_packaged_asset(module_name: str, asset_spec: str):
+    """Serve only frontend assets explicitly declared by an accessible module."""
     username = session.get("username")
     if not username:
         abort(401)
@@ -3416,6 +3587,8 @@ def module_packaged_asset(module_name: str, asset_spec: str):
     if record is None or record.definition.frontend is None:
         abort(404)
     frontend = record.definition.frontend
+    # A valid package path is insufficient: restricting to manifest declarations
+    # prevents this generic route from becoming an authenticated file browser.
     allowed_specs = {frontend.script, *frontend.styles}
     if asset_spec not in allowed_specs:
         abort(404)
@@ -3427,6 +3600,7 @@ def module_packaged_asset(module_name: str, asset_spec: str):
 
 @app.route("/modules/<path:module_name>/ui")
 def module_ui_page(module_name: str):
+    """Render the framework shell that mounts an accessible module frontend."""
     username = session.get("username")
     if not username:
         return redirect(url_for("login", referrer=request.path))
@@ -3466,6 +3640,7 @@ def module_ui_page(module_name: str):
 
 @app.route("/modules/<path:module_name>/docs")
 def module_docs_page(module_name: str):
+    """Render a module's declared documentation for an authorized operator."""
     username = session.get("username")
     if not username:
         return redirect(url_for("login", referrer=request.path))
@@ -3491,6 +3666,7 @@ def module_docs_page(module_name: str):
 
 @app.route("/api/v1/modules/<path:module_name>/enabled", methods=["PUT"])
 def module_registry_toggle_api(module_name: str):
+    """Enable or disable one registered module without changing its manifest."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -3509,6 +3685,7 @@ def module_registry_toggle_api(module_name: str):
 
 @app.route("/api/v1/modules/<path:module_name>/estop", methods=["POST"])
 def module_registry_estop_api(module_name: str):
+    """Emergency-stop a module and return durable and process-kill outcomes."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -3533,6 +3710,7 @@ def module_registry_estop_api(module_name: str):
 
 @app.route("/api/v1/modules/<path:module_name>/access", methods=["PUT"])
 def module_registry_access_api(module_name: str):
+    """Set one user's explicit access toggle for a module."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -3562,6 +3740,7 @@ def module_registry_access_api(module_name: str):
 
 @app.route("/api/v1/modules/<path:module_name>/config", methods=["GET"])
 def module_config_get_api(module_name: str):
+    """Return runtime configuration for one accessible module."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -3583,6 +3762,7 @@ def module_config_get_api(module_name: str):
 
 @app.route("/api/v1/modules/<path:module_name>/config", methods=["PUT"])
 def module_config_put_api(module_name: str):
+    """Merge authorized runtime configuration updates for one module."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -3604,6 +3784,7 @@ def module_config_put_api(module_name: str):
 
 @app.route("/api/v1/modules/install", methods=["POST"])
 def module_registry_install_api():
+    """Explain that runtime remote installation is intentionally unsupported."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -3614,8 +3795,10 @@ def module_registry_install_api():
     return jsonify(
         {
             "detail": (
-                "Remote module installation is disabled. Vendor module repos into "
-                "the framework repo and pin them in requirements-modules.txt."
+                "Remote module installation is disabled. Refresh reviewed snapshots "
+                "with npm run modules:update, review and commit the vendor changes, "
+                "keep requirements-modules.txt and enabled-modules.txt in sync, then "
+                "redeploy the framework."
             )
         }
     ), 410
@@ -3623,6 +3806,7 @@ def module_registry_install_api():
 
 @app.route("/api/v1/modules/<path:module_name>/jobs", methods=["GET"])
 def module_jobs_api(module_name: str):
+    """Return one module's scheduled jobs, worker jobs, and recent runs."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -3646,6 +3830,7 @@ def module_jobs_api(module_name: str):
 
 
 def _four_award_operator_allowed(username: str | None) -> bool:
+    """Return whether a user may enter Four Award history and review surfaces."""
     if not username:
         return False
     return bool(
@@ -3660,10 +3845,12 @@ def _four_award_operator_allowed(username: str | None) -> bool:
 
 
 def _four_award_run_allowed(username: str | None) -> bool:
+    """Return whether a user may manually enqueue Four Award work."""
     return bool(username and _can_run_module_jobs(username, "four_award"))
 
 
 def _four_award_default_job_name(record) -> str | None:
+    """Choose the first enabled Four Award job, falling back to the first job."""
     jobs = list(record.definition.cron_jobs)
     if not jobs:
         return None
@@ -3674,6 +3861,7 @@ def _four_award_default_job_name(record) -> str | None:
 
 
 def _four_award_review_claim_keys(run: dict) -> set[tuple[str, tuple[str, ...]]]:
+    """Extract normalized article/user claim identities from a stored run."""
     payload = run.get("payload")
     if isinstance(payload, dict):
         payload_keys = _four_award_claim_keys_from_payload(payload.get("claim_keys"))
@@ -3691,6 +3879,7 @@ def _four_award_review_claim_keys(run: dict) -> set[tuple[str, tuple[str, ...]]]
 
 
 def _four_award_claim_keys_from_reviews(reviews: list) -> set[tuple[str, tuple[str, ...]]]:
+    """Normalize review dictionaries into stable duplicate-detection keys."""
     keys: set[tuple[str, tuple[str, ...]]] = set()
     for review in reviews:
         if not isinstance(review, dict):
@@ -3713,6 +3902,7 @@ def _four_award_claim_keys_from_reviews(reviews: list) -> set[tuple[str, tuple[s
 
 
 def _four_award_claim_keys_from_payload(value: object) -> set[tuple[str, tuple[str, ...]]]:
+    """Validate and normalize serialized claim keys from a run payload."""
     if not isinstance(value, list):
         return set()
 
@@ -3740,6 +3930,7 @@ def _four_award_claim_keys_from_payload(value: object) -> set[tuple[str, tuple[s
 def _four_award_claim_keys_payload(
     claim_keys: set[tuple[str, tuple[str, ...]]]
 ) -> list[dict[str, object]]:
+    """Serialize normalized Four Award claim keys for durable run payloads."""
     return [
         {"article": article, "users": list(users)}
         for article, users in sorted(claim_keys)
@@ -3747,6 +3938,10 @@ def _four_award_claim_keys_payload(
 
 
 def _four_award_claim_keys_from_page_text(page_text: str) -> set[tuple[str, tuple[str, ...]]]:
+    """Load the vendored parser in isolation and extract claims from page text."""
+    # The framework must inspect historical text before enqueuing a module run,
+    # but the vendored package is not guaranteed to be installed on sys.path.
+    # Load it under a private package name so its relative imports still work.
     package_name = "_vendor_four_award_runtime"
     module_dir = (
         Path(__file__).resolve().parent.parent
@@ -3795,6 +3990,7 @@ def _four_award_claim_keys_from_page_text(page_text: str) -> set[tuple[str, tupl
 
 
 def _four_award_run_is_historical_test(run: dict) -> bool:
+    """Return whether a run represents the historical-diff test workflow."""
     payload = run.get("payload")
     return bool(
         run.get("trigger_type") == "web_test"
@@ -3806,6 +4002,7 @@ def _four_award_run_is_historical_test(run: dict) -> bool:
 
 
 def _four_award_run_is_duplicate_noop(run: dict) -> bool:
+    """Return whether a run contains only already-recorded claim results."""
     result = run.get("result")
     if not isinstance(result, dict):
         return False
@@ -3833,6 +4030,7 @@ def _four_award_run_is_duplicate_noop(run: dict) -> bool:
 
 
 def _four_award_run_has_value(run: dict) -> bool:
+    """Return whether a run contains nominations, edits, or a meaningful result."""
     result = run.get("result")
     if not isinstance(result, dict) or not result:
         return run.get("status") not in {"completed", "succeeded"}
@@ -3850,6 +4048,7 @@ def _four_award_run_has_value(run: dict) -> bool:
 
 
 def _four_award_unique_hit_runs(runs: list[dict]) -> list[dict]:
+    """Keep the earliest run contributing each claim while preserving input order."""
     seen_claims: set[tuple[str, tuple[str, ...]]] = set()
     included_ids: set[int] = set()
 
@@ -3874,6 +4073,7 @@ def _four_award_duplicate_historical_run(
     claim_keys: set[tuple[str, tuple[str, ...]]],
     runs: list[dict],
 ) -> dict | None:
+    """Return the earliest historical run overlapping the proposed claims."""
     if not claim_keys:
         return None
     for run in sorted(runs, key=lambda item: int(item.get("id") or 0)):
@@ -3886,6 +4086,7 @@ def _four_award_duplicate_historical_run(
 
 
 def _four_award_revision_text(oldid: int) -> dict[str, str]:
+    """Fetch and validate the configured Four Award page revision."""
     config_values = get_module_config("four_award") or {}
     wiki_code = str(config_values.get("wiki_code") or "en").strip() or "en"
     wiki_family = str(config_values.get("wiki_family") or "wikipedia").strip() or "wikipedia"
@@ -3930,6 +4131,8 @@ def _four_award_revision_text(oldid: int) -> dict[str, str]:
     if not content:
         raise ValueError(f"Revision {oldid} had empty page text")
 
+    # Revision IDs are wiki-global, so verify that a syntactically valid oldid
+    # belongs to the configured nomination page before giving text to the module.
     expected_title = str(config_values.get("four_page") or "Wikipedia:Four Award").strip()
     revision_title = str(page.get("title") or "").strip()
     if expected_title and revision_title and revision_title != expected_title:
@@ -3948,6 +4151,7 @@ def _four_award_revision_text(oldid: int) -> dict[str, str]:
 @app.route("/four-award")
 @app.route("/4award")
 def four_award_runs_page():
+    """Open the Four Award frontend or its legacy server-rendered history page."""
     username = session.get("username")
     if not username:
         return redirect(url_for("login", referrer=url_for("four_award_runs_page")))
@@ -3969,6 +4173,7 @@ def four_award_runs_page():
 
 @app.route("/api/v1/four-award/runs", methods=["GET"])
 def four_award_runs_api():
+    """List filtered Four Award runs with optional non-blank hit caching."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -4025,6 +4230,8 @@ def four_award_runs_api():
     cache_hit = False
     cache_payload = None
 
+    # The expensive full-history scan is cached only for the canonical small-hit
+    # query; custom windows are cheap enough to answer directly and unambiguously.
     if non_blank_only and use_cache and hits <= 50 and requested_scan_limit >= 50000:
         cache_payload = (
             refresh_module_job_run_hit_cache("four_award")
@@ -4081,6 +4288,7 @@ def four_award_runs_api():
 
 @app.route("/api/v1/four-award/runs/<int:run_id>", methods=["GET"])
 def four_award_run_api(run_id: int):
+    """Return one visible Four Award run by framework run ID."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -4096,6 +4304,7 @@ def four_award_run_api(run_id: int):
 
 @app.route("/api/v1/four-award/test-runs", methods=["POST"])
 def four_award_test_run_api():
+    """Queue a deduplicated dry run against one historical Four Award diff."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -4122,6 +4331,8 @@ def four_award_test_run_api():
     except ValueError:
         return jsonify({"detail": "Could not load revision text"}), 400
     claim_keys = _four_award_claim_keys_from_page_text(revision["text"])
+    # Persist claim identities in the new run and reject overlaps before queueing;
+    # this keeps repeated historical test submissions from flooding run history.
     duplicate_run = _four_award_duplicate_historical_run(
         claim_keys,
         list_module_job_runs("four_award", limit=1000),
@@ -4205,6 +4416,7 @@ def four_award_test_run_api():
     methods=["PUT"],
 )
 def module_job_update_api(module_name: str, job_name: str):
+    """Update the runtime schedule controls for one module cron job."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -4246,8 +4458,9 @@ def module_job_update_api(module_name: str, job_name: str):
             "updated": updated,
             "jobs": list_module_cron_jobs(module_name),
             "detail": (
-                "Schedule saved. Regenerate Jobs YAML and reload Toolforge jobs "
-                "for Toolforge to use the new interval."
+                "Schedule saved in ToolsDB. Regenerate Jobs YAML, replace only "
+                "the marked generated block in jobs.yaml, review and commit it, "
+                "then deploy so the wrapper reloads Toolforge jobs."
             ),
         }
     )
@@ -4258,6 +4471,7 @@ def module_job_update_api(module_name: str, job_name: str):
     methods=["POST"],
 )
 def module_job_run_now_api(module_name: str, job_name: str):
+    """Validate and enqueue an enabled module job for manual execution."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -4293,6 +4507,8 @@ def module_job_run_now_api(module_name: str, job_name: str):
         payload = {}
     if not isinstance(payload, dict):
         return jsonify({"detail": "Run payload must be an object"}), 400
+    # Generic callers may supply job inputs but cannot bypass the separately
+    # authorized module-config endpoint with per-run configuration overrides.
     if "config_overrides" in payload:
         return jsonify(
             {
@@ -4333,6 +4549,7 @@ def module_job_run_now_api(module_name: str, job_name: str):
 
 @app.route("/api/v1/modules/runs/<int:run_id>/cancel", methods=["POST"])
 def module_job_run_cancel_api(run_id: int):
+    """Request cooperative cancellation of an authorized module job run."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -4361,6 +4578,7 @@ def module_job_run_cancel_api(run_id: int):
 
 @app.route("/api/v1/modules/runs/<int:run_id>/restart", methods=["POST"])
 def module_job_run_restart_api(run_id: int):
+    """Cancel an existing run and enqueue a replacement with the same payload."""
     username = session.get("username")
     if not username:
         return jsonify({"detail": "Not authenticated"}), 401
@@ -4407,6 +4625,7 @@ def module_job_run_restart_api(run_id: int):
 
 @app.route("/modules/runs/<int:run_id>/report", methods=["GET"])
 def module_job_run_report_page(run_id: int):
+    """Render a module run's structured result and dry-run edit report."""
     username = session.get("username")
     if not username:
         return redirect(url_for("login"))
@@ -4443,8 +4662,10 @@ def module_job_run_report_page(run_id: int):
 @app.route("/admin/jobs-yaml-preview", methods=["GET"])
 def admin_jobs_yaml_preview():
     """Generate and preview Toolforge jobs.yaml entries for module cron jobs.
-    
-    This is a manual admin workflow: review the output, add to jobs.yaml in repo, and push.
+
+    This is a manual admin workflow: replace only the marked generated block in
+    the repository's ``jobs.yaml``, review and commit it, then deploy so the
+    wrapper loads that committed file.
     """
     username = session.get("username")
     if not username:
@@ -4461,7 +4682,7 @@ def admin_jobs_yaml_preview():
         logging.exception("Failed to generate jobs.yaml entries")
         return jsonify({"detail": "Failed to generate jobs.yaml"}), 500
 
-    # Return as plain text for easy copy-paste
+    # Plain text preserves YAML formatting for review or copy into deployment files.
     return Response(yaml_section, mimetype="text/plain")
 
 

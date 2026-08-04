@@ -1,73 +1,67 @@
 # Chuck the Buckbot Framework Documentation Index
 
-This folder is now framework documentation, not a deployment snapshot for one
-old branch. Prefer current docs here and module-owned docs inside module
-packages.
+These files describe the current framework and deployment model. Module-owned
+behavior belongs with the module package, while cross-module contracts and
+Toolforge operations belong here.
 
-## Start Here
+## Start here
 
-- [QUICKSTART.md](QUICKSTART.md) — Safe first local run, everyday checks, and
-  the shortest path to a working development stack.
-- [TOOLFORGE_FIRST_DEPLOY.md](TOOLFORGE_FIRST_DEPLOY.md) — First-time Toolforge
-  account setup, environment configuration, database bootstrap, build, and
-  generated jobs loading.
-- [SALTLICK_AUTHORING_GUIDE.md](SALTLICK_AUTHORING_GUIDE.md) — Create, test,
-  review, and publish a contract-driven Salt Shack workflow.
-- [README.md](../README.md) — Current framework overview, module contract, UI
-  ownership, permission model, and Toolforge flow.
-- [MODULE_DEVELOPMENT_GUIDE.md](MODULE_DEVELOPMENT_GUIDE.md) — How to build a
-  module package, install it editable for local development, refresh a vendored
-  snapshot for deploys, declare cron jobs, expose rights, and use framework
+- [QUICKSTART.md](QUICKSTART.md) — safe first local run and everyday checks.
+- [README.md](../README.md) — framework architecture, module contract, UI,
+  authorization, and Toolforge flow.
+- [MODULE_DEVELOPMENT_GUIDE.md](MODULE_DEVELOPMENT_GUIDE.md) — package a module,
+  run it editable, refresh a deploy snapshot, declare jobs, and use framework
   services.
-- [MODULE_DEPLOYMENT_PREP.md](MODULE_DEPLOYMENT_PREP.md) — Toolforge-oriented
-  deployment prep for packaged modules.
-- [LOCAL_CANARY.md](LOCAL_CANARY.md) — Local install, module install, and canary
-  build scripts to run before pushing to Toolforge.
-- [VERSIONING.md](VERSIONING.md) — Framework, module, vendored snapshot, and
-  deploy-bundle versioning rules.
-- [ACCESS_CONTROL.md](ACCESS_CONTROL.md) — Runtime groups, auto grants, and
-  MediaWiki-style rights handling.
-- [FEATURES_GRANULAR_PERMISSIONS.md](FEATURES_GRANULAR_PERMISSIONS.md) —
-  Detailed permission examples and migration notes.
+- [SALTLICK_AUTHORING_GUIDE.md](SALTLICK_AUTHORING_GUIDE.md) — create and review
+  a Salt Shack workflow contract.
 
-## Module Documentation
+## Deployment and operations
 
-Module documentation should ship with the module package and be referenced from
-the module manifest:
+- [TOOLFORGE_FIRST_DEPLOY.md](TOOLFORGE_FIRST_DEPLOY.md) — one-time checkout,
+  secrets, schema, webservice, and jobs bootstrap.
+- [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) — release gate and
+  post-deploy checks.
+- [DEPLOYMENT_QUICK_REFERENCE.md](DEPLOYMENT_QUICK_REFERENCE.md) — compact
+  command reference.
+- [MODULE_DEPLOYMENT_PREP.md](MODULE_DEPLOYMENT_PREP.md) — module-specific
+  deploy readiness and operational boundaries.
+- [LOCAL_CANARY.md](LOCAL_CANARY.md) — local installs, service-aware checks,
+  Docker, and safe-mode behavior.
+- [ENVIRONMENT.md](ENVIRONMENT.md) — supported deploy environment and secret
+  configuration.
+- [VERSIONING.md](VERSIONING.md) — framework releases, standalone module
+  releases, vendored snapshots, and bundle rollback.
+- [ACCESS_CONTROL.md](ACCESS_CONTROL.md) — runtime groups, Wikimedia-role
+  grants, module rights, and compatibility inputs.
+
+## Module documentation
+
+A module can reference packaged user documentation from its manifest:
 
 ```toml
 [frontend]
 docs = "package_name:docs/module_name.md"
 ```
 
-The framework serves that page at `/modules/<module>/docs` for users who can
-manage the module or view that module's jobs.
+The framework serves it at `/modules/<module>/docs` to users who can manage the
+module or view its jobs. Current bundled module guides live in:
 
-## Toolforge Deployment Notes
+- `vendor/modules/four_award/modules/four_award/docs/four_award.md`
+- `vendor/modules/chuck_file_changer/modules/chuck_file_changer/docs/chuck_file_changer.md`
+- `vendor/modules/chuck_salt_shack/modules/chuck_salt_shack/docs/chuck_salt_shack.md`
 
-For normal framework deployment:
+## Current deployment authority
 
-```bash
-ssh login.toolforge.org
-become buckbot
-cd /data/project/buckbot
-git pull --ff-only
-toolforge build start https://github.com/<owner>/<repo>
-toolforge webservice buildservice restart
-```
+Normal production deployment is `.github/workflows/toolforge-deploy.yml`. It
+runs on pushes to `main` and can be dispatched manually. The workflow invokes
+`scripts/toolforge-deploy-new-version.sh` in `/data/project/buckbot`; that
+wrapper builds, restarts the webservice, flushes jobs, and loads the committed
+`jobs.yaml`.
 
-For cron changes:
+Module schedule edits are two-step by design: update the registry state, then
+use `/jobs-yaml` to review and commit the generated block before deployment.
+Changing ToolsDB alone does not change a Toolforge schedule.
 
-1. Update module cron settings in the webservice.
-2. Generate Jobs YAML from the webservice.
-3. Update the tool account's `jobs.yaml`.
-4. Run `toolforge jobs load jobs.yaml`.
-
-The framework can generate the YAML from SQL state. Toolforge still needs the
-file loaded because Toolforge jobs are not live-edited by the buildpack.
-
-## Documentation Cleanup Rule
-
-If a doc describes an old branch, stale test count, or old rollback-only access
-model, update it before linking it from the web UI. If it is only historical,
-move the useful facts into one of the current docs and remove the stale file.
+Delete obsolete branch notes or merge their still-valid facts into one of the
+authoritative files above. Do not preserve old test counts, deprecated install
+routes, or hypothetical deployment flows as current instructions.

@@ -10,6 +10,7 @@ _NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 
 
 def _configured_name(variable: str, default: str) -> str:
+    """Read and validate a Redis/Kombu-safe deployment identifier."""
     value = os.getenv(variable, default).strip() or default
     if not _NAME_RE.fullmatch(value):
         raise RuntimeError(

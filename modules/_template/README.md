@@ -35,6 +35,11 @@ For a separately versioned module:
 4. Vendor a known-good snapshot into `vendor/modules/<module>/` before deploying
    the framework.
 
+The current framework refreshes its known external snapshots from a clean
+worktree with `npm run modules:update`. Add a new module to that reviewed script
+only when the framework is ready to own its deploy pin; do not document a live
+subtree link or a runtime install endpoint.
+
 ## Files In This Template
 
 - `__init__.py` — Package marker.

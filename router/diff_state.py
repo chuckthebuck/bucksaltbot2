@@ -1,4 +1,10 @@
-"""Diff payload and state management for rollback jobs."""
+"""Manage short-lived resolution and preview state for diff rollback jobs.
+
+Durable job lifecycle data lives in ToolsDB.  Redis holds the larger request
+payload, preview cache, bounded MediaWiki diagnostics, and human-readable resolve
+errors so polling routes do not repeatedly call the wiki API.  Every cache write
+is best effort; a cache outage must not crash the web process or corrupt DB state.
+"""
 
 import json
 import os
@@ -20,10 +26,12 @@ _ACCOUNT_ROLLBACK_MAX_LIMIT = 500
 
 
 def _r():
+    """Return the compatibility router package without importing it eagerly."""
     return _sys.modules.get("router")
 
 
 def _get_conn():
+    """Use a router-level patched connection factory when one is installed."""
     _router = _r()
     router_get_conn = getattr(_router, "get_conn", None) if _router else None
     if callable(router_get_conn):
@@ -32,6 +40,7 @@ def _get_conn():
 
 
 def _set_diff_error_via_router(job_id: int, error_message: str | None) -> None:
+    """Write resolve errors through the patchable public router seam."""
     _router = _r()
     router_setter = getattr(_router, "_set_diff_error", None) if _router else None
     if callable(router_setter) and router_setter is not _set_diff_error:
@@ -41,6 +50,7 @@ def _set_diff_error_via_router(job_id: int, error_message: str | None) -> None:
 
 
 def _update_diff_payload_via_router(job_id: int, updates: dict) -> None:
+    """Merge payload updates through the patchable public router seam."""
     _router = _r()
     router_updater = getattr(_router, "_update_diff_payload", None) if _router else None
     if callable(router_updater) and router_updater is not _update_diff_payload:
@@ -50,14 +60,17 @@ def _update_diff_payload_via_router(job_id: int, updates: dict) -> None:
 
 
 def _diff_payload_key(job_id: int) -> str:
+    """Return the namespaced Redis key for a job's request payload."""
     return f"{DIFF_PAYLOAD_KEY_PREFIX}:{job_id}"
 
 
 def _diff_error_key(job_id: int) -> str:
+    """Return the namespaced Redis key for a job's latest resolve error."""
     return f"{DIFF_ERROR_KEY_PREFIX}:{job_id}"
 
 
 def _store_diff_payload(job_id: int, payload: dict) -> None:
+    """Cache a JSON request payload with the standard rollback-state TTL."""
     try:
         r.set(_diff_payload_key(job_id), json.dumps(payload), ex=_DIFF_PAYLOAD_TTL)
     except Exception:
@@ -65,6 +78,7 @@ def _store_diff_payload(job_id: int, payload: dict) -> None:
 
 
 def _load_diff_payload(job_id: int) -> dict | None:
+    """Load a cached request payload, treating cache failures as a miss."""
     try:
         value = r.get(_diff_payload_key(job_id))
         if not value:
@@ -75,6 +89,7 @@ def _load_diff_payload(job_id: int) -> dict | None:
 
 
 def _update_diff_payload(job_id: int, updates: dict) -> None:
+    """Merge fields into an existing cached payload when it still exists."""
     payload = _load_diff_payload(job_id)
     if not payload:
         return
@@ -84,6 +99,7 @@ def _update_diff_payload(job_id: int, updates: dict) -> None:
 
 
 def _append_mw_debug(job_id: int, entry: dict) -> None:
+    """Append one MediaWiki diagnostic entry while bounding payload growth."""
     payload = _load_diff_payload(job_id)
     if not payload:
         return
@@ -93,6 +109,8 @@ def _append_mw_debug(job_id: int, entry: dict) -> None:
         history = []
 
     history.append(entry)
+    # Debug history is operator context, not an audit log.  Bound it so a noisy
+    # API retry loop cannot produce an unbounded Redis value.
     if len(history) > _MW_DEBUG_MAX_ENTRIES:
         history = history[-_MW_DEBUG_MAX_ENTRIES:]
 
@@ -101,6 +119,7 @@ def _append_mw_debug(job_id: int, entry: dict) -> None:
 
 
 def _created_at_to_epoch(created_at_value) -> float | None:
+    """Normalize DB datetime representations to a UTC Unix timestamp."""
     if isinstance(created_at_value, datetime):
         if created_at_value.tzinfo is None:
             return created_at_value.replace(tzinfo=timezone.utc).timestamp()
@@ -119,6 +138,7 @@ def _created_at_to_epoch(created_at_value) -> float | None:
 def _maybe_mark_stale_resolving_job_failed(
     job_id: int, status: str, created_at_value
 ) -> bool:
+    """Fail a resolver abandoned beyond its timeout and report whether changed."""
     if status != "resolving":
         return False
 
@@ -135,6 +155,8 @@ def _maybe_mark_stale_resolving_job_failed(
         "marking failed. Retry the job to re-run resolution."
     )
 
+    # The status guard is a compare-and-set: a late resolver that already moved
+    # the job forward must not be overwritten by a concurrent polling request.
     with _get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -149,6 +171,7 @@ def _maybe_mark_stale_resolving_job_failed(
 
 
 def _set_diff_error(job_id: int, error_message: str | None) -> None:
+    """Set or clear the cache-backed error exposed by polling endpoints."""
     try:
         if error_message:
             r.set(_diff_error_key(job_id), error_message, ex=_DIFF_PAYLOAD_TTL)

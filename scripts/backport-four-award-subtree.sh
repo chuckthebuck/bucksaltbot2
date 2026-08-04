@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Overlay the committed Four Award snapshot into its standalone repository.
+# The dry-run path shows only the module-scoped diff and never pushes.
 set -euo pipefail
 
 REMOTE="${FOUR_AWARD_REMOTE:-https://github.com/chuckthebuck/module4awardhelper.git}"

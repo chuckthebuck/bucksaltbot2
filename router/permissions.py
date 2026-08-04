@@ -1,4 +1,19 @@
-"""User permission checking functions."""
+"""Convert authenticated usernames and policy grants into framework permissions.
+
+Admission and permission callers supply a session-authenticated username; a
+non-empty string is not proof of identity.  Classification helpers may inspect
+other usernames, but do not authenticate them.  This layer applies the framework
+hierarchy on top of the normalized policy assembled by :mod:`router.authz`:
+maintainers receive fixed operational powers, regular users receive expanded
+direct/role grants, and the explicit built-in ``read_only`` group overrides
+positive grants for regular users.  Empty identities, unknown rights, and missing
+role data deny access.
+
+The Redis job-rate limiter lives here because it gates the same submission path,
+but it is not an authorization source.  It deliberately fails open during a
+Redis outage after the caller has passed normal authentication and permission
+checks.
+"""
 
 import sys as _sys
 import time
@@ -20,11 +35,23 @@ from router.authz import (
 
 
 def _r():
-    """Return the router package module (supports test-side patching via router.X)."""
+    """Return the package facade used by legacy imports and test patch points.
+
+    Several dependencies are re-exported from ``router.__init__``.  Resolving
+    those selected values dynamically retains compatibility with existing
+    deployments and tests that replace ``router.X`` rather than this submodule.
+    """
     return _sys.modules.get("router")
 
 
 def is_authorized(username):
+    """Return whether an authenticated identity may enter the application.
+
+    Maintainers bypass runtime admission policy.  Everyone else needs at least
+    one enforceable direct or implicit-role right; an empty/unknown username or a
+    grant group that expands to no rights is denied.  This function does not
+    authenticate the supplied username.
+    """
     if not username:
         return False
 
@@ -38,19 +65,34 @@ def is_authorized(username):
     config = _erc()
 
     if _is_maintainer(username):
+        # Maintainer membership is the framework's trusted operational override
+        # and therefore does not depend on mutable runtime grant rows.
         return True
 
+    # bool(set) intentionally fails closed for unknown users, unresolved custom
+    # groups, and failed Wikimedia membership lookups.
     return bool(_expand_all_grants(config, username))
 
 
 def is_admin_user(username: str) -> bool:
-    """Return True if the user has the Commons sysop (admin) right."""
+    """Return whether a user is currently a Commons ``sysop``.
+
+    This classifies job owners for cancellation policy; it is distinct from an
+    application bot admin or maintainer.  Remote lookup failures yield no groups,
+    so the check itself fails closed.
+    """
     if not username:
         return False
     return "sysop" in get_user_groups(username)
 
 
 def _can_view_runtime_config(username: str) -> bool:
+    """Return whether an identity may inspect runtime authorization policy.
+
+    Bot admins and maintainers may always inspect it.  Other users need either
+    the ``edit_config`` or ``manage_user_grants`` configured right.  Empty users
+    and unavailable role membership resolve to denial.
+    """
     if not username:
         return False
     _router = _r()
@@ -68,6 +110,13 @@ def _can_view_runtime_config(username: str) -> bool:
 
 
 def _can_edit_runtime_config(username: str) -> bool:
+    """Return whether an identity may change the general runtime policy map.
+
+    The configured primary bot account has a dedicated administrative path.
+    Separately, policy may delegate ``edit_config`` explicitly to another user or
+    role.  Merely being a bot admin or maintainer is not enough unless one of
+    those two conditions applies.
+    """
     if not username:
         return False
     _router = _r()
@@ -79,6 +128,12 @@ def _can_edit_runtime_config(username: str) -> bool:
 
 
 def _can_manage_user_grants(username: str) -> bool:
+    """Return whether an identity may assign per-user grant atoms.
+
+    Every bot admin has this capability; other identities need the explicit
+    ``manage_user_grants`` right.  This separation lets policy editing and user
+    assignment be delegated independently.
+    """
     if not username:
         return False
     _router = _r()
@@ -90,6 +145,11 @@ def _can_manage_user_grants(username: str) -> bool:
 
 
 def _user_has_grant_right(username: str, right: str) -> bool:
+    """Check one canonical application-wide right against expanded policy.
+
+    The allowlist check happens before expansion, so typos and module-scoped
+    atoms cannot be smuggled through this generic helper.
+    """
     normalized_right = _normalize_grant_atom(right)
     if normalized_right not in _USER_GRANT_RIGHTS:
         return False
@@ -100,7 +160,13 @@ def _user_has_grant_right(username: str, right: str) -> bool:
 
 
 def is_tester(username: str) -> bool:
-    """Return True if the user has the tester control group."""
+    """Return whether the user is directly assigned the built-in tester group.
+
+    This deliberately checks the stored group atom rather than an equivalent set
+    of expanded rights: the label selects the tester-specific rate-limit tier.
+    Auto grants and unrelated custom groups therefore do not make someone a
+    tester implicitly.
+    """
     if not username:
         return False
     config = _effective_runtime_authz_config()
@@ -112,12 +178,18 @@ def is_tester(username: str) -> bool:
 def _user_permissions(username: str) -> frozenset:
     """Return the set of permission flags for an already-authenticated user.
 
-    User hierarchy (highest → lowest)
-    ----------------------------------
-    bot admin (BOT_ADMIN_ACCOUNTS)   — chuckbot and similar accounts
-    maintainer (Toolhub maintainers) — includes bot admins
-    explicit groups                  — MediaWiki-style rollback control groups
-    auto role grants                 — groups from Commons sysop/rollbacker roles
+    Policy precedence (highest → lowest)
+    -------------------------------------
+    bot-admin addition             — may also cancel maintainers' jobs
+    maintainer powers              — fixed framework operational capabilities
+    built-in read_only group       — strips regular users back to read_own
+    explicit user grants           — rights/groups in ROLLBACK_CONTROL_JSON
+    implicit role grants           — configured Wikimedia project/global groups
+
+    The bot-admin addition is evaluated inside the maintainer branch because bot
+    admins are expected to be maintainers.  Direct and role grants are otherwise
+    additive.  The ``read_only`` group is the one deny-style exception and wins
+    over all positive runtime grants for non-maintainers.
 
     Permission strings (canonical)
     ------------------------------
@@ -130,20 +202,30 @@ def _user_permissions(username: str) -> frozenset:
     rollback_account             — submit account-based rollback requests
     rollback_batch               — submit batch rollback requests
     rollback_diff_dry_run_only   — diff/account rollback access is dry-run only
+    estop_rollback               — trigger the rollback emergency stop
     approve_jobs                 — approve/reject pending requests
     autoapprove_jobs             — auto-approve requests in test mode when enabled
     force_dry_run                — force pending requests into dry-run mode
     cancel_any                   — cancel any non-privileged (regular) user's job
     retry_any                    — retry any user's job
-    edit_config                  — edit runtime config
-    manage_user_grants           — manage user-grant atoms in runtime config
-    cancel_admin_jobs            — cancel a Commons admin (sysop) user's job; all maintainers
-    cancel_maintainer_jobs       — cancel a maintainer's job; only bot admins possess this
+    edit_config                  — configured general-config edit marker
+    manage_user_grants           — configured user-grant management marker
+    manage_modules               — administer modules across the framework
+    run_module_jobs              — run jobs for modules across the framework
+    edit_module_config           — edit configuration across modules
+    module:<module>:<right>       — a module-scoped configured capability
+    cancel_admin_jobs            — cancel a Commons admin's job; maintainers only
+    cancel_maintainer_jobs       — cancel a maintainer's job; bot admins only
     config_view                  — view runtime config editor/API
     config_edit                  — edit runtime config API
 
     Compatibility aliases are also emitted for legacy checks/UI:
     read_all, from_diff, from_diff_dry_run_only, batch.
+
+    Runtime-config routes enforce :func:`_can_view_runtime_config`,
+    :func:`_can_edit_runtime_config`, and :func:`_can_manage_user_grants`
+    directly.  ``config_view`` and ``config_edit`` expose the first two effective
+    outcomes to callers; raw grant markers are not a substitute for route checks.
     """
     if not username:
         return frozenset()
@@ -157,9 +239,15 @@ def _user_permissions(username: str) -> frozenset:
         else _effective_runtime_authz_config
     )
 
+    # Legacy framework-wide grant lookup lowercases the complete session name
+    # before first-letter normalization. This cannot distinguish MediaWiki
+    # usernames that differ only by later capitalization; module-right helpers
+    # that receive the original username do not share this exact lookup path.
     lower = username.lower()
     config = _erc()
 
+    # Authentication alone gives ownership-scoped visibility.  Mutation powers
+    # are derived below and never implied by a non-empty username.
     perms: set = {"read_own"}
 
     if _is_maintainer(username):
@@ -187,14 +275,20 @@ def _user_permissions(username: str) -> frozenset:
             perms.add("cancel_maintainer_jobs")
     else:
         expanded_grants = _expand_all_grants(config, lower)
+        # read_only is a policy override, not an empty grant bundle: returning
+        # early prevents explicit or auto-granted rights from re-enabling writes.
         if "read_only" in _user_group_atoms(config, lower):
             return frozenset({"read_own"})
         perms |= expanded_grants
 
     if "write" in perms:
+        # Submission access entails control of one's own resulting jobs, but not
+        # anyone else's jobs.
         perms |= {"cancel_own", "retry_own"}
 
     if "rollback_diff_dry_run_only" in perms:
+        # The restriction is checked by rollback routes.  These positive rights
+        # still expose the relevant UI/API entry points for dry-run submissions.
         perms |= {"rollback_diff", "rollback_account"}
 
     # Compatibility aliases for existing checks/UI.
@@ -207,6 +301,8 @@ def _user_permissions(username: str) -> frozenset:
     if "rollback_diff_dry_run_only" in perms:
         perms.add("from_diff_dry_run_only")
 
+    # Config-facing flags are derived through their dedicated policy checks so
+    # the UI and API share exactly the same view/edit boundary.
     if _can_view_runtime_config(username):
         perms.add("config_view")
 
@@ -220,6 +316,12 @@ def _user_permissions(username: str) -> frozenset:
 
 
 def _user_group_atoms(config: dict, username: str) -> set[str]:
+    """Return recognized built-in group labels directly assigned to a user.
+
+    This intentionally does not expand aliases, custom groups, or role grants.
+    It exists for label-sensitive policy such as the deny-style ``read_only``
+    override, where an equivalent bundle of positive rights is not sufficient.
+    """
     atoms = set()
     grants_map = config.get("ROLLBACK_CONTROL_JSON") or {}
     for atom in grants_map.get(username.strip().lower(), []):
@@ -241,8 +343,14 @@ def _check_rate_limit(username: str) -> bool:
                   RATE_LIMIT_JOBS_PER_HOUR when unset).
     regular     — checked against RATE_LIMIT_JOBS_PER_HOUR.
 
-    When the applicable limit is 0, rate limiting is disabled for that tier.
-    Fails open on Redis errors so that a Redis outage does not block job submission.
+    When the applicable limit is 0, rate limiting is disabled for that tier.  A
+    Redis ``INCR`` gives each lowercase username an atomic fixed-window counter
+    keyed by Unix-epoch hour.  The first increment attaches a two-hour cleanup
+    TTL, long enough to outlive the active window.
+
+    Redis errors fail open so a state-service outage does not block otherwise
+    authorized job submission.  Authentication and ``write`` authorization must
+    therefore be checked independently before this helper is called.
     """
     # Maintainers are never rate-limited.
     _router = _r()
@@ -262,11 +370,15 @@ def _check_rate_limit(username: str) -> bool:
         return True
 
     hour_bucket = int(time.time() // 3600)
+    # Lowercasing avoids giving one authenticated identity parallel counters via
+    # presentation-case variants.
     key = f"{RATE_LIMIT_KEY_PREFIX}:{username.lower()}:{hour_bucket}"
 
     _router = _r()
     _redis = _router.r if _router else r
     try:
+        # INCR is atomic in Redis, so concurrent submissions cannot all observe
+        # the same pre-increment count.
         count = _redis.incr(key)
         if count == 1:
             # First entry in this bucket — expire after two hours for cleanup.

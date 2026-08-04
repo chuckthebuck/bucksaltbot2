@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Run the reproducible local canary build and its pre-build validation gates.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
@@ -10,6 +11,7 @@ ensure_venv
 require_cmd npm
 
 run_unit_tests() {
+	# Prefer the project runner but retain direct pytest compatibility.
 	# Local runtime safety/dev flags intentionally change application behavior.
 	# Unit tests need framework defaults and provide their own external-service mocks.
 	env \

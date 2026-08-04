@@ -2,9 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Workers do not serve frontend assets, so this image installs only Python and
+# vendored-module dependencies.
 COPY requirements.txt requirements-modules.txt ./
 COPY vendor ./vendor
 RUN pip install -r requirements.txt
+# Refuse to package workers with a stale generated Saltlick registry.
 RUN saltshack-build --check
 
 COPY . .

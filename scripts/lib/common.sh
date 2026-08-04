@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Shared environment, virtualenv, Docker, and service-readiness helpers.
+# Callers source this file; it deliberately performs no setup beyond constants.
 
 set -euo pipefail
 
@@ -6,19 +8,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VENV_DIR="${BUCKBOT_VENV_DIR:-$REPO_ROOT/.venv}"
 
+## Print a consistently prefixed progress message.
 info() {
 	printf '==> %s\n' "$*"
 }
 
+## Print a fatal error and stop the calling script.
 die() {
 	printf 'ERROR: %s\n' "$*" >&2
 	exit 1
 }
 
+## Require one executable to be discoverable on PATH.
 require_cmd() {
 	command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
 }
 
+## Prefer Python 3.11 for the virtualenv; a generic python3 fallback may still
+## be rejected later when the enabled module packages enforce their >=3.11 floor.
 base_python() {
 	if command -v python3.11 >/dev/null 2>&1; then
 		printf 'python3.11\n'
@@ -29,6 +36,7 @@ base_python() {
 	fi
 }
 
+## Return the usable Python interpreter inside the configured virtualenv.
 venv_python() {
 	if [[ -x "$VENV_DIR/bin/python3.11" ]]; then
 		printf '%s/bin/python3.11\n' "$VENV_DIR"
@@ -41,10 +49,12 @@ venv_python() {
 	fi
 }
 
+## Return the pip entry point inside the configured virtualenv.
 venv_pip() {
 	printf '%s/bin/pip\n' "$VENV_DIR"
 }
 
+## Create the configured virtualenv when absent and verify its interpreter.
 ensure_venv() {
 	local python_bin
 	python_bin="$(base_python)"
@@ -55,6 +65,7 @@ ensure_venv() {
 	venv_python >/dev/null
 }
 
+## Export values from an optional local environment file.
 load_local_env() {
 	local env_file="${1:-$REPO_ROOT/.env}"
 	if [[ -f "$env_file" ]]; then
@@ -66,6 +77,7 @@ load_local_env() {
 	fi
 }
 
+## Create/upgrade local config with scoped framework safe-mode defaults.
 prepare_local_env() {
 	if [[ ! -f "$REPO_ROOT/.env" && -f "$REPO_ROOT/.env.example" ]]; then
 		info "Creating .env from .env.example"
@@ -86,6 +98,7 @@ prepare_local_env() {
 	mkdir -p "$REPO_ROOT/data/logs" "$REPO_ROOT/data/pywikibot"
 }
 
+## Prepare configuration, service defaults, and Python for canary commands.
 prepare_canary() {
 	prepare_local_env
 	load_local_env
@@ -93,6 +106,7 @@ prepare_canary() {
 	ensure_venv
 }
 
+## Supply localhost service settings without overriding operator choices.
 apply_local_service_defaults() {
 	export TOOL_REDIS_URI="${TOOL_REDIS_URI:-redis://localhost:6379/0}"
 	export CELERY_BROKER_URL="${CELERY_BROKER_URL:-redis://localhost:6379/9}"
@@ -103,19 +117,23 @@ apply_local_service_defaults() {
 	export TOOL_TOOLSDB_DATABASE="${TOOL_TOOLSDB_DATABASE:-chuckbot_local}"
 }
 
+## Derive the isolated Celery queue from deployment namespace overrides.
 celery_queue_name() {
 	local namespace="${BUCKBOT_REDIS_NAMESPACE:-buckbot}"
 	printf '%s\n' "${BUCKBOT_CELERY_QUEUE:-${namespace}.celery}"
 }
 
+## Run the virtualenv Python without requiring shell activation.
 run_python() {
 	"$(venv_python)" "$@"
 }
 
+## Run the virtualenv pip without requiring shell activation.
 run_pip() {
 	"$(venv_pip)" "$@"
 }
 
+## Print the available Docker Compose command form.
 compose_cmd() {
 	if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
 		printf 'docker compose\n'
@@ -126,10 +144,12 @@ compose_cmd() {
 	fi
 }
 
+## Return whether the Docker CLI can communicate with its daemon.
 docker_daemon_ready() {
 	command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
 }
 
+## Ensure Docker is available, optionally starting Docker Desktop on macOS.
 ensure_docker_daemon() {
 	require_cmd docker
 	if docker_daemon_ready; then
@@ -152,6 +172,7 @@ ensure_docker_daemon() {
 	die "Docker daemon is not running. Start Docker Desktop, or set LOCAL_SERVICES_AUTO_START=0 and provide Redis/MariaDB yourself."
 }
 
+## Wait for a TCP host/port to accept a connection within a deadline.
 wait_for_tcp() {
 	local host="$1"
 	local port="$2"
@@ -178,6 +199,7 @@ raise SystemExit(f"{label} did not become reachable on {host}:{port}")
 PY
 }
 
+## Wait until MariaDB accepts credentials and successfully executes SELECT 1.
 wait_for_mysql() {
 	local host="${TOOL_TOOLSDB_HOST:-127.0.0.1}"
 	local user="${TOOL_TOOLSDB_USER:-user}"
@@ -219,6 +241,7 @@ raise SystemExit(
 PY
 }
 
+## Wait until the configured Redis endpoint successfully answers PING.
 wait_for_redis() {
 	local redis_url="${TOOL_REDIS_URI:-redis://localhost:6379/0}"
 	local timeout_seconds="${1:-30}"
@@ -246,10 +269,12 @@ raise SystemExit(f"Redis did not become ping-ready at {redis_url}: {last_error}"
 PY
 }
 
+## Return whether both required local backing services are query-ready.
 local_services_ready() {
 	wait_for_redis 1 >/dev/null 2>&1 && wait_for_mysql 1 >/dev/null 2>&1
 }
 
+## Print individual Redis and MariaDB readiness diagnostics.
 print_local_service_status() {
 	if wait_for_redis 1 >/dev/null 2>&1; then
 		info "Redis is reachable at ${TOOL_REDIS_URI:-redis://localhost:6379/0}"
@@ -264,6 +289,7 @@ print_local_service_status() {
 	fi
 }
 
+## Verify local services or start their Docker Compose definitions.
 ensure_local_services() {
 	local auto_start="${LOCAL_SERVICES_AUTO_START:-1}"
 	if local_services_ready; then

@@ -1,3 +1,5 @@
+# Rollback is the built-in framework module.  Its blueprint delegates to the
+# established router rather than defining a second worker-job implementation.
 name = "rollback"
 repo = "https://github.com/chuckthebuck/bucksaltbot2"
 entry_point = "modules.rollback.blueprint"

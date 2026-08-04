@@ -1,27 +1,29 @@
-"""Generate Toolforge jobs.yaml entries from module cron registry.
+"""Render the generated-module block for Toolforge ``jobs.yaml``.
 
-This tool reads the module_cron_jobs table and outputs YAML entries
-suitable for inclusion in jobs.yaml. A maintainer should review the output,
-add it to the repo, and push to trigger a Toolforge redeploy.
+The current registry rows are an editing/staging surface; Toolforge schedules
+only the committed ``jobs.yaml``.  A maintainer must replace the contents of its
+``BEGIN/END GENERATED MODULE JOBS`` block with this output, review and commit
+the file, then deploy so the normal wrapper flushes and reloads that committed
+configuration.  Framework-owned jobs outside the markers are never emitted here.
 """
 
 from typing import Any
 
 
 def _escape_bash_string(s: str) -> str:
-    """Escape a string for use in a bash command."""
+    """Escape one value embedded inside a single-quoted Toolforge command."""
     return s.replace("'", "'\\''")
 
 
 def list_module_cron_jobs():
-    """Lazy proxy to avoid a router ↔ jobs_yaml_generator import cycle."""
+    """Read normalized registry jobs without creating a router import cycle."""
     from router.module_registry import list_module_cron_jobs as _list_module_cron_jobs
 
     return _list_module_cron_jobs()
 
 
 def _generate_cron_job_entries() -> list[dict[str, Any]]:
-    """Generate Toolforge job.yaml entries for all enabled module cron jobs."""
+    """Build Toolforge entries for jobs enabled at both job and module level."""
     cron_jobs = list_module_cron_jobs()
     entries: list[dict[str, Any]] = []
 
@@ -50,6 +52,9 @@ def _generate_cron_job_entries() -> list[dict[str, Any]]:
         )
 
         if execution_mode in {"handler", "k8s_job"} and handler:
+            # Both names now use the same isolated module_runner process.  The
+            # outer timeout is deliberately longer so module_runner can record
+            # its own timeout result before Toolforge kills the process.
             supervisor_timeout = timeout_seconds + 10
             run_cmd = (
                 "export NOTDEV=1; "
@@ -92,13 +97,13 @@ def _generate_cron_job_entries() -> list[dict[str, Any]]:
 
 
 def generate_jobs_yaml_section() -> str:
-    """Generate jobs.yaml entries as formatted YAML string."""
+    """Serialize only module-owned Toolforge entries as reviewable YAML."""
     entries = _generate_cron_job_entries()
 
     if not entries:
         return "# No module cron jobs to add\n"
 
-    # Simple YAML generation (compatible with jobs.yaml format)
+    # Keep the emitted field order stable for human review and small Git diffs.
     lines: list[str] = []
     for entry in entries:
         lines.append("- name: " + entry["name"])

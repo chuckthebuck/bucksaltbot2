@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block content %}
 
+{# Non-bundled modules declare package resources that the framework serves explicitly. #}
 {% for style_url in style_urls %}
 <link rel="stylesheet" href="{{ style_url }}">
 {% endfor %}
@@ -12,6 +13,7 @@
 {% endif %}
 
 <script id="{{ props_id }}" type="application/json">
+{# JSON, rather than executable inline JavaScript, is the module's server/client boundary. #}
 {{ props|tojson }}
 </script>
 {% if script_url %}

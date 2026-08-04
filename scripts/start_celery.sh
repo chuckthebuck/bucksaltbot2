@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Start the worker on this deployment's isolated queue with registered tasks.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

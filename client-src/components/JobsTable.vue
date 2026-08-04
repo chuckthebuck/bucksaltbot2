@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// Compact reusable view for current-user rollback jobs and their actions.
 import { ref } from "vue";
 import { CdxButton, CdxProgressBar } from "@wikimedia/codex";
 import { cancelJob, fetchJobDetails, retryJob } from "../api";
@@ -41,6 +42,7 @@ const details = ref<Record<number, string>>({});
 const openRows = ref<Record<number, boolean>>({});
 
 function esc(s: unknown): string {
+  /** Escape backend values before placing the assembled details into v-html. */
   return String(s)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -48,6 +50,7 @@ function esc(s: unknown): string {
 }
 
 async function toggle(id: number) {
+  /** Lazily fetch and toggle expanded item details for one job. */
   if (openRows.value[id]) {
     openRows.value[id] = false;
     return;
@@ -56,6 +59,8 @@ async function toggle(id: number) {
   const d = await fetchJobDetails(id);
   const isDryRun = !!((d as { dry_run?: boolean; dryRun?: boolean }).dry_run ??
     (d as { dry_run?: boolean; dryRun?: boolean }).dryRun);
+  // Every interpolated backend value is escaped above/below; only the fixed
+  // formatting tags are interpreted by the template's v-html binding.
   details.value[id] = `
     <b>Status:</b> ${esc(d.status)}<br>
     <b>Mode:</b> ${isDryRun ? "Dry run" : "Live"}<br>
@@ -68,12 +73,14 @@ async function toggle(id: number) {
 }
 
 async function onRetry(id: number) {
+  /** Confirm and request a retry before asking the parent to refresh. */
   if (!confirm(`Retry job ${id}?`)) return;
   await retryJob(id);
   emit("job-updated");
 }
 
 async function onCancel(id: number) {
+  /** Confirm and request cancellation before asking the parent to refresh. */
   if (!confirm(`Cancel job ${id}?`)) return;
   await cancelJob(id, props.token);
   emit("job-updated");
@@ -146,11 +153,13 @@ const columns: TableColumn<UiJob>[] = [
 ];
 
 function isExpandedRow(row: unknown): boolean {
+  /** Adapt generic table rows to this component's expansion state. */
   const id = (row as UiJob).id;
   return Boolean(openRows.value[id]);
 }
 
 function detailsHtml(row: unknown): string {
+  /** Return the already escaped details fragment for an expanded row. */
   const id = (row as UiJob).id;
   return details.value[id] || "";
 }

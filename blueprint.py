@@ -1,3 +1,5 @@
+"""Expose Vite development and production asset URLs to Jinja templates."""
+
 import json
 import os
 from pathlib import Path
@@ -10,16 +12,17 @@ VITE_ORIGIN = os.getenv("VITE_ORIGIN", "http://localhost:5173")
 is_production = FLASK_DEBUG != "1"
 project_path = Path(__file__).parent
 
-# ✅ REMOVE static_folder config
+# Flask's built-in static route owns static/dist; this blueprint contributes only
+# template helpers and therefore needs no separate static-folder configuration.
 assets_blueprint = Blueprint(
     "assets_blueprint",
     __name__,
 )
 
 
-# ✅ FIXED manifest path
 @lru_cache()
 def load_manifest():
+    """Load the Vite build manifest once, returning empty metadata before build."""
     manifest_path = project_path / "static/dist/.vite/manifest.json"
     try:
         with open(manifest_path, "r") as f:
@@ -31,14 +34,16 @@ def load_manifest():
 manifest = load_manifest()
 
 
-# ✅ Context helpers
 @assets_blueprint.app_context_processor
 def add_context():
+    """Install environment-aware JavaScript/CSS asset helpers in Jinja."""
 
     def dev_asset(file_path):
+        """Point an asset request at the Vite development server."""
         return f"{VITE_ORIGIN}/{file_path}"
 
     def prod_asset(file_path):
+        """Resolve a source entry to its hashed production bundle."""
         entry = manifest.get(file_path)
 
         if entry and entry.get("file"):
@@ -47,6 +52,7 @@ def add_context():
         return f"/static/dist/{file_path}"
 
     def prod_css(file_path):
+        """Return every CSS bundle emitted for a production entry."""
         entry = manifest.get(file_path)
 
         if entry and entry.get("css"):

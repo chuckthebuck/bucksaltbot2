@@ -24,6 +24,7 @@ _WEEKDAYS = {
 
 
 def _parse_time(value: str) -> tuple[int, int]:
+    """Parse strict 24-hour ``HH:MM`` text into hour and minute integers."""
     match = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", value.strip())
     if not match:
         raise ValueError("time must be HH:MM in 24-hour time")
@@ -34,8 +35,8 @@ def human_schedule_to_cron(schedule_text: str) -> str:
     """Convert the supported human schedule grammar to a cron expression.
 
     The grammar is intentionally small so module authors do not need cron
-    training, while the framework still produces deterministic Toolforge/K8s
-    schedules:
+    training, while the framework still produces deterministic cron expressions
+    for generated Toolforge job definitions:
 
     - every N minutes
     - every N hours

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Pull the selected framework revision, build it on Toolforge, and restart jobs.
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$HOME}"

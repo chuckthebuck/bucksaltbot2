@@ -23,6 +23,7 @@ export interface TableColumn<T = unknown> {
   noWrap?: boolean;
 }
 
+/** Build a compact action column with shared alignment and visibility defaults. */
 export function actionColumn<T = unknown>(
   key: string,
   label: string,

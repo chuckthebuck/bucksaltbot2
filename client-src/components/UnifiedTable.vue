@@ -1,4 +1,6 @@
 <script setup lang="ts">
+// Generic table renderer shared by rollback, authorization, and module pages.
+// Callers provide inert render descriptions; this component owns Vue rendering.
 import { computed, useSlots } from "vue";
 import type { TableCellComponent, TableCellRenderable, TableColumn } from "./unifiedTable";
 
@@ -14,6 +16,8 @@ const props = defineProps<{
 const slots = useSlots();
 
 const visibleColumns = computed(() =>
+  // A conditional column remains visible if it applies to any current row,
+  // preventing headers from shifting independently row by row.
   props.columns.filter((col) => {
     if (!col.visible) return true;
     return props.rows.some((row) => col.visible!(row));
@@ -23,6 +27,7 @@ const visibleColumns = computed(() =>
 const hasExpandedSlot = computed(() => Boolean(slots.expanded));
 
 function rowKeyFor(row: unknown, idx: number): string | number {
+  /** Resolve a stable caller key and fall back to position for malformed rows. */
   if (typeof props.rowKey === "function") return props.rowKey(row, idx);
 
   if (row && typeof row === "object") {
@@ -38,6 +43,7 @@ function rowKeyFor(row: unknown, idx: number): string | number {
 function asItems(
   value: TableCellRenderable | TableCellRenderable[]
 ): TableCellRenderable[] {
+  /** Normalize scalar and optional cell output into one renderable list. */
   if (Array.isArray(value)) {
     return value.filter((item) => item !== null && item !== undefined);
   }
@@ -50,14 +56,17 @@ function asItems(
 }
 
 function cellItems(col: TableColumn<any>, row: unknown): TableCellRenderable[] {
+  /** Evaluate and normalize one caller-defined cell renderer. */
   return asItems(col.render(row));
 }
 
 function isComponentCell(item: TableCellRenderable): item is TableCellComponent {
+  /** Narrow a cell description before passing it to Vue's dynamic component. */
   return Boolean(item && typeof item === "object" && "component" in item);
 }
 
 function cellClass(col: TableColumn<any>, row: unknown): string | undefined {
+  /** Resolve static or row-dependent cell class metadata. */
   if (typeof col.class === "function") {
     return col.class(row);
   }
@@ -66,6 +75,7 @@ function cellClass(col: TableColumn<any>, row: unknown): string | undefined {
 }
 
 function cellStyle(col: TableColumn<any>): Record<string, string> {
+  /** Convert alignment/width metadata into Vue style bindings. */
   return {
     ...(col.align ? { textAlign: col.align } : {}),
     ...(col.width ? { width: col.width } : {}),
@@ -73,6 +83,7 @@ function cellStyle(col: TableColumn<any>): Record<string, string> {
 }
 
 function headerStyle(col: TableColumn<any>): Record<string, string> {
+  /** Keep an explicitly sized header aligned with its body cells. */
   return col.width ? { width: col.width } : {};
 }
 </script>

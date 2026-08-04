@@ -1,3 +1,10 @@
+"""Persist chunked File Changer jobs and expose best-effort live progress.
+
+ToolsDB rows are the durable source of truth for jobs, target items, results,
+ownership, and terminal status. Redis mirrors compact progress with a TTL so a
+cache outage never loses or fails an otherwise durable batch.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,28 +14,36 @@ from typing import Any
 from .service import run_file_change, targets_from_payload
 
 
+# Chunking bounds one worker invocation while keeping the complete batch linked
+# by a shared millisecond batch ID.  The API retains its historical 500-item
+# clamp, but ``process_file_change_job`` currently calls the service without a
+# context, so the service's 100-page default is the safe operational ceiling.
 DEFAULT_CHUNK_SIZE = 100
 MAX_CHUNK_SIZE = 500
 TERMINAL_STATUSES = {"completed", "failed", "canceled"}
 
 
 def progress_key(job_id: int) -> str:
+    """Return the module-owned Redis key for one durable job ID."""
     return f"chuck_file_changer:job:{int(job_id)}"
 
 
 def _redis_client():
+    """Import the framework Redis client lazily for standalone testability."""
     from redis_state import r as redis_client
 
     return redis_client
 
 
 def _get_conn():
+    """Import the framework ToolsDB connection factory only when needed."""
     from toolsdb import get_conn
 
     return get_conn()
 
 
 def _set_progress(job_id: int, payload: dict[str, Any], ttl: int = 86400) -> None:
+    """Write expiring progress without making Redis a job-success dependency."""
     try:
         _redis_client().set(progress_key(job_id), json.dumps(payload), ex=ttl)
     except Exception:
@@ -36,6 +51,7 @@ def _set_progress(job_id: int, payload: dict[str, Any], ttl: int = 86400) -> Non
 
 
 def get_progress(job_id: int) -> dict[str, Any] | None:
+    """Read optional Redis progress, returning ``None`` on absence or failure."""
     try:
         raw = _redis_client().get(progress_key(job_id))
         if not raw:
@@ -46,6 +62,12 @@ def get_progress(job_id: int) -> dict[str, Any] | None:
 
 
 def _chunk_size(payload: dict[str, Any]) -> int:
+    """Coerce request chunk size into the accepted compatibility range.
+
+    Values above 100 are accepted by the API but are not fully processed by the
+    current context-free queue worker; operator documentation therefore caps
+    supported use at 100 until that execution boundary is fixed.
+    """
     try:
         requested = int(payload.get("chunk_size") or DEFAULT_CHUNK_SIZE)
     except (TypeError, ValueError):
@@ -54,6 +76,12 @@ def _chunk_size(payload: dict[str, Any]) -> int:
 
 
 def enqueue_file_change_batch(payload: dict[str, Any], *, username: str) -> dict[str, Any]:
+    """Resolve/dedupe targets and atomically persist every batch chunk.
+
+    Job and item rows are committed together before task dispatch. Each chunk
+    stores the original payload plus its own normalized item rows; workers later
+    rebuild input from those rows rather than resolving a changing source again.
+    """
     targets, source_url = targets_from_payload(payload)
     if not targets:
         raise ValueError("No targets found")
@@ -66,6 +94,8 @@ def enqueue_file_change_batch(payload: dict[str, Any], *, username: str) -> dict
     apply_requested = bool(payload.get("apply", False))
 
     with _get_conn() as conn:
+        # One transaction prevents a partially inserted multi-chunk batch from
+        # being dispatched or presented as complete.
         with conn.cursor() as cursor:
             for index in range(0, len(targets), chunk_size):
                 chunk = targets[index : index + chunk_size]
@@ -120,6 +150,8 @@ def enqueue_file_change_batch(payload: dict[str, Any], *, username: str) -> dict
                     )
         conn.commit()
 
+    # Redis starts only after the durable commit. A failed cache write is safe
+    # because get_file_change_job can still return SQL status and results.
     for job_id in job_ids:
         _set_progress(
             job_id,
@@ -144,6 +176,7 @@ def enqueue_file_change_batch(payload: dict[str, Any], *, username: str) -> dict
 
 
 def get_file_change_job(job_id: int) -> dict[str, Any] | None:
+    """Load one durable job, ordered items, result, and optional progress."""
     with _get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -172,6 +205,8 @@ def get_file_change_job(job_id: int) -> dict[str, Any] | None:
             )
             item_rows = cursor.fetchall()
 
+    # ``run_id``/``triggered_by`` aliases keep this module compatible with the
+    # framework's generic run UI while retaining its native job schema names.
     result = json.loads(row[8] or "{}")
     progress = get_progress(int(row[0]))
     return {
@@ -215,6 +250,7 @@ def _update_job_status(
     result: dict[str, Any] | None = None,
     error: str | None = None,
 ) -> None:
+    """Durably replace job status and optional terminal result/error fields."""
     with _get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -234,6 +270,11 @@ def _update_job_status(
 
 
 def _update_item(job_id: int, item: dict[str, Any]) -> None:
+    """Persist one planned item outcome and increment its attempt counter.
+
+    The target parsers de-duplicate titles before queue insertion, so
+    ``job_id`` plus normalized page title identifies one row within a chunk.
+    """
     with _get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -255,7 +296,10 @@ def _update_item(job_id: int, item: dict[str, Any]) -> None:
 
 
 def _targets_payload_for_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild execution payload from frozen item rows, preserving source URL."""
     payload = dict(job.get("payload") or {})
+    # Explicit targets take precedence in ``targets_from_payload``. This avoids
+    # refetching Quarry/Commons sources whose membership may have changed.
     payload["targets"] = [
         {
             "title": item["title"],
@@ -269,10 +313,21 @@ def _targets_payload_for_job(job: dict[str, Any]) -> dict[str, Any]:
 
 
 def process_file_change_job(job_id: int) -> None:
+    """Run one durable chunk and persist item/result/progress outcomes.
+
+    The task queue dispatches one worker task per ID. The terminal-status guard
+    makes late redelivery a no-op; the initial read/``running`` transition is a
+    durable status claim, not a database compare-and-swap concurrency lock.
+    Item-level failures produce a completed job with failure counts, while an
+    exception escaping the chunk marks the whole job failed. The context-free
+    service call below also means only its default first 100 targets are
+    processed; callers must currently keep durable chunks at or below 100.
+    """
     job = get_file_change_job(int(job_id))
     if job is None or job["status"] in TERMINAL_STATUSES:
         return
 
+    # Record the durable running transition before any Commons read or write.
     _update_job_status(job_id, "running")
     _set_progress(
         job_id,
@@ -288,6 +343,8 @@ def process_file_change_job(job_id: int) -> None:
         result = run_file_change(payload=_targets_payload_for_job(job))
         completed = 0
         failed = 0
+        # ``run_file_change`` returns after processing the chunk. Persist each
+        # outcome and advance the best-effort progress mirror deterministically.
         for item in result.get("items", []):
             _update_item(job_id, item)
             if item.get("status") == "error":
@@ -304,6 +361,8 @@ def process_file_change_job(job_id: int) -> None:
                 },
             )
 
+        # Per-item errors are represented inside a successfully completed job;
+        # only a chunk-level exception uses the durable ``failed`` state.
         final_status = "completed"
         _update_job_status(job_id, final_status, result=result)
         _set_progress(

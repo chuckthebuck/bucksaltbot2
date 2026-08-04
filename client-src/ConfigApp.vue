@@ -1,4 +1,13 @@
 <script setup lang="ts">
+/**
+ * Runtime authorization configuration and user-grant editor.
+ *
+ * This surface maintains several synchronized views of the same server config:
+ * guided checkboxes, human-readable summaries, and bulk JSON editors. User grants
+ * have their own immediate-save endpoint; group/role/rate-limit edits remain local
+ * until the page-level save. Client capability flags only hide or disable controls
+ * and never replace authorization in either API.
+ */
 import { computed, onMounted, ref } from "vue";
 import { CdxButton, CdxField, CdxLookup, CdxMessage } from "@wikimedia/codex";
 import UnifiedTable from "./components/UnifiedTable.vue";
@@ -77,6 +86,8 @@ interface GrantAdvisory {
   detail: string;
 }
 
+// These field catalogs are the UI schema: labels, help text, and table ordering.
+// The API's recognized atoms and authorization checks remain authoritative.
 const userGrantGroupFields: Array<{ key: GrantGroupKey; label: string; help: string }> = [
   { key: "basic", label: "Basic submitter", help: "Can submit and manage their own rollback queue jobs." },
   { key: "read_only", label: "Read only", help: "Can only view their own jobs." },
@@ -100,10 +111,20 @@ const userGrantGroupFields: Array<{ key: GrantGroupKey; label: string; help: str
   },
   { key: "config_editor", label: "Config editor", help: "Can edit runtime access configuration." },
   { key: "rights_manager", label: "Rights manager", help: "Can manage framework groups for users." },
-  { key: "module_operator", label: "Module operator", help: "Can manage modules and module jobs." },
-  { key: "admin", label: "Administrator", help: "Broad rollback, jobs, and config rights." },
+  {
+    key: "module_operator",
+    label: "Module operator",
+    help: "Full authority over every module, including sensitive live-apply rights.",
+  },
+  {
+    key: "admin",
+    label: "Administrator",
+    help: "Broad rollback, jobs, config, user-grant, and full module authority.",
+  },
 ];
 
+// Built-in expansion supports effective-right previews and supplies defaults when
+// a built-in framework group has no runtime override.
 const builtInFrameworkGroupRights: Record<GrantGroupKey, GrantRightKey[]> = {
   basic: ["write"],
   read_only: [],
@@ -136,6 +157,7 @@ const builtInFrameworkGroupRights: Record<GrantGroupKey, GrantRightKey[]> = {
   ],
 };
 
+// Direct rights are grouped for presentation only; submitted payloads are flat atoms.
 const userGrantRightSections: Array<{
   title: string;
   fields: Array<{ key: GrantRightKey; label: string; help: string }>;
@@ -187,7 +209,11 @@ const userGrantRightSections: Array<{
         label: "Manage user rights",
         help: "Manage user-specific rights and framework groups.",
       },
-      { key: "manage_modules", label: "Manage modules", help: "Enable, disable, and emergency-stop modules." },
+      {
+        key: "manage_modules",
+        label: "Manage modules",
+        help: "Full authority over every module right, including sensitive live actions.",
+      },
       { key: "run_module_jobs", label: "Run module jobs", help: "Run or restart module jobs." },
       { key: "edit_module_config", label: "Edit module config", help: "Edit non-secret module configuration." },
     ],
@@ -228,6 +254,7 @@ const numberFields: Array<{ key: NumberConfigKey; label: string; help: string }>
 const groupLabelByKey = new Map(userGrantGroupFields.map((field) => [field.key, field.label]));
 const rightLabelByKey = new Map(userGrantRightFields.map((field) => [field.key, field.label]));
 
+/** Turn persisted atom syntax into a readable fallback label. */
 function titleCaseAtom(value: string): string {
   return value
     .replace(/^module:/, "")
@@ -237,19 +264,23 @@ function titleCaseAtom(value: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+/** Prefer product spelling for known modules, with a generic atom fallback. */
 function friendlyModuleLabel(moduleName: string): string {
   if (moduleName === "four_award") return "Four Award";
   return titleCaseAtom(moduleName);
 }
 
+/** Resolve a framework group label, including runtime-defined groups. */
 function friendlyGroupLabel(group: string): string {
   return groupLabelByKey.get(group as GrantGroupKey) || titleCaseAtom(group);
 }
 
+/** Resolve a framework right label, including forward-compatible unknown atoms. */
 function friendlyRightLabel(right: string): string {
   return rightLabelByKey.get(right as GrantRightKey) || titleCaseAtom(right);
 }
 
+/** Explain built-in, project, and global implicit role identifiers. */
 function friendlyRoleLabel(role: string): string {
   if (role === "authenticated") return "Any logged-in user";
   if (role === "commons_admin") return "Commons administrators";
@@ -264,6 +295,7 @@ function friendlyRoleLabel(role: string): string {
   return titleCaseAtom(role);
 }
 
+/** Format a ``module:<name>:<right>`` atom without changing its stored value. */
 function friendlyModuleRightLabel(atom: string): string {
   const parts = atom.split(":");
   if (parts.length === 3 && parts[0] === "module") {
@@ -272,6 +304,7 @@ function friendlyModuleRightLabel(atom: string): string {
   return titleCaseAtom(atom);
 }
 
+/** Route any persisted grant atom to the appropriate display formatter. */
 function friendlyAtomLabel(atom: string): string {
   if (atom.startsWith("group:")) {
     return `Group: ${friendlyGroupLabel(atom.slice("group:".length))}`;
@@ -282,6 +315,12 @@ function friendlyAtomLabel(atom: string): string {
   return friendlyRightLabel(atom);
 }
 
+/**
+ * Parse server-rendered bootstrap hints defensively.
+ *
+ * The subsequent config fetch replaces these provisional capabilities with the
+ * endpoint's current ``can_edit`` and ``can_manage_user_grants`` values.
+ */
 function parseInitialProps(): ConfigInitialProps {
   const el = document.getElementById("runtime-config-props");
   if (!el?.textContent) {
@@ -307,6 +346,8 @@ function parseInitialProps(): ConfigInitialProps {
 
 const initialProps = parseInitialProps();
 
+// Page lifecycle and server-advertised editor gates. The two permissions are
+// distinct after load even though the bootstrap uses edit-config as a fallback.
 const loading = ref(true);
 const saving = ref(false);
 const errorMessage = ref("");
@@ -318,6 +359,8 @@ const moduleRights = ref<Record<string, string[]>>({});
 const projectGroupOptions = ref<Record<string, string[]>>({});
 const globalGroupOptions = ref<string[]>([]);
 
+// Canonical in-memory config submitted by saveConfig. Object members are copied
+// on load so structured editors never mutate a retained response object.
 const config = ref<RuntimeAuthzConfig>({
   ROLLBACK_CONTROL_JSON: {},
   ROLE_GRANTS_JSON: {
@@ -330,16 +373,22 @@ const config = ref<RuntimeAuthzConfig>({
   RATE_LIMIT_TESTER_JOBS_PER_HOUR: 0,
 });
 
+// Advanced JSON text is intentionally separate from ``config`` so users may hold
+// incomplete or invalid text while editing; parsing happens at the save boundary.
 const grantsJsonText = ref("{}");
 const groupsJsonText = ref("{}");
 const groupDescriptionsJsonText = ref("{}");
 const autoGrantsJsonText = ref("{}");
 
+// Username suggestions are request-versioned so a slow old lookup cannot replace
+// results for newer input.
 const userSearchLookupItems = ref<Array<{ label: string; value: string }>>([]);
 const userSearchSelected = ref<string | number | null>(null);
 const userSearchInputValue = ref("");
 const userSearchRequestId = ref(0);
 
+// User-grant state comes from a separate per-user endpoint and includes live wiki
+// membership snapshots used to explain implicit grant eligibility.
 const selectedGrantUser = ref("");
 const userGrantLoaded = ref(false);
 const userGrantSaving = ref(false);
@@ -360,12 +409,15 @@ const newFrameworkGroup = ref("");
 const newFrameworkGroupDescription = ref("");
 const selectedFrameworkGroupDescription = ref("");
 
+// Implicit flags are server-derived, read-only facts; saving explicit grants does
+// not modify Wikimedia project or global group membership.
 const implicitFlags = ref<Record<ImplicitFlagKey, boolean>>({
   authenticated: false,
   commons_admin: false,
   commons_rollbacker: false,
 });
 
+/** Return a fresh built-in group selection map for an editor projection. */
 function emptyGroupChecks(): Record<GrantGroupKey, boolean> {
   return {
     basic: false,
@@ -383,6 +435,7 @@ function emptyGroupChecks(): Record<GrantGroupKey, boolean> {
   };
 }
 
+/** Return a fresh direct-right selection map. */
 function emptyRightChecks(): Record<GrantRightKey, boolean> {
   return {
     view_all: false,
@@ -405,6 +458,8 @@ function emptyRightChecks(): Record<GrantRightKey, boolean> {
   };
 }
 
+// Each editor owns an independent checkbox projection. Changing an auto-grant
+// role or framework group must not alter the currently loaded user's draft.
 const userGroupChecks = ref<Record<string, boolean>>(emptyGroupChecks());
 const userRightChecks = ref<Record<GrantRightKey, boolean>>(emptyRightChecks());
 const autoGrantGroupChecks = ref<Record<string, boolean>>(emptyGroupChecks());
@@ -413,6 +468,8 @@ const autoGrantModuleRightChecks = ref<Record<string, boolean>>({});
 const frameworkGroupRightChecks = ref<Record<GrantRightKey, boolean>>(emptyRightChecks());
 const frameworkGroupModuleRightChecks = ref<Record<string, boolean>>({});
 
+// Table rows combine static right metadata with runtime-defined roles/groups so
+// configured identities remain visible alongside the built-in catalogs.
 const rightRows = computed<ToggleFieldRow<GrantRightKey>[]>(() =>
   buildSectionedToggleRows(userGrantRightSections)
 );
@@ -495,6 +552,8 @@ const implicitFlagStatusRows = computed(() =>
   }))
 );
 
+// Checkbox columns share capability-aware disabled callbacks. Disabling a control
+// improves the editor UX; the corresponding API still enforces the same right.
 const groupColumns: TableColumn<ToggleFieldRow<string>>[] = [
   toggleLabelColumn("Group"),
   toggleHelpColumn("Description"),
@@ -552,14 +611,17 @@ const autoRightColumns: TableColumn<ToggleFieldRow<GrantRightKey>>[] = [
   ),
 ];
 
+/** Return the presentation rows belonging to one direct-right section. */
 function rightsRowsForSection(sectionTitle: string): ToggleFieldRow<GrantRightKey>[] {
   return filterToggleRowsBySection(rightRows.value, sectionTitle);
 }
 
+/** Limit the role summary table to the currently edited implicit role. */
 function autoGrantRoleRowsForSelected(): ToggleFieldRow<AutoGrantRoleKey>[] {
   return autoGrantRoleRows.value.filter((row) => row.key === selectedAutoGrantRole.value);
 }
 
+/** Test whether a stored role belongs to the selected built-in/project/global filter. */
 function autoGrantRoleMatchesSelection(role: string): boolean {
   if (selectedAutoGrantSource.value === "built_in") {
     return role === "authenticated";
@@ -577,6 +639,7 @@ function autoGrantRoleMatchesSelection(role: string): boolean {
   return parts.length === 3 && parts[0] === "project" && parts[1] === selectedProject;
 }
 
+/** Select the first role visible under the active source filter, if one exists. */
 function selectFirstVisibleAutoGrantRole(): void {
   const first = filteredAutoGrantRoleFields.value[0]?.key;
   if (!first) return;
@@ -584,12 +647,15 @@ function selectFirstVisibleAutoGrantRole(): void {
   loadSelectedAutoGrantRoleChecks();
 }
 
+/** Keep selection valid when source/project filtering removes the current role. */
 function syncSelectedAutoGrantRoleVisibility(): void {
   if (!filteredAutoGrantRoleFields.value.some((field) => field.key === selectedAutoGrantRole.value)) {
     selectFirstVisibleAutoGrantRole();
   }
 }
 
+// Module rights are declared by modules at runtime and stored as fully qualified
+// atoms so names cannot collide with framework-global rights.
 const autoGrantModuleRightRows = computed(() => {
   const rows: Array<{ key: string; label: string; help: string; moduleName: string }> = [];
   for (const [moduleName, rights] of Object.entries(moduleRights.value)) {
@@ -653,10 +719,12 @@ const frameworkGroupModuleRightColumns: TableColumn<{ key: string; label: string
   ),
 ];
 
+/** Return the one-row identity table for the framework group being edited. */
 function frameworkGroupRowsForSelected(): ToggleFieldRow<string>[] {
   return frameworkGroupRows.value.filter((row) => row.key === selectedFrameworkGroup.value);
 }
 
+/** Convert direct-right checkboxes into a set for union/diagnostic operations. */
 function checkedRights(checks: Record<GrantRightKey, boolean>): Set<GrantRightKey> {
   return new Set(
     userGrantRightFields
@@ -665,6 +733,7 @@ function checkedRights(checks: Record<GrantRightKey, boolean>): Set<GrantRightKe
   );
 }
 
+/** Expand selected built-in groups into their effective global framework rights. */
 function expandCheckedGroups(checks: Record<string, boolean>): Set<GrantRightKey> {
   const rights = new Set<GrantRightKey>();
   for (const field of userGrantGroupFields) {
@@ -676,6 +745,10 @@ function expandCheckedGroups(checks: Record<string, boolean>): Set<GrantRightKey
   return rights;
 }
 
+/**
+ * Produce non-blocking warnings for combinations that deserve human review.
+ * Advisories explain risk only; they neither grant rights nor prevent submission.
+ */
 function collectGrantAdvisories(rights: Set<GrantRightKey>): GrantAdvisory[] {
   const advisories: GrantAdvisory[] = [];
   const hasAnyRequestRight = [
@@ -753,6 +826,8 @@ const selectedFrameworkGroupAdvisories = computed(() =>
   collectGrantAdvisories(checkedRights(frameworkGroupRightChecks.value))
 );
 
+// The loaded-user summaries deliberately separate stored group/direct atoms from
+// their client-side effective-right expansion so reviewers can inspect both.
 const selectedUserGroups = computed(() =>
   groupRows.value
     .filter((field) => userGroupChecks.value[field.key])
@@ -780,14 +855,17 @@ const selectedUserGrantAtomsPreview = computed(() => [
   ...selectedUserDirectRights.value,
 ]);
 
+/** Format a readable group list while retaining a meaningful empty state. */
 function summarizeGroups(values: string[], emptyText: string): string {
   return values.length ? values.map(friendlyGroupLabel).join(", ") : emptyText;
 }
 
+/** Format a readable right list while retaining a meaningful empty state. */
 function summarizeRights(values: string[], emptyText: string): string {
   return values.length ? values.map(friendlyRightLabel).join(", ") : emptyText;
 }
 
+/** Reset all projections before loading another role's stored atoms. */
 function clearAutoGrantChecks(): void {
   autoGrantGroupChecks.value = Object.fromEntries(
     groupRows.value.map((row) => [row.key, false]),
@@ -798,6 +876,10 @@ function clearAutoGrantChecks(): void {
   );
 }
 
+/**
+ * Materialize the current role checkboxes into ``ROLE_GRANTS_JSON`` and its text
+ * mirror. This is local draft persistence; saveConfig performs the API write.
+ */
 function persistSelectedAutoGrantRoleChecks(): void {
   const role = selectedAutoGrantRole.value;
   const atoms: string[] = [];
@@ -831,6 +913,7 @@ function persistSelectedAutoGrantRoleChecks(): void {
   autoGrantsJsonText.value = JSON.stringify(next, null, 2);
 }
 
+/** Rebuild auto-grant checkbox projections from the selected role's atom list. */
 function loadSelectedAutoGrantRoleChecks(): void {
   clearAutoGrantChecks();
   const role = selectedAutoGrantRole.value;
@@ -857,6 +940,7 @@ function loadSelectedAutoGrantRoleChecks(): void {
   }
 }
 
+/** Preserve the previous role draft before switching the editor projection. */
 function onSelectedAutoGrantRoleChange(event: Event): void {
   persistSelectedAutoGrantRoleChecks();
   const target = event.target as HTMLSelectElement | null;
@@ -865,16 +949,19 @@ function onSelectedAutoGrantRoleChange(event: Event): void {
   loadSelectedAutoGrantRoleChecks();
 }
 
+/** Preserve the current draft, then repair selection after changing source type. */
 function onSelectedAutoGrantSourceChange(): void {
   persistSelectedAutoGrantRoleChecks();
   syncSelectedAutoGrantRoleVisibility();
 }
 
+/** Preserve the current draft, then repair selection after changing project. */
 function onSelectedAutoGrantProjectChange(): void {
   persistSelectedAutoGrantRoleChecks();
   syncSelectedAutoGrantRoleVisibility();
 }
 
+/** Describe the live identity source represented by an implicit role. */
 function autoGrantRoleHelp(role: string): string {
   if (role === "authenticated") return "Any logged-in user.";
   if (role === "commons_admin") return "Users in Commons sysop group.";
@@ -889,10 +976,12 @@ function autoGrantRoleHelp(role: string): string {
   return "Custom auto-grant role.";
 }
 
+/** Canonicalize user-entered role components for persisted atom syntax. */
 function normalizeRolePart(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, "_");
 }
 
+/** Add an empty project/global role to the local config draft and select it. */
 function addAutoGrantRole(): void {
   persistSelectedAutoGrantRoleChecks();
   const group = normalizeRolePart(newAutoGrantGroup.value);
@@ -923,6 +1012,7 @@ function addAutoGrantRole(): void {
   successMessage.value = `Added auto-grant role ${friendlyRoleLabel(role)}.`;
 }
 
+/** Remove the selected custom role from the local config draft. */
 function removeSelectedAutoGrantRole(): void {
   const role = selectedAutoGrantRole.value;
   const next = { ...(config.value.ROLE_GRANTS_JSON || {}) };
@@ -932,14 +1022,17 @@ function removeSelectedAutoGrantRole(): void {
   syncSelectedAutoGrantRoleVisibility();
 }
 
+/** Canonicalize a user-entered framework group name for persisted keys. */
 function normalizeFrameworkGroupName(value: string): string {
   return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
 
+/** Built-ins may be overridden but cannot be removed from the UI catalog. */
 function frameworkGroupIsBuiltIn(group: string): boolean {
   return userGrantGroupFields.some((field) => field.key === group);
 }
 
+/** Mirror one custom description into the config draft and Advanced JSON text. */
 function persistSelectedFrameworkGroupDescription(): void {
   const group = normalizeFrameworkGroupName(String(selectedFrameworkGroup.value));
   if (!group || frameworkGroupIsBuiltIn(group)) return;
@@ -957,6 +1050,7 @@ function persistSelectedFrameworkGroupDescription(): void {
   groupDescriptionsJsonText.value = JSON.stringify(descriptions, null, 2);
 }
 
+/** Reset global and module-right projections before loading another group. */
 function clearFrameworkGroupChecks(): void {
   frameworkGroupRightChecks.value = emptyRightChecks();
   frameworkGroupModuleRightChecks.value = Object.fromEntries(
@@ -964,6 +1058,10 @@ function clearFrameworkGroupChecks(): void {
   );
 }
 
+/**
+ * Materialize the selected group's checkbox and description projections into the
+ * local config/JSON mirrors. The page-level save performs the server mutation.
+ */
 function persistSelectedFrameworkGroupChecks(): void {
   const group = normalizeFrameworkGroupName(String(selectedFrameworkGroup.value));
   if (!group) return;
@@ -988,6 +1086,7 @@ function persistSelectedFrameworkGroupChecks(): void {
   groupsJsonText.value = JSON.stringify(config.value.CHUCKBOT_GROUPS_JSON, null, 2);
 }
 
+/** Load a runtime override, or built-in defaults when no override exists. */
 function loadSelectedFrameworkGroupChecks(): void {
   clearFrameworkGroupChecks();
   const group = normalizeFrameworkGroupName(String(selectedFrameworkGroup.value));
@@ -1016,6 +1115,7 @@ function loadSelectedFrameworkGroupChecks(): void {
   }
 }
 
+/** Preserve the previous group draft before switching the editor projection. */
 function onSelectedFrameworkGroupChange(event: Event): void {
   persistSelectedFrameworkGroupChecks();
   const target = event.target as HTMLSelectElement | null;
@@ -1024,6 +1124,7 @@ function onSelectedFrameworkGroupChange(event: Event): void {
   loadSelectedFrameworkGroupChecks();
 }
 
+/** Add and select an empty custom framework group in the local config draft. */
 function addFrameworkGroup(): void {
   persistSelectedFrameworkGroupChecks();
   const group = normalizeFrameworkGroupName(newFrameworkGroup.value);
@@ -1057,6 +1158,7 @@ function addFrameworkGroup(): void {
   successMessage.value = `Added framework group ${friendlyGroupLabel(group)}.`;
 }
 
+/** Remove a custom group and description; built-in catalog entries are retained. */
 function removeSelectedFrameworkGroup(): void {
   const group = normalizeFrameworkGroupName(String(selectedFrameworkGroup.value));
   if (userGrantGroupFields.some((field) => field.key === group)) {
@@ -1077,6 +1179,7 @@ function removeSelectedFrameworkGroup(): void {
   loadSelectedFrameworkGroupChecks();
 }
 
+/** Clamp rate-limit fields to non-negative integers before submission. */
 function onNumberInput(key: NumberConfigKey, event: Event): void {
   const target = event.target as HTMLInputElement | null;
   if (!target) return;
@@ -1085,6 +1188,10 @@ function onNumberInput(key: NumberConfigKey, event: Event): void {
   config.value[key] = Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
 }
 
+/**
+ * Fetch username suggestions with a monotonically increasing request token.
+ * Only the response matching the newest input is allowed to update the menu.
+ */
 async function onUserSearchLookupInput(value: string | number): Promise<void> {
   const query = String(value || "").trim();
   userSearchInputValue.value = query;
@@ -1107,6 +1214,7 @@ async function onUserSearchLookupInput(value: string | number): Promise<void> {
   }
 }
 
+/** Clear explicit group/right projections without changing live implicit flags. */
 function clearUserGrantChecks(): void {
   userGroupChecks.value = Object.fromEntries(
     groupRows.value.map((row) => [row.key, false]),
@@ -1117,6 +1225,10 @@ function clearUserGrantChecks(): void {
   }
 }
 
+/**
+ * Apply one normalized user-grant response to guided controls and JSON mirrors.
+ * Project/global memberships are displayed as read-only evidence from the server.
+ */
 function applyUserGrantPayload(payload: {
   normalized_username: string;
   groups: string[];
@@ -1157,6 +1269,11 @@ function applyUserGrantPayload(payload: {
   grantsJsonText.value = JSON.stringify(nextMap, null, 2);
 }
 
+/**
+ * Resolve the selected or typed identity and fetch current explicit/implicit rights.
+ * Explicit load clicks are not request-versioned, so if callers overlap them the
+ * last response to finish becomes the selected user.
+ */
 async function loadSelectedUserGrants(): Promise<void> {
   const selected = userSearchSelected.value;
   const typed = userSearchInputValue.value;
@@ -1182,6 +1299,7 @@ async function loadSelectedUserGrants(): Promise<void> {
   }
 }
 
+/** Re-query live wiki memberships for the already normalized selected identity. */
 async function refreshSelectedUserCommonsRights(): Promise<void> {
   if (!selectedGrantUser.value) return;
 
@@ -1202,6 +1320,11 @@ async function refreshSelectedUserCommonsRights(): Promise<void> {
   }
 }
 
+/**
+ * Persist one user's explicit groups and direct rights through the dedicated API.
+ * The Manage user rights capability disables this path in the UI; the endpoint is
+ * still the authoritative authorization and identity-normalization boundary.
+ */
 async function saveSelectedUserGrants(): Promise<void> {
   if (!canManageUserGrants.value || !selectedGrantUser.value) return;
 
@@ -1232,6 +1355,10 @@ async function saveSelectedUserGrants(): Promise<void> {
   }
 }
 
+/**
+ * Replace the canonical server snapshot, regenerate every Advanced JSON mirror,
+ * and rehydrate the currently selected guided editor projections.
+ */
 function applyServerConfig(nextConfig: RuntimeAuthzConfig): void {
   config.value = {
     ...nextConfig,
@@ -1257,6 +1384,7 @@ function applyServerConfig(nextConfig: RuntimeAuthzConfig): void {
   loadSelectedFrameworkGroupChecks();
 }
 
+/** Parse an object-valued JSON editor used for atom-array maps. */
 function parseJsonObjectText(text: string, label: string): Record<string, string[]> {
   const trimmed = text.trim();
   if (!trimmed) return {};
@@ -1269,6 +1397,7 @@ function parseJsonObjectText(text: string, label: string): Record<string, string
   return parsed as Record<string, string[]>;
 }
 
+/** Parse and string-normalize the custom framework-group description map. */
 function parseJsonStringMapText(text: string, label: string): Record<string, string> {
   const trimmed = text.trim();
   if (!trimmed) return {};
@@ -1286,6 +1415,7 @@ function parseJsonStringMapText(text: string, label: string): Record<string, str
   );
 }
 
+/** Parse the bulk per-user grant map while preserving atom arrays for the API. */
 function parseUserGrantsJsonText(): Record<string, string[]> {
   const trimmed = grantsJsonText.value.trim();
   if (!trimmed) return {};
@@ -1298,6 +1428,10 @@ function parseUserGrantsJsonText(): Record<string, string[]> {
   return parsed as Record<string, string[]>;
 }
 
+/**
+ * Fetch the current config, rights catalogs, and independent editor capabilities.
+ * Bootstrap permissions are replaced only after this authoritative read succeeds.
+ */
 async function loadConfig(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
@@ -1319,6 +1453,11 @@ async function loadConfig(): Promise<void> {
   }
 }
 
+/**
+ * Commit all structured drafts into their JSON mirrors, parse every bulk editor,
+ * then submit one coherent runtime config snapshot. Invalid JSON aborts the write.
+ * The edit-config API repeats authorization regardless of the client-side gate.
+ */
 async function saveConfig(): Promise<void> {
   if (!canEditConfig.value) return;
 
@@ -1354,6 +1493,7 @@ async function saveConfig(): Promise<void> {
   }
 }
 
+// Initial load hydrates both structured editors before any save is possible.
 onMounted(() => {
   void loadConfig();
 });
@@ -1361,6 +1501,7 @@ onMounted(() => {
 
 <template>
   <div class="container runtime-config-container">
+    <!-- Capability notices describe editor affordances; API authz remains authoritative. -->
     <CdxMessage v-if="!canEditConfig" type="warning" class="top-message">
       You can view runtime settings, but only chuckbot can save changes.
     </CdxMessage>
@@ -1383,6 +1524,7 @@ onMounted(() => {
 
     <div v-if="loading">Loading runtime config...</div>
 
+    <!-- Tabs partition one shared config draft; changing tabs does not save it. -->
     <div
       v-if="!loading"
       class="runtime-tablist runtime-config-level-tabs"
@@ -1426,6 +1568,7 @@ onMounted(() => {
       </button>
     </div>
 
+    <!-- User grants use their own load/save endpoint and separate permission gate. -->
     <section
       v-if="!loading && activeConfigTab === 'users'"
       class="runtime-config-card runtime-rights-editor"
@@ -1442,6 +1585,7 @@ onMounted(() => {
         <li><strong>Review</strong><span>Check the effective rights summary before saving.</span></li>
       </ol>
 
+      <!-- Search suggestions are stale-response protected; loading resolves the identity server-side. -->
       <div class="runtime-user-picker">
         <CdxField>
           <CdxLookup
@@ -1477,6 +1621,7 @@ onMounted(() => {
             they are not changed by saving Chuckbot framework rights.
           </p>
 
+          <!-- Live Wikimedia membership is evidence for auto grants, not editable state. -->
           <h4>Live wiki groups</h4>
           <dl class="project-groups-list">
             <template v-for="(groups, project) in projectGroups" :key="project">
@@ -1500,6 +1645,7 @@ onMounted(() => {
             </template>
           </dl>
 
+          <!-- Stored atoms and expanded effective rights are shown separately for review. -->
           <section class="rights-summary-card" aria-label="Selected user rights summary">
             <h4>What will be saved</h4>
             <dl>
@@ -1528,6 +1674,7 @@ onMounted(() => {
         </div>
 
         <div>
+          <!-- Framework groups are preferred; direct rights remain an explicit advanced path. -->
           <h4>Recommended: framework groups</h4>
           <p class="runtime-config-help">
             Groups are easier to audit than one-off rights. Most users should
@@ -1561,6 +1708,7 @@ onMounted(() => {
             </section>
           </details>
 
+          <!-- Advisories are informational and never silently rewrite the selected rights. -->
           <ul v-if="selectedUserGrantAdvisories.length" class="grant-advisories">
             <li v-for="advisory in selectedUserGrantAdvisories" :key="advisory.key">
               <strong>{{ advisory.title }}</strong>
@@ -1591,10 +1739,12 @@ onMounted(() => {
       </div>
     </section>
 
+    <!-- Remaining tabs edit the shared runtime config and save together at page level. -->
     <section
       v-if="!loading && activeConfigTab !== 'users'"
       class="runtime-config-card runtime-management-panel"
     >
+      <!-- Framework group forms project into CHUCKBOT_GROUPS_JSON and descriptions. -->
       <section v-if="activeConfigTab === 'groups'" class="runtime-management-section">
         <h3>Chuckbot framework groups</h3>
         <p class="runtime-config-help">
@@ -1700,6 +1850,7 @@ onMounted(() => {
         </ul>
       </section>
 
+      <!-- Auto-grant roles map external identity facts to internal grant atoms. -->
       <section v-if="activeConfigTab === 'auto_grants'" class="runtime-management-section">
         <h3>Auto grants by implicit role</h3>
         <p class="runtime-config-help">
@@ -1853,6 +2004,7 @@ onMounted(() => {
 
       </section>
 
+      <!-- Module atoms are a read-only catalog populated by registered modules. -->
       <section v-if="activeConfigTab === 'module_rights'" class="runtime-management-section">
         <h3>Module-declared rights</h3>
         <p class="runtime-config-help">
@@ -1879,6 +2031,7 @@ onMounted(() => {
         </dl>
       </section>
 
+      <!-- Bulk editors intentionally allow invalid intermediate text until Save validates it. -->
       <section v-if="activeConfigTab === 'advanced'" class="runtime-management-section">
         <h3>Advanced configuration</h3>
         <p class="runtime-config-help">
@@ -1935,6 +2088,7 @@ onMounted(() => {
       </section>
     </section>
 
+    <!-- Bulk config saves here; the Users tab has a separate per-user save path. -->
     <div class="runtime-config-save">
       <CdxButton
         action="progressive"

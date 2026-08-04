@@ -24,12 +24,15 @@ KILL_TIMEOUT_SECONDS = 20
 
 @dataclass(frozen=True)
 class KillAttempt:
+    """Serializable outcome of one best-effort process termination command."""
+
     command: list[str]
     exit_code: int | None
     output: str
     skipped: bool = False
 
     def as_dict(self) -> dict[str, Any]:
+        """Return the API-safe representation included in estop reports."""
         return {
             "command": self.command,
             "exit_code": self.exit_code,
@@ -49,6 +52,7 @@ def toolforge_job_name(module_name: str, job_name: str) -> str:
 
 
 def _run_kill_command(command: list[str]) -> KillAttempt:
+    """Run one bounded kill command or record why it cannot run locally."""
     executable = command[0]
     if shutil.which(executable) is None:
         return KillAttempt(
@@ -59,6 +63,7 @@ def _run_kill_command(command: list[str]) -> KillAttempt:
         )
 
     try:
+        # Estop must never wait indefinitely for a broken cluster client.
         completed = subprocess.run(
             command,
             check=False,
@@ -79,6 +84,9 @@ def _run_kill_command(command: list[str]) -> KillAttempt:
 
 
 def _kill_toolforge_job(job_name: str) -> list[KillAttempt]:
+    """Try Toolforge and Kubernetes selectors used by supported deployments."""
+    # Resource labels have changed across Toolforge generations.  Try each
+    # known representation and let the caller stop after the first success.
     attempts = [
         ["toolforge", "jobs", "delete", job_name],
         ["kubectl", "delete", "job", job_name, "--ignore-not-found=true"],
@@ -120,7 +128,13 @@ def _kill_toolforge_job(job_name: str) -> list[KillAttempt]:
 
 
 def _cancel_rollback_work() -> dict[str, Any]:
-    """Cancel rollback's database-tracked work and purge queued Celery messages."""
+    """Cancel rollback rows and purge the deployment's shared Celery queue.
+
+    The purge is intentionally a hard-stop operation, not a rollback-scoped
+    filter: queued Salt Shack and File Changer task messages use the same Buckbot
+    queue and may be discarded too. Durable rows owned by those modules are not
+    reconciled here.
+    """
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -132,6 +146,8 @@ def _cancel_rollback_work() -> dict[str, Any]:
             )
             job_ids = [int(row[0]) for row in cursor.fetchall()]
             if job_ids:
+                # Cancel item rows before parent jobs so polling never observes
+                # a canceled job whose children still appear runnable.
                 placeholders = ", ".join(["%s"] * len(job_ids))
                 cursor.execute(
                     f"""
@@ -155,6 +171,9 @@ def _cancel_rollback_work() -> dict[str, Any]:
                 canceled_items = 0
         conn.commit()
 
+    # Celery purge is broader than the rollback tables, which is appropriate for
+    # this hard-stop path; durable module-run cancellation above still records
+    # which work should remain stopped if queued messages later reappear.
     celery_purged = None
     try:
         from app import celery
@@ -171,7 +190,12 @@ def _cancel_rollback_work() -> dict[str, Any]:
 
 
 def emergency_stop_module(module_name: str, *, actor: str | None = None) -> dict[str, Any]:
-    """Disable a module and immediately try to kill its active work."""
+    """Disable a module, cancel durable runs, and kill known active workloads.
+
+    Disabling and DB cancellation are authoritative.  Cluster commands are
+    intentionally best effort and fully reported because this function can also
+    run in local web containers that do not ship Toolforge or kubectl clients.
+    """
     module_name = str(module_name or "").strip()
     if not module_name:
         raise ValueError("module_name is required")
@@ -185,6 +209,8 @@ def emergency_stop_module(module_name: str, *, actor: str | None = None) -> dict
         module_specific["rollback"] = _cancel_rollback_work()
 
     kill_results: list[dict[str, Any]] = []
+    # Operators may suppress cluster mutation during local tests or when an
+    # external incident controller owns workload termination.
     if os.getenv("MODULE_ESTOP_DISABLE_TOOLFORGE_KILL", "").strip().lower() not in {
         "1",
         "true",

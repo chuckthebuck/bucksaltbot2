@@ -1,3 +1,11 @@
+"""Initialize and access the framework's ToolsDB relational state.
+
+Schema creation is deliberately idempotent because web and worker processes may
+start against a fresh local database or an older Toolforge deployment.  Additive
+``_ensure_column`` migrations retain existing queue history; callers receive a
+connection only after the full current schema is available.
+"""
+
 import pymysql as sql
 
 from cnf import config
@@ -14,10 +22,12 @@ def _ensure_column(
 
 
 def _db_user() -> str:
+    """Return the configured ToolsDB username across legacy key names."""
     return config.get("user") or config.get("username")
 
 
 def _db_name() -> str:
+    """Return an explicit database name or the historical per-tool default."""
     configured = config.get("database")
     if configured:
         return configured
@@ -25,6 +35,7 @@ def _db_name() -> str:
 
 
 def _connect(database=None):
+    """Open a PyMySQL connection after reporting any missing credentials."""
     missing = [
         name
         for name, value in (
@@ -49,6 +60,7 @@ def _connect(database=None):
 
 
 def init_db():
+    """Create current tables and apply additive compatibility migrations."""
     conn = _connect()
     try:
         with conn.cursor() as cursor:
@@ -56,6 +68,8 @@ def init_db():
                 cursor.execute(f"CREATE DATABASE IF NOT EXISTS {_db_name()}")
             cursor.execute(f"USE {_db_name()}")
 
+            # Module discovery state and declarative schedules are persisted so
+            # web, worker, and deployment tooling observe the same definitions.
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS module_registry (
@@ -125,6 +139,8 @@ def init_db():
                 "concurrency_policy VARCHAR(32) NOT NULL DEFAULT 'forbid'",
             )
 
+            # Every execution attempt gets its own run row; payload and result
+            # JSON keep module-specific data out of the framework schema.
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS module_job_runs (
@@ -156,6 +172,8 @@ def init_db():
                 "result_json LONGTEXT NULL",
             )
 
+            # Runtime module settings and per-user access toggles are normalized
+            # separately from immutable manifest definitions.
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS module_config (
@@ -186,6 +204,8 @@ def init_db():
                 """
             )
 
+            # Rollback job rows own lifecycle/approval state while item rows are
+            # independently claimable work units for Celery workers.
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS rollback_jobs (
@@ -255,6 +275,8 @@ def init_db():
                 """
             )
 
+            # Chuck File Changer uses its own queue tables but shares the same
+            # framework connection/bootstrap lifecycle.
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS chuck_file_change_jobs (
@@ -325,6 +347,8 @@ def init_db():
                 "rollback_through_bots",
                 "rollback_through_bots TINYINT(1) NOT NULL DEFAULT 0",
             )
+            # Framework authorization configuration is intentionally a simple
+            # string key/value store; the authz layer owns typed validation.
             cursor.execute(
                 """
                 ALTER TABLE rollback_job_items
@@ -350,6 +374,7 @@ def init_db():
 
 
 def get_conn():
+    """Return a connection to the initialized framework database."""
     init_db()
     return _connect(database=_db_name())
 

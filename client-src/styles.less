@@ -2,6 +2,7 @@
 @import ( reference ) '@wikimedia/codex-design-tokens/theme-wikimedia-ui.less';
 @import ( reference ) '@wikimedia/codex/mixins/link.less';
 
+// Framework brand colors supplement Codex tokens shared by every Vue surface.
 @chuck-navy: #001f4d;
 @chuck-blue: #315fa8;
 @chuck-light-blue: #d9e9ff;
@@ -9,6 +10,8 @@
 @chuck-border: #a7bde5;
 
 .header {
+    // The three columns keep branding, capability-driven navigation, and user
+    // controls aligned while allowing the navigation group to wrap.
     width: calc( 100% - 2 * @spacing-125 );
     padding: @spacing-75 @spacing-125;
     background: @color-inverted;
@@ -177,6 +180,7 @@ a {
     color: @color-inverted;
 }
 
+// Landing page and destructive module emergency-stop controls.
 .landing-panel {
     margin-bottom: @spacing-150;
 }
@@ -302,6 +306,7 @@ a {
     background: #7a1616;
 }
 
+// Shared content/table primitives used by server-rendered and Vue pages.
 .log-pre {
     background-color: @background-color-interactive-subtle;
     border: @border-base;
@@ -359,6 +364,7 @@ body {
     font-family: @font-family-system-sans;
 }
 
+// Rollback forms and the editable item layout.
 .rollback-tool-section {
     margin-bottom: @spacing-200;
 }
@@ -504,6 +510,7 @@ body {
     }
 }
 
+// Queue-specific sizing keeps action controls visible beside long file titles.
 .rollback-queue-container {
     min-width: 0;
     max-width: 1280px;
@@ -621,6 +628,7 @@ body {
     width: 100%;
 }
 
+// Runtime authorization editor: global config, user grants, and derived rights.
 .runtime-config-container {
     min-width: 0;
     max-width: none;
@@ -884,6 +892,7 @@ body {
     word-break: break-word;
 }
 
+// Legacy Four Award run history/report presentation retained as a UI fallback.
 .four-award-page {
     display: grid;
     gap: @spacing-100;

@@ -1,4 +1,22 @@
-"""Authorization configuration: env-var parsing, user grants, runtime config management."""
+"""Build and resolve the framework's authorization configuration.
+
+This module is the policy-data layer, not an authentication layer.  Enforcement
+callers must pass identities established by the application; inspection helpers
+may instead receive an administrator-selected target username.  The module:
+
+* turns environment variables into a backwards-compatible baseline;
+* overlays normalized, persisted runtime configuration on that baseline;
+* expands direct user grants and Wikimedia-backed role grants into rights; and
+* caches runtime configuration and remote Wikimedia group lookups briefly.
+
+Runtime JSON is treated as untrusted even though only privileged users can edit
+it.  Unknown application-wide rights and malformed selectors never become
+permissions; syntactically valid module-scoped rights remain extensible by
+design.  Failed Wikimedia lookups produce an empty group set, so remote-role
+authorization fails closed.  Legacy grant names remain accepted because existing
+database rows may contain them, but aliases are resolved only while evaluating
+policy so an admin can still inspect the exact stored value.
+"""
 
 import json
 import os
@@ -18,17 +36,30 @@ from toolsdb import get_runtime_config, upsert_runtime_config
 
 
 def _r():
-    """Return the router package module (supports test-side patching via router.X)."""
+    """Return the package facade used by legacy imports and test patch points.
+
+    ``router.__init__`` re-exports these helpers.  Looking up selected dependencies
+    there preserves the historic ``patch("router.X")`` behavior while allowing
+    this implementation to live in a dedicated module.
+    """
     return _sys.modules.get("router")
 
 
+# Remote membership data is process-local and deliberately short-lived.  The
+# cache contains both successful and empty results; caching an empty result keeps
+# a Wikimedia outage from causing a request storm without granting any privilege.
 GROUP_CACHE_TTL = 300
 _group_cache: dict = {}
+# Re-exported for callers that still import the framework setting from authz.
 ALLOWED_GROUPS = FRAMEWORK_ALLOWED_GROUPS
 
 
 def _env_user_set(env_var: str) -> set[str]:
-    """Parse a comma-separated environment variable into a lower-cased set of usernames."""
+    """Read a legacy comma-separated username set from the process environment.
+
+    These sets are loaded once at import time and later converted into current
+    ``ROLLBACK_CONTROL_JSON`` group atoms by :func:`_runtime_authz_defaults`.
+    """
     return {u.strip().lower() for u in os.getenv(env_var, "").split(",") if u.strip()}
 
 
@@ -50,6 +81,8 @@ _CONFIG_EDIT_PRIMARY_ACCOUNT = (
     os.getenv("CONFIG_EDIT_PRIMARY_ACCOUNT", "chuckbot").strip().lower()
 )
 
+# Canonical application-wide rights accepted in direct and group grants.  Module
+# rights use the separate ``module:<id>:<right>`` namespace.
 _USER_GRANT_RIGHTS = {
     "write",
     "rollback_diff",
@@ -70,6 +103,8 @@ _USER_GRANT_RIGHTS = {
     "edit_module_config",
 }
 
+# Vocabulary for the framework's built-in module actions.  Atom validation stays
+# intentionally permissive so independently deployed modules can add rights.
 _MODULE_BUILTIN_RIGHTS = {
     "access",
     "view",
@@ -147,6 +182,8 @@ _LEGACY_GROUP_ALIASES = {
     "operator": "admin",
 }
 
+# Built-in role labels reported by the grants-inspection API.  Project and global
+# selectors are discovered dynamically from ROLE_GRANTS_JSON as well.
 _USER_IMPLICIT_FLAGS = (
     "authenticated",
     "commons_admin",
@@ -155,6 +192,7 @@ _USER_IMPLICIT_FLAGS = (
 
 _AUTO_GRANT_ROLE_KEYS = set(_USER_IMPLICIT_FLAGS)
 
+# These keys are read for migration only.  New writes use the JSON policy maps.
 _USER_SET_CONFIG_KEYS = {
     "EXTRA_AUTHORIZED_USERS",
     "USERS_READ_ONLY",
@@ -183,18 +221,28 @@ _LEGACY_JSON_CONFIG_KEYS = {
     "AUTO_GRANTS_JSON",
 }
 
+# Only current integer and JSON keys may be written through the runtime API.
 _RUNTIME_AUTHZ_ALLOWED_KEYS = sorted(_INT_CONFIG_KEYS | _JSON_CONFIG_KEYS)
+# Runtime database reads are cached per process; a successful local write clears
+# this cache immediately, while writes made by another process converge by TTL.
 _RUNTIME_AUTHZ_CACHE_TTL = 60
 _runtime_authz_cache = None
 _runtime_authz_cache_expiry = 0.0
 
 
 def _parse_user_csv(raw_value: str) -> set[str]:
+    """Parse a persisted legacy username list for one-time policy migration."""
     return {u.strip().lower() for u in (raw_value or "").split(",") if u.strip()}
 
 
 def _normalize_username(raw_value: str) -> str:
-    """Normalize usernames into MediaWiki's canonical first-letter-uppercase shape."""
+    """Normalize a username to MediaWiki's first-letter-uppercase display shape.
+
+    Underscores and repeated whitespace are normalized, and copy/pasted ``User:``
+    prefixes or matching quotes are removed.  Only the first character's case is
+    changed: the rest must be preserved because MediaWiki usernames that differ
+    later in the string can identify different accounts.
+    """
     cleaned = str(raw_value or "").strip()
 
     if cleaned.lower().startswith("user:"):
@@ -213,7 +261,12 @@ def _normalize_username(raw_value: str) -> str:
 
 
 def _normalize_auto_grant_role_name(raw_value: str) -> str:
-    """Normalize implicit role keys while preserving project/global role syntax."""
+    """Normalize an implicit-role selector without erasing its scope syntax.
+
+    Historical Commons spellings collapse to the built-in names; generic
+    ``project:<wiki>:<group>`` and ``global:<group>`` selectors pass through for
+    structural validation by :func:`_is_valid_auto_grant_role`.
+    """
     value = str(raw_value or "").strip().lower().replace(" ", "_")
     if value in {"commons_admin", "project:commons:sysop"}:
         return "commons_admin"
@@ -223,7 +276,11 @@ def _normalize_auto_grant_role_name(raw_value: str) -> str:
 
 
 def _is_valid_auto_grant_role(role_name: str) -> bool:
-    """Return True for built-in roles and project/global group role selectors."""
+    """Return whether a role name is a supported, non-empty selector shape.
+
+    This validates syntax only.  Membership is resolved against Wikimedia when
+    policy is expanded; unrecognized shapes return ``False`` (fail closed).
+    """
     role_name = _normalize_auto_grant_role_name(role_name)
     if role_name in _AUTO_GRANT_ROLE_KEYS:
         return True
@@ -247,12 +304,16 @@ def _normalize_grant_atom(atom: str) -> str:
 
 
 def _normalize_module_name(raw_value: str) -> str:
-    """Normalize module ids for permission atoms."""
+    """Normalize a module id for use inside a permission atom."""
     return str(raw_value or "").strip().lower().replace("-", "_")
 
 
 def _is_module_right_atom(atom: str) -> bool:
-    """Return True for atoms shaped like module:<module_name>:<right>."""
+    """Return whether an atom has non-empty module and right path components.
+
+    The right is not restricted to :data:`_MODULE_BUILTIN_RIGHTS`; modules may
+    define additional scoped rights without requiring a framework deployment.
+    """
     parts = _normalize_grant_atom(atom).split(":")
     return (
         len(parts) == 3
@@ -263,7 +324,7 @@ def _is_module_right_atom(atom: str) -> bool:
 
 
 def module_right_atom(module_name: str, right: str) -> str:
-    """Build the canonical grant atom for a module-specific right."""
+    """Build a module-scoped grant atom, or ``""`` for an empty component."""
     normalized_module = _normalize_module_name(module_name)
     normalized_right = _normalize_grant_atom(right)
     if not normalized_module or not normalized_right:
@@ -274,7 +335,9 @@ def module_right_atom(module_name: str, right: str) -> str:
 def _resolve_grant_atom(atom: str) -> str:
     """Return the canonical form of a grant atom, resolving all legacy aliases.
 
-    Used at expansion time (``_expand_user_grants``, ``_expand_auto_grants``).
+    This is intentionally used at expansion time, not write time.  Persisted
+    values therefore round-trip unchanged through the configuration API while
+    old names still map to current enforcement rights.
     """
     normalized = str(atom or "").strip().lower().replace(" ", "_").replace("-", "_")
     if normalized.startswith("group:"):
@@ -286,7 +349,13 @@ def _resolve_grant_atom(atom: str) -> str:
 
 
 def _configured_user_grant_groups(config: dict | None = None) -> dict[str, set[str]]:
-    """Merge built-in grant groups with optional runtime-defined group bundles."""
+    """Return built-in groups overlaid by runtime-defined right bundles.
+
+    A custom definition with the same normalized name replaces the built-in
+    bundle.  Values are defensively filtered to canonical application rights or
+    syntactically valid module-scoped rights.  Nested group references are not
+    expanded.
+    """
     groups = {name: set(rights) for name, rights in _USER_GRANT_GROUPS.items()}
     custom = {}
     if isinstance(config, dict):
@@ -308,7 +377,12 @@ def _configured_user_grant_groups(config: dict | None = None) -> dict[str, set[s
 
 
 def _normalize_groups_config_input(value, key: str) -> dict:
-    """Validate and canonicalize CHUCKBOT_GROUPS_JSON-style config input."""
+    """Validate a custom-group map at the runtime-configuration boundary.
+
+    JSON strings and already-decoded mappings are accepted for compatibility.
+    Group names and rights are normalized, duplicates are removed, and unknown
+    rights are rejected rather than being stored for future interpretation.
+    """
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -343,7 +417,7 @@ def _normalize_groups_config_input(value, key: str) -> dict:
 
 
 def _normalize_group_descriptions_input(value, key: str) -> dict:
-    """Validate and canonicalize group-name to description config."""
+    """Validate group descriptions and cap each display-only value at 500 chars."""
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -365,7 +439,14 @@ def _normalize_group_descriptions_input(value, key: str) -> dict:
 
 
 def _normalize_user_grants_map_input(value, key: str) -> dict:
-    """Validate and canonicalize username-to-grants config maps."""
+    """Validate a user-to-grant map and return stable, display-safe values.
+
+    The API accepts list, comma-separated, and ``{groups, rights}`` forms.  User
+    keys receive MediaWiki normalization, while grant atoms retain legacy aliases
+    until evaluation.  Unknown rights fail validation.  Unknown *group* names are
+    stored deliberately so a user assignment and its custom group definition can
+    be submitted in either order; an unresolved group expands to no rights.
+    """
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -402,6 +483,8 @@ def _normalize_user_grants_map_input(value, key: str) -> dict:
             raise ValueError(f"{key}.{user} must be a list/string/object")
 
         user_atoms = set()
+        # Bare built-in/legacy group names are accepted as a convenience, but
+        # persisted in the unambiguous ``group:<name>`` namespace.
         _all_valid_groups = (
             set(_configured_user_grant_groups().keys()) | set(_LEGACY_GROUP_ALIASES)
         )
@@ -439,7 +522,13 @@ def _normalize_user_grants_map_input(value, key: str) -> dict:
 
 
 def _expand_user_grants(config: dict, username: str) -> set[str]:
-    """Return direct rights granted to a user after expanding group atoms."""
+    """Expand one user's direct grant atoms into enforceable rights.
+
+    ``ROLLBACK_CONTROL_JSON`` takes precedence when present; the former
+    ``USER_GRANTS_JSON`` name is a read-compatibility fallback.  Username lookup
+    follows MediaWiki first-letter normalization.  Unknown groups, rights, and
+    empty atoms contribute nothing, which keeps malformed policy fail-closed.
+    """
     user = _normalize_username(username)
     if not user:
         return set()
@@ -454,7 +543,8 @@ def _expand_user_grants(config: dict, username: str) -> set[str]:
     groups = _configured_user_grant_groups(config)
 
     for raw_atom in atoms:
-        # Resolve legacy aliases at expansion time (atoms are stored as-is).
+        # Resolve aliases only at the enforcement boundary: inspection and a
+        # later write still expose the administrator's original spelling.
         atom = _resolve_grant_atom(raw_atom)
         if not atom:
             continue
@@ -477,7 +567,14 @@ def _expand_user_grants(config: dict, username: str) -> set[str]:
 def _implicit_role_flags(
     config: dict, username: str, commons_groups: set[str] | None = None
 ) -> dict[str, bool]:
-    """Return MediaWiki-derived role flags for display and auto-grant checks."""
+    """Return role-membership flags used by the grants-inspection response.
+
+    ``authenticated`` is a syntactic flag for any non-empty normalized username;
+    it neither verifies a session nor checks that the target account exists.
+    Commons groups may be injected by the caller to avoid a duplicate API lookup.
+    Other configured project/global selectors are resolved on demand and resolve
+    to ``False`` when the corresponding Wikimedia request fails.
+    """
     normalized_username = _normalize_username(username)
     if not normalized_username:
         return {role: False for role in _USER_IMPLICIT_FLAGS}
@@ -508,7 +605,13 @@ def _implicit_role_flags(
 
 
 def _normalize_auto_grants_map_input(value, key: str) -> dict:
-    """Validate and canonicalize role-to-grants config maps."""
+    """Validate Wikimedia-role grant policy from env, storage, or the API.
+
+    Role selectors must be built-in, ``global:<group>``, or
+    ``project:<wiki>:<group>``.  Grant payload compatibility mirrors direct user
+    grants.  Unknown group references are safe to retain because they expand to
+    nothing unless a corresponding custom group exists.
+    """
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -586,7 +689,12 @@ def _normalize_auto_grants_map_input(value, key: str) -> dict:
 
 
 def _expand_auto_grants(config: dict, username: str) -> set[str]:
-    """Return rights granted through enabled implicit MediaWiki roles."""
+    """Expand rights for every configured Wikimedia role held by ``username``.
+
+    Roles are additive; they do not override or revoke direct grants.  Membership
+    helpers return empty sets after remote errors, so unavailable identity data
+    cannot accidentally enable a role.
+    """
     role_map = config.get("ROLE_GRANTS_JSON") or {}
     if not isinstance(role_map, dict):
         return set()
@@ -621,7 +729,12 @@ def _expand_auto_grants(config: dict, username: str) -> set[str]:
 
 
 def _expand_all_grants(config: dict, username: str) -> set[str]:
-    """Return the union of direct user grants and implicit role grants."""
+    """Return the additive union of direct-user and implicit-role rights.
+
+    Deny-style precedence, such as the built-in ``read_only`` group, is applied
+    later by :func:`router.permissions._user_permissions`; this layer only
+    expands positive grant data.
+    """
     return _expand_user_grants(config, username) | _expand_auto_grants(config, username)
 
 
@@ -630,7 +743,12 @@ def _get_user_grants_payload(
     config: dict,
     commons_groups: set[str] | None = None,
 ) -> dict:
-    """Build the inspectable grants payload returned by admin-facing routes."""
+    """Build the admin-facing explanation of one user's policy inputs.
+
+    ``expanded_rights`` describes direct user atoms only; implicit role flags and
+    local/project/global memberships are returned separately so the UI can show
+    where automatic access originates without conflating it with stored grants.
+    """
     normalized_username = _normalize_username(target_username)
     grants_map = (
         config.get("ROLLBACK_CONTROL_JSON")
@@ -661,6 +779,8 @@ def _get_user_grants_payload(
             if len(parts) == 3 and parts[0] == "project" and parts[1]:
                 projects.add(parts[1])
     project_groups = {
+        # Commons membership was resolved above.  Only additional projects need
+        # another network/cache lookup.
         project: sorted(
             resolved_groups
             if project == "commons"
@@ -684,7 +804,12 @@ def _get_user_grants_payload(
 
 
 def _parse_user_grants_env(raw_value: str) -> dict:
-    """Parse legacy USER_GRANTS_JSON/ROLLBACK_CONTROL_JSON env config safely."""
+    """Parse an env-sourced user grant map, ignoring the whole map if invalid.
+
+    Environment policy is a startup baseline rather than request input, but it
+    still crosses a configuration trust boundary and receives the same strict
+    normalization as runtime updates.
+    """
     if not raw_value:
         return {}
 
@@ -696,7 +821,7 @@ def _parse_user_grants_env(raw_value: str) -> dict:
 
 
 def _parse_role_grants_env(raw_value: str) -> dict:
-    """Parse ROLE_GRANTS_JSON env config safely."""
+    """Parse env-sourced role grants, logging and denying them if malformed."""
     if not raw_value:
         return {}
 
@@ -707,7 +832,7 @@ def _parse_role_grants_env(raw_value: str) -> dict:
         return {}
 
 def _parse_nonnegative_int(value, fallback: int) -> int:
-    """Parse runtime integer config with a conservative fallback."""
+    """Parse non-negative stored configuration or return a known-safe default."""
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -720,7 +845,17 @@ def _parse_nonnegative_int(value, fallback: int) -> int:
 
 
 def _runtime_authz_defaults() -> dict:
-    """Build the effective authz baseline from env vars and built-in groups."""
+    """Build a fresh authorization baseline from env vars and built-in groups.
+
+    Current JSON env vars take priority over their legacy equivalents when they
+    contain a usable map.  Legacy username-list settings are then translated to
+    equivalent group/right atoms and unioned into the user map.  For role grants,
+    built-in Commons defaults are overlaid first by ``AUTO_GRANTS_JSON`` and then
+    by the current ``ROLE_GRANTS_JSON`` setting.
+
+    The returned mapping is newly built on every call so callers can overlay
+    runtime values without mutating the process's import-time constants.
+    """
     _router = _r()
     _extra = _router.EXTRA_AUTHORIZED_USERS if _router else EXTRA_AUTHORIZED_USERS
     _read_only = _router.USERS_READ_ONLY if _router else USERS_READ_ONLY
@@ -740,11 +875,14 @@ def _runtime_authz_defaults() -> dict:
         if _router
         else RATE_LIMIT_TESTER_JOBS_PER_HOUR
     )
+    # Prefer the current name, but continue reading old deployments that have
+    # only USER_GRANTS_JSON configured.
     rollback_control = _parse_user_grants_env(os.getenv("ROLLBACK_CONTROL_JSON", ""))
     if not rollback_control:
         rollback_control = _parse_user_grants_env(os.getenv("USER_GRANTS_JSON", ""))
 
     def _add_user_atoms(users: set[str], atoms: list[str]) -> None:
+        """Merge legacy username-list capabilities into normalized user atoms."""
         for user in users:
             normalized = _normalize_username(user)
             if not normalized:
@@ -765,6 +903,8 @@ def _runtime_authz_defaults() -> dict:
     _add_user_atoms(set(_retry_any), ["retry_any"])
 
     role_grants = {
+        # These roles authorize normal application access by default; they do
+        # not inherit the larger app-maintainer permission set.
         "commons_admin": ["group:basic"],
         "commons_rollbacker": ["group:basic"],
     }
@@ -787,23 +927,35 @@ def _runtime_authz_defaults() -> dict:
 
 
 def _invalidate_runtime_authz_cache() -> None:
+    """Force this process to read persisted authorization rows on next access."""
     global _runtime_authz_cache, _runtime_authz_cache_expiry
     _runtime_authz_cache = None
     _runtime_authz_cache_expiry = 0.0
 
 
 def _load_runtime_authz_overrides() -> dict:
-    """Load persisted authz config, migrating legacy rows into current fields."""
+    """Load and cache normalized database overrides for the environment baseline.
+
+    Persisted current-format keys take precedence over environment defaults.
+    Legacy rows are translated only when the corresponding current JSON row is
+    absent.  Database failures fall back to the environment baseline; malformed
+    values fall back per key.  The resulting override map is cached in-process
+    for :data:`_RUNTIME_AUTHZ_CACHE_TTL` seconds.
+    """
     global _runtime_authz_cache, _runtime_authz_cache_expiry
 
     now = time.time()
     if _runtime_authz_cache is not None and now < _runtime_authz_cache_expiry:
+        # Return the normalized map directly; _effective_runtime_authz_config
+        # copies only the top-level mapping before exposing it to policy checks.
         return _runtime_authz_cache
 
     overrides = {}
     defaults = _runtime_authz_defaults()
 
     try:
+        # Read legacy rows alongside current ones so upgrades do not require an
+        # all-at-once database migration.
         rows = get_runtime_config(
             _RUNTIME_AUTHZ_ALLOWED_KEYS
             + sorted(_USER_SET_CONFIG_KEYS)
@@ -835,6 +987,8 @@ def _load_runtime_authz_overrides() -> dict:
                 else:
                     overrides[key] = _normalize_user_grants_map_input(raw_value, key)
             except ValueError:
+                # A bad persisted value must never bypass normalization.  Using
+                # the trusted baseline for this key is the fail-closed fallback.
                 overrides[key] = defaults.get(key, {})
 
     legacy_user_updates = {}
@@ -854,10 +1008,13 @@ def _load_runtime_authz_overrides() -> dict:
             pass
 
     if legacy_user_updates or legacy_control:
+        # Current ROLLBACK_CONTROL_JSON wins as a whole when present.  setdefault
+        # below installs this migrated map only for older deployments.
         control = dict(defaults.get("ROLLBACK_CONTROL_JSON") or {})
         control.update(legacy_control)
 
         def _add(users: set[str], atoms: list[str]) -> None:
+            """Merge one persisted legacy user set into the migration map."""
             for user in users:
                 existing = set(control.get(user, []))
                 existing.update(atoms)
@@ -874,6 +1031,8 @@ def _load_runtime_authz_overrides() -> dict:
         overrides.setdefault("ROLLBACK_CONTROL_JSON", control)
 
     if rows.get("AUTO_GRANTS_JSON") and "ROLE_GRANTS_JSON" not in overrides:
+        # ROLE_GRANTS_JSON is authoritative; AUTO_GRANTS_JSON is read only when
+        # there is no current-format persisted role map.
         try:
             role_grants = dict(defaults.get("ROLE_GRANTS_JSON") or {})
             role_grants.update(
@@ -891,14 +1050,14 @@ def _load_runtime_authz_overrides() -> dict:
 
 
 def _effective_runtime_authz_config() -> dict:
-    """Return env defaults overlaid with cached runtime overrides."""
+    """Return the current policy with persisted values winning over env defaults."""
     cfg = _runtime_authz_defaults()
     cfg.update(_load_runtime_authz_overrides())
     return cfg
 
 
 def _serialize_runtime_authz_config(config: dict) -> dict:
-    """Return the API-safe representation of runtime authz config."""
+    """Project internal policy values onto the writable runtime API schema."""
     output = {}
     for key in _RUNTIME_AUTHZ_ALLOWED_KEYS:
         value = config.get(key)
@@ -912,7 +1071,12 @@ def _serialize_runtime_authz_config(config: dict) -> dict:
 
 
 def _normalize_user_list_input(value, key: str) -> list[str]:
-    """Normalize a legacy comma/list user field for runtime config endpoints."""
+    """Normalize a bounded legacy username list retained for compatibility.
+
+    New runtime writes no longer expose these list keys, but the helper remains
+    available to older call paths.  It preserves MediaWiki-significant casing,
+    removes duplicates, and rejects oversized payloads.
+    """
     if isinstance(value, str):
         candidates = [part.strip() for part in value.replace("\n", ",").split(",")]
     elif isinstance(value, list):
@@ -945,7 +1109,11 @@ def _normalize_user_list_input(value, key: str) -> list[str]:
 
 
 def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
-    """Validate a partial runtime-authz update payload."""
+    """Validate a partial runtime update and collect all field-level errors.
+
+    Only the explicit current-format allowlist is writable.  No data is persisted
+    here; routes can reject the entire request when ``errors`` is non-empty.
+    """
     normalized = {}
     errors = []
 
@@ -989,7 +1157,11 @@ def _normalize_runtime_authz_updates(payload: dict) -> tuple[dict, list[str]]:
 
 
 def _persist_runtime_authz_updates(updates: dict, updated_by: str) -> None:
-    """Persist normalized runtime-authz updates and clear local caches."""
+    """Persist pre-normalized updates with attribution, then clear the local cache.
+
+    Callers are responsible for authorization and must pass the output of
+    :func:`_normalize_runtime_authz_updates`, not raw request JSON.
+    """
     rows = {}
     for key, value in updates.items():
         if key in _JSON_CONFIG_KEYS:
@@ -1002,7 +1174,12 @@ def _persist_runtime_authz_updates(updates: dict, updated_by: str) -> None:
 
 
 def get_user_groups(username, force_refresh: bool = False):
-    """Return Commons local groups for a user, cached briefly to spare the API."""
+    """Return a user's Commons-local groups from a short-lived process cache.
+
+    ``force_refresh`` bypasses, but still replaces, the cached value.  Network,
+    HTTP, schema, and decoding failures are logged and cached as ``[]``.  Because
+    callers use membership to add rights, that empty result is fail-closed.
+    """
     now = time.time()
 
     cached = _group_cache.get(username)
@@ -1028,12 +1205,20 @@ def get_user_groups(username, force_refresh: bool = False):
         app.logger.exception("Failed to fetch groups for %s", username)
         groups = []
 
+    # Negative results use the same TTL as successful ones: this trades delayed
+    # recovery for bounded upstream traffic, and a negative entry grants nothing.
     _group_cache[username] = {"groups": groups, "ts": now}
     return groups
 
 
 def _project_api_url(project: str) -> str:
-    """Resolve a Wikimedia project shortcut or host into an API URL."""
+    """Resolve an admin-configured Wikimedia project id or host to its API URL.
+
+    Common project database names receive explicit mappings; other ``*wiki``
+    values are treated as Wikipedia language projects.  Dotted values are treated
+    as Wikimedia-style hosts.  This helper only constructs the endpoint—role
+    selector validation occurs before authorization policy is persisted.
+    """
     value = str(project or "").strip().lower()
     if value in {"commons", "commonswiki"}:
         return "https://commons.wikimedia.org/w/api.php"
@@ -1052,11 +1237,17 @@ def _project_api_url(project: str) -> str:
 
 
 def get_project_userright_groups(project: str, force_refresh: bool = False) -> list[str]:
-    """Return user group names advertised by a wiki's siteinfo API."""
+    """Return group names advertised by a project's siteinfo endpoint.
+
+    This list populates policy-editing choices; it does not itself grant access.
+    Results, including failure-induced empty lists, share the group-cache TTL.
+    """
     normalized_project = str(project or "").strip().lower()
     if not normalized_project:
         return []
 
+    # Prefixes keep site metadata from colliding with per-user membership data
+    # in the shared process-local cache.
     cache_key = f"siteinfo-groups:{normalized_project}"
     now = time.time()
     cached = _group_cache.get(cache_key)
@@ -1100,7 +1291,11 @@ def get_project_user_groups(
     project: str,
     force_refresh: bool = False,
 ):
-    """Return groups for a user on an arbitrary Wikimedia project."""
+    """Return one user's local groups on an admin-configured Wikimedia project.
+
+    Membership is cached by project and supplied username.  Any remote failure
+    yields and caches an empty list so project-backed auto grants fail closed.
+    """
     normalized_project = str(project or "").strip().lower()
     cache_key = f"project:{normalized_project}:{username}"
     now = time.time()
@@ -1139,7 +1334,12 @@ def get_project_user_groups(
 
 
 def get_user_global_groups(username, force_refresh: bool = False):
-    """Return CentralAuth global groups for a user."""
+    """Return a MediaWiki-normalized user's CentralAuth global groups.
+
+    CentralAuth has returned both list- and mapping-shaped group data over time;
+    both forms are accepted.  Failures return an empty cached list, denying all
+    global-role grants until a later refresh.
+    """
     normalized_username = _normalize_username(username)
     cache_key = f"global:{normalized_username}"
     now = time.time()
@@ -1179,7 +1379,11 @@ def get_user_global_groups(username, force_refresh: bool = False):
 
 
 def get_global_userright_groups(force_refresh: bool = False) -> list[str]:
-    """Return CentralAuth global group names from the Wikimedia API."""
+    """Return CentralAuth group names offered by the policy editor.
+
+    This is discovery metadata rather than membership data.  Empty failure
+    results are cached briefly to avoid repeatedly hitting a degraded API.
+    """
     cache_key = "siteinfo-global-groups"
     now = time.time()
     cached = _group_cache.get(cache_key)
@@ -1218,12 +1422,20 @@ def get_global_userright_groups(force_refresh: bool = False) -> list[str]:
 
 
 def _auto_grant_role_enabled(username: str, role_name: str) -> bool:
-    """Evaluate whether a MediaWiki-backed role applies to a user."""
+    """Evaluate a normalized role selector against the supplied username.
+
+    The special ``authenticated`` selector trusts the caller's non-empty username
+    and performs no credential check; enforcement callers must obtain it from the
+    authenticated session.  Wikimedia local/global membership checks fail closed
+    because their lookup helpers return empty lists on errors.  Unknown selectors
+    return ``False``.
+    """
     normalized_username = _normalize_username(username)
     role_name = _normalize_auto_grant_role_name(role_name)
     if not normalized_username:
         return False
     if role_name == "authenticated":
+        # This means "authenticated upstream", not "the account exists".
         return True
     if role_name == "commons_admin":
         return "sysop" in set(get_user_groups(normalized_username))
@@ -1239,7 +1451,15 @@ def _auto_grant_role_enabled(username: str, role_name: str) -> bool:
 
 
 def user_has_module_right(username: str, module_name: str, right: str) -> bool:
-    """Return True when a user has a specific module grant or module admin power."""
+    """Check a module right, treating ``manage_modules`` as a global override.
+
+    The override is intentionally broad in current policy: it satisfies every
+    module-scoped right, including module-defined sensitive actions such as live
+    apply and future rights not yet known to the framework. Empty
+    identities/components and other ungranted rights fail closed. This helper
+    evaluates configured grants only; callers apply maintainer hierarchy
+    separately in the permissions layer.
+    """
     if not username:
         return False
     config = _effective_runtime_authz_config()
@@ -1251,9 +1471,11 @@ def user_has_module_right(username: str, module_name: str, right: str) -> bool:
 
 
 def is_bot_admin(username: str) -> bool:
-    """Return True if the user is one of the hardcoded bot-admin accounts (e.g. chuckbot).
+    """Return whether a username is in the process-configured bot-admin set.
 
-    Bot admins sit at the top of the user hierarchy: chuckbot > maintainer > admin > regular.
+    Matching ignores surrounding whitespace and case.  Permission assembly gives
+    the bot-admin-only cancellation power inside its maintainer branch; other
+    bot-admin exceptions are documented at their individual policy checks.
     """
     if not username:
         return False

@@ -1,78 +1,94 @@
 # Deployment Quick Reference
 
-## Local Checks
+## Local release checks
 
 ```bash
-python scripts/check-module-install.py
-python3 -m pytest -q tests/test_module_registry.py tests/test_module_runtime.py
-npm run build
 bash scripts/check-secrets.sh live
+.venv/bin/python scripts/check-module-install.py
+bash scripts/canary-build.sh
 ```
 
-Run narrower or broader test commands based on what changed. Do not rely on old
-stored test counts.
-
-## Toolforge Deploy
+The default canary validates the framework, enabled manifests, generated Salt
+Shack registry, frontend registry/build, and focused framework integration
+tests. Run changed modules' own tests separately. For the full non-live
+framework suite:
 
 ```bash
-ssh login.toolforge.org
-become buckbot
-cd /data/project/buckbot
-git pull --ff-only
-toolforge build start https://github.com/<owner>/<repo>
-toolforge webservice buildservice restart
+CANARY_FULL_TESTS=1 bash scripts/canary-build.sh
 ```
 
-For a new Toolforge tool account, use the reviewed first-deploy wrapper instead
-of these update commands:
+## Vendored module refresh
+
+From a clean framework worktree:
 
 ```bash
-bash scripts/toolforge-bootstrap.sh --tool-name buckbot
-bash scripts/toolforge-bootstrap.sh --apply --configure-env --tool-name buckbot
+npm run modules:update
 ```
 
-See [TOOLFORGE_FIRST_DEPLOY.md](TOOLFORGE_FIRST_DEPLOY.md) before running it.
+This clone-and-overlay refresh currently updates 4Award from `framework-dev`
+and File Changer and Salt Shack from `main`, unless their `*_REMOTE` or
+`*_BRANCH` overrides are set. Review and test the complete snapshot diff.
 
-## Cron Changes
+## Cron changes
+
+1. Update the module schedule/config through the signed-in web UI.
+2. Open `/jobs-yaml` as a module manager.
+3. Replace only the generated block in the checked `jobs.yaml`.
+4. Review and commit the file before deployment.
+
+For an intentional exact jobs-only reconciliation from the Toolforge checkout,
+accept a brief interruption to continuous jobs and run:
 
 ```bash
+toolforge jobs flush
 toolforge jobs load jobs.yaml
 toolforge jobs list
 ```
 
-The framework can generate jobs YAML from module registry state, but Toolforge
-still needs `jobs.yaml` loaded explicitly.
+The flush matters when a definition was removed or renamed; `load` alone may
+leave stale jobs running. The normal deploy wrapper already performs this exact
+flush/reload sequence.
 
-## Core Environment
+## Production deploy
+
+Push the reviewed commit to `main`, or manually dispatch the **Toolforge
+deploy** GitHub workflow for a reviewed branch. That workflow runs
+`scripts/toolforge-deploy-new-version.sh` in `/data/project/buckbot` and owns
+the build, webservice restart, job flush, and jobs reload.
+
+For an operator-run recovery deploy after becoming the tool account:
 
 ```bash
+cd /data/project/buckbot
+REPO_DIR=/data/project/buckbot BRANCH=main BUILDPACK_CHANNEL=latest \
+  bash scripts/toolforge-deploy-new-version.sh
+```
+
+## Core production environment
+
+```text
+BOT_NAME=buckbot
 ENABLE_MODULE_LOADING=1
-TOOL_DATA_DIR=/data/project/buckbot
 NOTDEV=1
+BUCKBOT_REDIS_NAMESPACE=buckbot
+BUCKBOT_CELERY_QUEUE=buckbot.celery
+BUCKBOT_CELERY_WORKER_NAME=buckbot-celery
 ```
 
-Module loading defaults to enabled; keep the explicit value in audited
-Toolforge configuration so an emergency opt-out is visible.
+Secrets and OAuth credentials are managed with Toolforge envvars. See
+[ENVIRONMENT.md](ENVIRONMENT.md); do not store them in Git or `jobs.yaml`.
 
-Framework and module User-Agent defaults derive their version from the deployed
-release. Set the `*_HTTP_USER_AGENT` variables only when a deployment needs a
-full custom override.
+## Incident controls
 
-See [ENVIRONMENT.md](ENVIRONMENT.md) for the full environment-variable map.
+- Use disable/E-STOP for framework-owned run rows and scheduled Toolforge work;
+  check the module's own queue/API boundary before treating it as containment.
+- Set `ENABLE_MODULE_LOADING=0` and restart web processes to suppress module
+  Blueprint bootstrap; coordinate shared-worker shutdown separately if needed.
+- Revert a bad framework/snapshot commit on `main` and let the normal workflow
+  redeploy the restored bundle.
 
-## Module API Rule
-
-Framework-generated module APIs live under:
-
-```txt
-/api/v1/modules/<module>/...
-```
-
-Module-owned CTB APIs should also stay under that module path. Avoid new
-top-level module paths such as `/api/v1/four-award/...`.
-
-## Rollback
-
-For a module-specific problem, disable the module or set
-`ENABLE_MODULE_LOADING=0` and restart. For a framework-wide problem, redeploy the
-last known-good commit and reload `jobs.yaml` if job definitions changed.
+E-STOP coverage ends at framework-managed run rows and Toolforge jobs unless a
+module implements additional cleanup. File Changer's separate Celery/table
+queue and already-mounted API are not stopped by generic module E-STOP today.
+Rollback E-STOP is broader in a different direction: it purges the shared
+Buckbot Celery queue and may discard queued Salt Shack or File Changer messages.

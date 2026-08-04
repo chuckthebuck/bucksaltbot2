@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Start and verify the Docker Compose Redis/MariaDB development services.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh

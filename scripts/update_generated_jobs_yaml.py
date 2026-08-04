@@ -31,6 +31,7 @@ def replace_generated_block(jobs_text: str, generated_text: str) -> str:
 
 
 def main() -> int:
+    """Replace the marked jobs block from a separately generated YAML fragment."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--jobs", type=Path, default=Path("jobs.yaml"))
     parser.add_argument("--generated", type=Path, required=True)

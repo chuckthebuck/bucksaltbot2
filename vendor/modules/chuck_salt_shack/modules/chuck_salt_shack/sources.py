@@ -1,4 +1,4 @@
-"""Pywikibot page-source adapters for Saltlick."""
+"""Map bounded legacy recipe sources to Pywikibot page iterators."""
 
 from __future__ import annotations
 
@@ -15,11 +15,18 @@ def resolve_pages(
     *,
     pywikibot_module: Any | None = None,
 ) -> Iterable[Any]:
-    """Build a bounded Pywikibot page iterator from a source specification."""
+    """Build a lazy, bounded Pywikibot iterator from a validated source.
+
+    ``SourceSpec`` has already checked type-specific requirements.  The final
+    ``islice`` is defense-in-depth for generators whose own ``total`` handling
+    differs across Pywikibot versions.
+    """
     if pywikibot_module is None:
         import pywikibot as pywikibot_module
     from pywikibot import pagegenerators
 
+    # Pywikibot uses ``None`` for all namespaces; an empty list is not a
+    # portable equivalent across its generator APIs.
     namespaces = list(source.namespaces) or None
     if source.type == "titles":
         pages = (
@@ -81,4 +88,5 @@ def resolve_pages(
         )
     else:  # pragma: no cover - SourceSpec rejects this
         raise ValueError(f"unsupported source type: {source.type}")
+    # Keep the outer bound even for source adapters that already receive total.
     return islice(pages, source.limit)

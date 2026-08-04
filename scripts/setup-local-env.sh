@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Materialize isolated local defaults and the scoped safe-mode guard.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh

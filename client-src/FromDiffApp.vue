@@ -1,4 +1,11 @@
 <script setup lang="ts">
+/**
+ * Diff-based rollback request form.
+ *
+ * The browser collects bounded request intent and displays the queued response.
+ * Resolution of the diff, authorization, approval, and rollback execution are
+ * deliberately server-side responsibilities.
+ */
 import { computed, ref } from "vue";
 import {
   CdxButton,
@@ -9,6 +16,8 @@ import {
   CdxTextArea
 } from "@wikimedia/codex";
 
+// Server-rendered defaults shape the controls but do not replace endpoint-side
+// validation or dry-run-only enforcement.
 const props = JSON.parse(
   document.getElementById("from-diff-props")!.textContent!
 ) as {
@@ -18,6 +27,8 @@ const props = JSON.parse(
   from_diff_dry_run_only?: boolean;
 };
 
+// Form values and request lifecycle state are separate so every submission can
+// clear stale result/error output without resetting the operator's draft.
 const diff = ref("");
 const summary = ref("");
 const dryRun = ref(Boolean(props.from_diff_dry_run_only));
@@ -30,6 +41,7 @@ const result = ref<Record<string, unknown> | null>(null);
 
 const maxLimit = computed(() => Number(props.max_limit ?? 1000));
 
+/** Validate the required diff reference and advertised request limit. */
 function validate(): boolean {
   errors.value = [];
 
@@ -54,6 +66,7 @@ function validate(): boolean {
   return errors.value.length === 0;
 }
 
+/** Queue normalized rollback intent and render, but never execute, the result. */
 async function submit() {
   try {
     if (!validate()) {
@@ -68,6 +81,8 @@ async function submit() {
     const trimmedSummary = String(summary.value ?? "").trim();
     const trimmedLimit = String(limit.value ?? "").trim();
 
+    // The endpoint rechecks caller permissions and may force dry-run behavior;
+    // checkbox state is not treated as authorization.
     const response = await fetch("/api/v1/rollback/from-diff", {
       method: "POST",
       headers: {
@@ -100,6 +115,7 @@ async function submit() {
 
 <template>
   <div class="rollback-tool-section">
+    <!-- Explain the approval boundary before presenting request controls. -->
     <CdxMessage type="notice" class="top-message">
       Enter a diff oldid or URL to submit a rollback request. A maintainer must approve
       the request before it runs.
@@ -109,6 +125,7 @@ async function submit() {
       Your from-diff permission is currently dry-run-only. Live rollback submission is disabled.
     </CdxMessage>
 
+    <!-- This form creates a review request rather than a live rollback job. -->
     <div class="rollback-tool-form">
       <CdxField
         label="Diff oldid or URL"
@@ -168,6 +185,7 @@ async function submit() {
       </ul>
     </CdxMessage>
 
+    <!-- Show a human summary and retain raw response fields for traceability. -->
     <CdxMessage v-if="result" type="success">
       Request submitted with status: {{ result.status }}.
       <br>

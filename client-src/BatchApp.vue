@@ -1,4 +1,10 @@
 <script setup lang="ts">
+/**
+ * Batch rollback request authoring surface.
+ *
+ * Multiple import formats converge on one selectable preview list. Submission
+ * creates an approval-gated request; this component never executes rollbacks.
+ */
 import { ref, computed, onMounted, watch } from "vue";
 import {
   CdxButton,
@@ -12,13 +18,13 @@ import {
 } from "./batchImport";
 import { loadDraft, saveDraft } from "./draft";
 
-/* ---------------- props ---------------- */
+/* ---------------- server context ---------------- */
 
 const props = JSON.parse(
   document.getElementById("batch-props")!.textContent!
 );
 
-/* ---------------- state ---------------- */
+/* ---------------- draft and normalized preview state ---------------- */
 
 const input = ref("");
 const parsed = ref<any[]>([]);
@@ -31,8 +37,11 @@ const importUser = ref("");
 const quarryInput = ref("");
 const batchNumber = ref("");
 
+// Draft storage is scoped by username so accounts sharing a browser do not
+// overwrite each other's manual input.
 const draftKey = `buckbot:batchDraft:${props.username ?? "anon"}`;
 
+// Restore only into an untouched form; an already initialized value wins.
 onMounted(() => {
   const saved = loadDraft(draftKey);
   if (saved && !input.value) {
@@ -40,12 +49,15 @@ onMounted(() => {
   }
 });
 
+// Persist manual text continuously. Imported previews remain transient because
+// they can be recreated from their source and may contain large datasets.
 watch(input, (value) => {
   saveDraft(draftKey, value);
 });
 
 /* ---------------- parsing ---------------- */
 
+/** Parse manual lines while preserving selection for unchanged item identities. */
 function parseInput() {
   errors.value = [];
 
@@ -59,6 +71,8 @@ function parseInput() {
     return;
   }
 
+  // Identity includes the optional summary: changing it creates a newly
+  // selected request item instead of inheriting a possibly stale deselection.
   const existingSelection = new Map(
     parsed.value.map(i => [
       `${i.title}|${i.user}|${i.summary ?? ""}`,
@@ -102,6 +116,11 @@ function parseInput() {
 
 /* ---------------- contrib import ---------------- */
 
+/** Replace the preview with first-seen unique contributions for one user.
+ *
+ * Import calls are not canceled or request-ID guarded; if an operator starts
+ * several imports, the last response to finish becomes the visible preview.
+ */
 async function loadContribs() {
   if (!importUser.value) return;
 
@@ -129,6 +148,7 @@ async function loadContribs() {
       return;
     }
 
+    // Preserve API order while collapsing repeated edits to the same title.
     const seen = new Set();
 
     parsed.value = contribs
@@ -151,6 +171,7 @@ async function loadContribs() {
 
 /* ---------------- Quarry import ---------------- */
 
+/** Atomically replace imported preview rows, retaining the old list on empty input. */
 function setImportedItems(items: any[], emptyMessage: string) {
   if (!items.length) {
     errors.value = [emptyMessage];
@@ -161,6 +182,7 @@ function setImportedItems(items: any[], emptyMessage: string) {
   errors.value = [];
 }
 
+/** Resolve an allowlisted Quarry reference and replace the normalized preview. */
 async function loadQuarry() {
   const url = quarryResultUrl(quarryInput.value);
 
@@ -189,6 +211,7 @@ async function loadQuarry() {
 
 /* ---------------- file upload ---------------- */
 
+/** Read one local JSON/CSV/TSV file and normalize it entirely in the browser. */
 function handleFile(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0];
   if (!file) return;
@@ -212,20 +235,24 @@ function handleFile(e: Event) {
 
 /* ---------------- selection helpers ---------------- */
 
+/** Set every preview row's submission flag. */
 function selectAll(val: boolean) {
   parsed.value.forEach(i => i.selected = val);
 }
 
+/** Toggle every preview row's submission flag in place. */
 function invertSelection() {
   parsed.value.forEach(i => i.selected = !i.selected);
 }
 
+// Derive the counter from row flags so imports and bulk actions cannot desync it.
 const selectedCount = computed(() =>
   parsed.value.filter(i => i.selected).length
 );
 
 /* ---------------- submit ---------------- */
 
+/** Submit only selected rows as an approval-gated batch request. */
 async function submit() {
   if (!parsed.value.length) {
     alert("No items");
@@ -249,6 +276,8 @@ async function submit() {
     return;
   }
 
+  // Server-side authentication, batch-ID policy, and execution rights remain
+  // authoritative; requested_by and dry-run values are request data, not grants.
   const r = await fetch("/api/v1/rollback/jobs", {
     method: "POST",
     headers: {
@@ -272,14 +301,14 @@ async function submit() {
 <template>
   <div class="container">
 
-    <!-- instructions -->
+    <!-- Explain the approval boundary and manual interchange format first. -->
     <CdxMessage>
       Enter one item per line to submit a batch request (admin approval required before execution):
       <br>
       <code>Title|User|Optional summary</code>
     </CdxMessage>
 
-    <!-- textarea -->
+    <!-- Manual text is draft-persisted; imports populate the preview directly. -->
     <CdxTextArea
       v-model="input"
       rows="8"
@@ -288,7 +317,7 @@ async function submit() {
 
     <br><br>
 
-    <!-- file upload -->
+    <!-- File parsing stays local; only selected normalized rows are submitted. -->
     <label>
       Upload Quarry/JSON/CSV:
       <input type="file" accept=".json,.csv,.tsv,text/csv,text/tab-separated-values,application/json" @change="handleFile">
@@ -296,7 +325,7 @@ async function submit() {
 
     <br><br>
 
-    <!-- quarry import -->
+    <!-- Remote import helpers replace, rather than merge into, preview state. -->
     <div>
       <input
         v-model="quarryInput"
@@ -339,7 +368,7 @@ async function submit() {
 
     <br>
 
-    <!-- dry run -->
+    <!-- These are requested execution options and are revalidated server-side. -->
     <label style="display:flex; align-items:center; gap:8px">
       <input type="checkbox" v-model="dryRun">
       Dry run (no actual rollback)
@@ -352,7 +381,7 @@ async function submit() {
 
     <br>
 
-    <!-- buttons -->
+    <!-- Preview parses local text; Submit sends the current selected preview. -->
     <CdxButton type="button" @click.prevent="parseInput">
       Preview
     </CdxButton>
@@ -366,7 +395,7 @@ async function submit() {
       <div v-for="e in errors" :key="e">{{ e }}</div>
     </div>
 
-    <!-- selection controls -->
+    <!-- Selection helpers mutate the same flags used to construct the payload. -->
     <div v-if="parsed.length" style="margin-top:10px">
       <CdxButton type="button" @click="selectAll(true)">Select all</CdxButton>
       <CdxButton type="button" @click="selectAll(false)">Select none</CdxButton>
@@ -377,7 +406,7 @@ async function submit() {
       </span>
     </div>
 
-    <!-- item list -->
+    <!-- Normalized preview rows expose exactly what will be included/excluded. -->
     <div v-if="parsed.length" style="margin-top:10px">
 
       <div
@@ -410,7 +439,7 @@ async function submit() {
 
     </div>
 
-    <!-- result -->
+    <!-- Raw server response is retained for request IDs and troubleshooting. -->
     <pre v-if="result">{{ result }}</pre>
 
   </div>

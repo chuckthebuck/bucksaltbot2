@@ -1,4 +1,10 @@
-"""Isolated module job runner for Chuck the Buckbot Framework."""
+"""Execute one manifest-declared module handler in an isolated process.
+
+The runner validates current registry state, creates a narrow context object,
+activates module-specific OAuth only when declared, and converts handler outcomes
+into durable run state.  The outer controller provides a second hard timeout and
+process cancellation boundary for handlers that cannot cooperate.
+"""
 
 from __future__ import annotations
 
@@ -39,32 +45,45 @@ class ModuleRunTimedOut(TimeoutError):
 
 
 class _ConfigView(Mapping[str, Any]):
+    """Read-only mapping facade over the effective module configuration."""
+
     def __init__(self, values: dict[str, Any]):
+        """Copy values so handler mutations cannot alter the source dictionary."""
         self._values = dict(values)
 
     def __getitem__(self, key: str) -> Any:
+        """Return one configuration value by key."""
         return self._values[key]
 
     def __iter__(self) -> Iterator[str]:
+        """Iterate configuration keys."""
         return iter(self._values)
 
     def __len__(self) -> int:
+        """Return the number of effective configuration keys."""
         return len(self._values)
 
     def as_dict(self) -> dict[str, Any]:
+        """Return a mutable copy for legacy handlers that require a dictionary."""
         return dict(self._values)
 
 
 class _FallbackLogger:
+    """Stdout logger used when a file logger cannot be opened in the container."""
+
     def __init__(self, name: str):
+        """Remember the component prefix included in every message."""
         self.name = name
 
     def log(self, message: str) -> None:
+        """Write one prefixed message to stdout."""
         print(f"[{self.name}] {message}")
 
 
 @dataclass(frozen=True)
 class ModuleRunContext:
+    """Narrow framework capability object passed to module handlers."""
+
     module_name: str
     job_name: str
     run_id: int
@@ -72,12 +91,13 @@ class ModuleRunContext:
     logger: Any
 
     def check_cancelled(self) -> None:
+        """Raise when durable state contains a cooperative cancel request."""
         run = get_module_job_run(self.run_id)
         if run and run.get("status") in {"cancel_requested", "canceled"}:
             raise ModuleRunCancelled(f"Run {self.run_id} was canceled")
 
     def site(self, code: str = "commons", family: str = "commons"):
-        """Return a full pywikibot Site for module code."""
+        """Return an authenticated Pywikibot Site for trusted module code."""
         from pywikibot_env import ensure_pywikibot_env
 
         ensure_pywikibot_env(strict=True)
@@ -94,7 +114,11 @@ class ModuleRunContext:
         dry_run: bool = True,
         allowed_types=(),
     ):
-        """Run a declarative action plan through the framework action catalog."""
+        """Run a declarative action plan through the framework action catalog.
+
+        Child scripts provide data only; the reviewed framework catalogue owns
+        method dispatch, wiki construction, batching, and progress persistence.
+        """
         from router.wiki_actions import execute_action_plan
 
         def record_batch(batch_number: int, processed: int, total: int) -> None:
@@ -126,6 +150,7 @@ class ModuleRunContext:
 
 
 def _import_handler(handler_path: str):
+    """Import and return a callable ``module.path:function`` handler."""
     module_path, sep, attr = str(handler_path or "").partition(":")
     if not sep or not module_path or not attr:
         raise ValueError("handler must be in module.path:function form")
@@ -138,6 +163,7 @@ def _import_handler(handler_path: str):
 
 
 def _build_logger(name: str):
+    """Open a file logger when possible, otherwise retain stdout visibility."""
     try:
         return Logger(name)
     except Exception:
@@ -166,6 +192,8 @@ def _activate_module_oauth(definition) -> None:
             + ", ".join(str(name) for name in missing)
         )
 
+    # Pywikibot's user-config reads the generic target names.  Copy values only
+    # inside this module-specific subprocess so credentials never leak to peers.
     for target_name, source_name in credential_env.items():
         os.environ[target_name] = os.environ[str(source_name)]
 
@@ -212,6 +240,7 @@ def _handler_call_args(handler, ctx: ModuleRunContext, payload: dict[str, Any]) 
 
 
 def _invoke_handler(handler, ctx: ModuleRunContext, payload: dict[str, Any]) -> Any:
+    """Invoke a handler using its richest supported compatibility signature."""
     return handler(*_handler_call_args(handler, ctx, payload))
 
 
@@ -229,6 +258,7 @@ def _handler_timeout(timeout_seconds: int):
         return
 
     def _raise_timeout(_signum, _frame):
+        """Translate SIGALRM into the runner's typed timeout outcome."""
         raise ModuleRunTimedOut(
             f"Module job timed out after {int(timeout_seconds)} seconds"
         )
@@ -244,11 +274,13 @@ def _handler_timeout(timeout_seconds: int):
 
 
 def _json_safe_result(result: Any) -> dict[str, Any]:
+    """Normalize arbitrary handler results into a JSON-storable dictionary."""
     payload = result if isinstance(result, dict) else {"result": result}
     return json.loads(json.dumps(payload, default=str))
 
 
 def _bootstrap_local_registry() -> None:
+    """Populate the child process registry from local and installed definitions."""
     enabled_module_names = load_enabled_module_names()
     modules_root = Path(__file__).resolve().parent / "modules"
     if modules_root.exists():
@@ -264,7 +296,7 @@ def run_module_job(
     trigger_type: str = "schedule",
     triggered_by: str | None = None,
 ) -> int:
-    """Run one module job and return a process exit code."""
+    """Run one enabled module job and persist a terminal process outcome."""
     os.environ.setdefault("NOTDEV", "1")
     _bootstrap_local_registry()
 
@@ -321,9 +353,13 @@ def run_module_job(
         run = get_module_job_run(run_id) or {}
         payload = run.get("payload") or {}
         config_values = get_module_config(module_name)
+        # Specialized trusted workflows may persist per-run overrides in the run
+        # payload.  The generic HTTP run endpoint rejects this key before enqueue.
         config_overrides = payload.get("config_overrides")
         if isinstance(config_overrides, dict):
             config_values.update(config_overrides)
+        # Safe mode only narrows capability, even if stored runtime configuration
+        # or a trusted run override requested live publication.
         if os.getenv("CHUCKBOT_LOCAL_SAFE_MODE"):
             config_values["dry_run"] = True
             config_values["publish_dry_run_report"] = False
@@ -358,6 +394,7 @@ def run_module_job(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse the isolated runner CLI and return the module job's exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--module", required=True)
     parser.add_argument("--job", required=True)

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Install framework-only Python/Node dependencies for the current checkout.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh

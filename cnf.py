@@ -1,3 +1,5 @@
+"""Resolve ToolsDB credentials from Toolforge CNF files or environment values."""
+
 import configparser as cfp
 import os
 from pathlib import Path
@@ -7,6 +9,7 @@ LOCAL_DEFAULT_HOST = None
 
 
 def load_cnf():
+    """Load the first available replica CNF file into a config parser."""
     cnf = cfp.ConfigParser()
     for path in _candidate_cnf_paths():
         if path.exists():
@@ -16,6 +19,7 @@ def load_cnf():
 
 
 def _candidate_cnf_paths() -> list[Path]:
+    """Return supported credential-file locations in precedence order."""
     paths = [Path.home() / "replica.my.cnf"]
     tool_data_dir = os.environ.get("TOOL_DATA_DIR")
     if tool_data_dir:
@@ -24,10 +28,12 @@ def _candidate_cnf_paths() -> list[Path]:
 
 
 def _truthy_env(name: str) -> bool:
+    """Return whether an environment flag uses a recognized true value."""
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _running_on_toolforge() -> bool:
+    """Infer Toolforge execution without overriding explicit local safe mode."""
     if _truthy_env("CHUCKBOT_LOCAL_SAFE_MODE"):
         return False
     if os.environ.get("TOOLFORGE"):
@@ -39,12 +45,14 @@ def _running_on_toolforge() -> bool:
 
 
 def _default_host() -> str:
+    """Choose the shared ToolsDB host only for detected Toolforge processes."""
     if _running_on_toolforge():
         return TOOLFORGE_DEFAULT_HOST
     return LOCAL_DEFAULT_HOST
 
 
 def _env(name: str) -> str | None:
+    """Read a stripped environment value, collapsing blanks to ``None``."""
     value = os.environ.get(name)
     if value is None:
         return None
@@ -54,6 +62,8 @@ def _env(name: str) -> str | None:
 
 cnf = load_cnf()
 
+# The Toolforge-managed CNF is authoritative for user/password.  Environment
+# credentials are the local/container fallback and may also select a custom host.
 if cnf.has_section("client"):
     user = cnf.get("client", "user")
     password = cnf.get("client", "password")

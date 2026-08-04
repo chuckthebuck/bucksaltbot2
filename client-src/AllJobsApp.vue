@@ -1,4 +1,11 @@
 <script setup lang="ts">
+/**
+ * Maintainer-oriented cross-user job table.
+ *
+ * Durable job rows are normalized, optionally grouped into display-only batch
+ * summaries, polled while visible, and expanded on demand. Approval buttons are
+ * capability hints; the approval endpoint remains the authorization boundary.
+ */
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { CdxButton } from "@wikimedia/codex";
 import {
@@ -23,6 +30,8 @@ import {
   textColumn,
 } from "./components/tableColumnFactories";
 
+// Server-rendered capabilities avoid presenting approval controls to obvious
+// non-reviewers, but every approval request is checked again by the API.
 const pageProps = JSON.parse(
   document.getElementById("all-jobs-props")!.textContent || "{}"
 ) as {
@@ -73,6 +82,7 @@ type DisplayRow = DisplayJobRow | DisplayBatchRow;
 
 const ACTIVE_STATUSES = new Set(["queued", "running", "resolving", "staging", "pending_approval"]);
 
+/** Normalize database/JSON boolean spellings without generic truthiness. */
 function asBoolean(value: unknown): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value !== 0;
@@ -85,11 +95,13 @@ function asBoolean(value: unknown): boolean {
   return false;
 }
 
+/** Accept only usable positive batch identifiers. */
 function asPositiveIntOrNull(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/** Convert an untrusted API row into the table's closed internal shape. */
 function normalizeAllJobsRow(row: unknown): AllJobsRow | null {
   if (!row || typeof row !== "object") return null;
 
@@ -116,6 +128,8 @@ function normalizeAllJobsRow(row: unknown): AllJobsRow | null {
   };
 }
 
+// Durable rows and display-only expansion/action state are intentionally kept
+// separate so a polling refresh does not collapse open details or buttons.
 const jobs = ref<AllJobsRow[]>([]);
 const loading = ref(true);
 const error = ref("");
@@ -130,6 +144,12 @@ const refreshing = ref(false);
 const canApproveDiff = computed(() => Boolean(pageProps.can_approve_diff));
 const canApproveBatch = computed(() => Boolean(pageProps.can_approve_batch));
 
+/** Replace job data with one current server snapshot.
+ *
+ * ``refreshing`` prevents timer overlap, though approval/visibility callers may
+ * still initiate another load. These are idempotent reads and the next poll
+ * reconciles a response that arrives out of order.
+ */
 async function loadAllJobsRows() {
   refreshing.value = true;
   try {
@@ -142,6 +162,7 @@ async function loadAllJobsRows() {
   }
 }
 
+// Load before revealing the table, then use visibility-aware background polling.
 onMounted(async () => {
   try {
     await loadAllJobsRows();
@@ -156,11 +177,13 @@ onMounted(async () => {
   document.addEventListener("visibilitychange", onVisibilityChange);
 });
 
+// Release global timer/listener resources when this surface is unmounted.
 onBeforeUnmount(() => {
   stopPolling();
   document.removeEventListener("visibilitychange", onVisibilityChange);
 });
 
+/** Start one polling interval; in-flight timer refreshes are skipped. */
 function startPolling() {
   if (pollingTimer.value !== null) return;
 
@@ -170,12 +193,14 @@ function startPolling() {
   }, 5000);
 }
 
+/** Stop polling idempotently. */
 function stopPolling() {
   if (pollingTimer.value === null) return;
   clearInterval(pollingTimer.value);
   pollingTimer.value = null;
 }
 
+/** Pause hidden-tab work and refresh immediately when visibility returns. */
 function onVisibilityChange() {
   if (document.hidden) {
     stopPolling();
@@ -185,6 +210,7 @@ function onVisibilityChange() {
   }
 }
 
+/** Escape server values before placing them in the controlled details HTML. */
 function esc(s: unknown): string {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -192,6 +218,7 @@ function esc(s: unknown): string {
     .replace(/>/g, "&gt;");
 }
 
+/** Reduce child statuses to a conservative display-only batch status. */
 function summarizeBatchStatus(batchJobs: AllJobsRow[]): string {
   const statuses = batchJobs.map((job) => job.status);
 
@@ -204,6 +231,7 @@ function summarizeBatchStatus(batchJobs: AllJobsRow[]): string {
   return statuses[0] ?? "queued";
 }
 
+/** Return dry/live, or ``null`` when a display batch mixes both modes. */
 function summarizeBatchMode(batchJobs: AllJobsRow[]): boolean | null {
   const hasDryRun = batchJobs.some((job) => job.dryRun);
   const hasLive = batchJobs.some((job) => !job.dryRun);
@@ -212,6 +240,7 @@ function summarizeBatchMode(batchJobs: AllJobsRow[]): boolean | null {
   return hasDryRun;
 }
 
+/** Match a pending job's required review class to server-advertised capability. */
 function canApproveRow(row: DisplayRow): boolean {
   if (row.kind !== "job") return false;
   if (row.status !== "pending_approval") return false;
@@ -235,6 +264,7 @@ function canApproveRow(row: DisplayRow): boolean {
   return false;
 }
 
+/** Serialize approval clicks per job, then reconcile from durable state. */
 async function onApprove(row: DisplayJobRow, endpoint?: string) {
   actionError.value = "";
   actionNotice.value = "";
@@ -251,6 +281,7 @@ async function onApprove(row: DisplayJobRow, endpoint?: string) {
   }
 }
 
+/** Build controlled batch markup, escaping free-text server values. */
 function buildBatchDetails(row: DisplayBatchRow): string {
   const jobsList = row.jobs
     .map(
@@ -272,6 +303,12 @@ function buildBatchDetails(row: DisplayBatchRow): string {
   `;
 }
 
+/** Toggle cached batch details or lazily fetch one job's detailed payload.
+ *
+ * Job-detail fetches have no cancellation token; a response that finishes after
+ * another click may reopen that row. Free-text content is escaped and the view
+ * is read-only; a later click closes it normally.
+ */
 async function toggle(row: DisplayRow) {
   const key = row.rowKey;
 
@@ -301,6 +338,8 @@ async function toggle(row: DisplayRow) {
   openRows.value[key] = true;
 }
 
+// Group completed/running siblings into compact batch summaries. Pending batch
+// requests remain individual rows because approval is a per-job action.
 const displayedRows = computed<DisplayRow[]>(() => {
   const sorted = [...jobs.value].sort((a, b) => {
     const aBatchSortKey = a.batchId ?? a.id;
@@ -372,6 +411,7 @@ const displayedRows = computed<DisplayRow[]>(() => {
   return rows;
 });
 
+/** Create a pending-aware approval cell for one endpoint interpretation. */
 function buildApproveButton(
   row: DisplayJobRow,
   text: string,
@@ -396,6 +436,8 @@ function buildApproveButton(
   );
 }
 
+// Declarative columns share the same job/batch row union; actions explicitly
+// opt out for synthetic batch rows that have no single API resource.
 const tableColumns: TableColumn<DisplayRow>[] = [
   {
     key: "id",
@@ -466,11 +508,13 @@ const tableColumns: TableColumn<DisplayRow>[] = [
   },
 ];
 
+/** Adapt UnifiedTable's generic row callback to local expansion state. */
 function isExpandedRow(row: unknown): boolean {
   const key = (row as DisplayRow).rowKey;
   return Boolean(openRows.value[key]);
 }
 
+/** Return only detail markup assembled by this component's builders. */
 function detailsHtml(row: unknown): string {
   const key = (row as DisplayRow).rowKey;
   return details.value[key] || "";
@@ -479,6 +523,7 @@ function detailsHtml(row: unknown): string {
 
 <template>
   <div class="all-jobs-table-wrap">
+    <!-- Action feedback is independent of initial table-load failures. -->
     <div v-if="actionNotice" class="all-jobs-action all-jobs-action--ok">{{ actionNotice }}</div>
     <div v-if="actionError" class="all-jobs-action all-jobs-action--error">{{ actionError }}</div>
     <div class="all-jobs-table__toolbar">
@@ -495,6 +540,7 @@ function detailsHtml(row: unknown): string {
 
     <div v-if="loading" class="all-jobs-table__empty">Loading jobs...</div>
     <div v-else-if="error" class="all-jobs-table__empty">{{ error }}</div>
+    <!-- Unified rows may be durable jobs or synthetic batch summaries. -->
     <UnifiedTable
       v-else
       :rows="displayedRows"
@@ -505,6 +551,7 @@ function detailsHtml(row: unknown): string {
       :expanded="isExpandedRow"
     >
       <template #expanded="{ row }">
+        <!-- Free-text fields are escaped before locally assembled details reach v-html. -->
         <div class="job-details" style="display:block" v-html="detailsHtml(row)"></div>
       </template>
     </UnifiedTable>

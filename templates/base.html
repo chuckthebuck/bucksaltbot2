@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+{# Shared shell: asset loading, capability-aware navigation, and build identity. #}
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -9,13 +10,11 @@
   <link rel="apple-touch-icon" href="/static/assets/chuck-framework-icon.png">
 
   {%- if not is_production %}
-    <!-- Vite dev -->
+    {# Development asks Vite for live modules; production uses its hashed manifest. #}
     <script type="module" src="{{ asset('@vite/client') }}"></script>
     <script type="module" src="{{ asset('index.html') }}"></script>
 
   {%- else %}
-    <!-- Production -->
-
     {% for css_file in asset_css('index.html') %}
       <link rel="stylesheet" href="{{ css_file }}">
     {% endfor %}
@@ -25,6 +24,7 @@
 </head>
 
 <body> 
+{# Route types collapse into stable navigation sections independent of URL aliases. #}
 {% set current_section = 'rollback' %}
 {% if type in ['rollback-all-jobs', 'rollback-requests'] %}
   {% set current_section = 'jobs' %}
@@ -43,6 +43,7 @@
   </a>
 
   <nav class="header-tabs" aria-label="Primary navigation">
+    {# Capability flags come from the authenticated server session, not the client. #}
     <a
       class="header-tab{% if current_section == 'rollback' %} is-active{% endif %}"
       aria-current="{% if current_section == 'rollback' %}page{% else %}false{% endif %}"
@@ -94,6 +95,7 @@
   {% endif %}
 </header>
   <div class="page-shell">
+    {# Sub-navigation is intentionally omitted when the current user lacks a section. #}
     <div class="subnav" aria-label="Section navigation">
       {% if current_section == 'rollback' %}
       <a class="subnav-item{% if type == 'rollback-queue' %} is-active{% endif %}" href="/goto?tab=rollback-queue">Rollback Queue</a>
@@ -133,6 +135,7 @@
   </div>
 
   <footer class="footer">
+    {# Version/commit values describe the exact framework and module snapshot served. #}
     <div class="footer-build">
       {% set framework = deployment_build_info.framework %}
       <span>

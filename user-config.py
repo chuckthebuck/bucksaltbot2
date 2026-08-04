@@ -1,3 +1,5 @@
+"""Pywikibot OAuth configuration for the framework's Commons bot account."""
+
 import os
 
 usernames['commons']['commons'] = 'chuckbot'
@@ -12,5 +14,5 @@ if not all([consumer_key, consumer_secret, access_token, access_secret]):
 
 info = (consumer_key, consumer_secret, access_token, access_secret)
 
-# Explicit is better than wildcard
+# Scope these credentials to Commons instead of exposing them to wildcard hosts.
 authenticate['commons.wikimedia.org'] = info

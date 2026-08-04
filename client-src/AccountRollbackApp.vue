@@ -1,4 +1,11 @@
 <script setup lang="ts">
+/**
+ * Account-based rollback request form.
+ *
+ * This client validates and queues a request; it never performs rollback work.
+ * Server-side authorization, maintainer approval, and dry-run enforcement remain
+ * authoritative even when the local controls offer a live-looking option.
+ */
 import { computed, ref } from "vue";
 import {
   CdxButton,
@@ -11,6 +18,8 @@ import {
 } from "@wikimedia/codex";
 import { searchUsernames } from "./api";
 
+// Server-rendered limits and capability constraints seed the form. They are UI
+// guidance only and are revalidated by the request endpoint.
 const props = JSON.parse(
   document.getElementById("from-account-props")!.textContent!
 ) as {
@@ -20,6 +29,8 @@ const props = JSON.parse(
   from_diff_dry_run_only?: boolean;
 };
 
+// Lookup state is split between typed text, selected menu value, and menu rows
+// because Codex lookups can submit either a chosen result or a manual username.
 const account = ref("");
 const accountLookupItems = ref<Array<{ label: string; value: string }>>([]);
 const accountLookupSelected = ref<string | number | null>(null);
@@ -30,12 +41,15 @@ const dryRun = ref(Boolean(props.from_diff_dry_run_only));
 const rollbackThroughBots = ref(false);
 const limit = ref(String(props.default_limit ?? 500));
 
+// Submission state is replaced per attempt so a prior success cannot remain
+// visible while a different request is in flight.
 const loading = ref(false);
 const errors = ref<string[]>([]);
 const result = ref<Record<string, unknown> | null>(null);
 
 const maxLimit = computed(() => Number(props.max_limit ?? 500));
 
+/** Prefer an explicit lookup selection, falling back to the current typed text. */
 function resolveTargetAccount(): string {
   const selected = accountLookupSelected.value;
   const typed = accountLookupInputValue.value;
@@ -47,6 +61,7 @@ function resolveTargetAccount(): string {
   return candidate;
 }
 
+/** Search usernames while preventing an older response from replacing a newer query. */
 async function onAccountLookupInput(value: string | number): Promise<void> {
   const query = String(value || "").trim();
   accountLookupInputValue.value = query;
@@ -60,6 +75,7 @@ async function onAccountLookupInput(value: string | number): Promise<void> {
 
   try {
     const users = await searchUsernames(query);
+    // Network responses may arrive out of order as the operator types.
     if (accountLookupRequestId.value !== requestId) return;
     accountLookupItems.value = users;
   } catch {
@@ -68,6 +84,7 @@ async function onAccountLookupInput(value: string | number): Promise<void> {
   }
 }
 
+/** Validate required input and the server-advertised positive limit bound. */
 function validate(): boolean {
   errors.value = [];
 
@@ -90,6 +107,7 @@ function validate(): boolean {
   return errors.value.length === 0;
 }
 
+/** Queue a normalized request and expose endpoint errors without mutating jobs locally. */
 async function submit() {
   try {
     if (!validate()) {
@@ -105,6 +123,8 @@ async function submit() {
     const trimmedSummary = String(summary.value ?? "").trim();
     const trimmedLimit = String(limit.value ?? "").trim();
 
+    // The server decides whether the authenticated caller may request this mode
+    // and whether dry-run-only policy overrides the submitted checkbox value.
     const response = await fetch("/api/v1/rollback/from-account", {
       method: "POST",
       headers: {
@@ -137,6 +157,7 @@ async function submit() {
 
 <template>
   <div class="rollback-tool-section">
+    <!-- Policy and request workflow guidance comes before editable controls. -->
     <CdxMessage type="notice" class="top-message">
       Submit an account rollback request. A maintainer must approve it before
       any rollback runs. Maximum allowed per request is {{ maxLimit }}.
@@ -146,6 +167,7 @@ async function submit() {
       Your from-diff permission is currently dry-run-only. Live rollback submission is disabled.
     </CdxMessage>
 
+    <!-- Form controls collect request intent only; approval occurs elsewhere. -->
     <div class="rollback-tool-form">
       <CdxField
         label="Target account"
@@ -207,6 +229,7 @@ async function submit() {
       </ul>
     </CdxMessage>
 
+    <!-- Preserve both a concise confirmation and raw response for audit/debugging. -->
     <CdxMessage v-if="result" type="success">
       Request submitted with status: {{ result.status }}.
       <br>

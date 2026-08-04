@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Install pinned module packages and build every declared module frontend.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh

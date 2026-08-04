@@ -5,7 +5,7 @@ import tomllib
 
 
 def module_manifest():
-    """Load the packaged TOML manifest as the single source of truth."""
+    """Parse packaged TOML in editable installs and built distributions."""
     manifest_text = files(__package__).joinpath("module.toml").read_text(
         encoding="utf-8"
     )

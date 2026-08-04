@@ -1,4 +1,9 @@
-"""Shared, environment-driven router framework configuration."""
+"""Define environment-driven constants shared by router submodules.
+
+This module performs no network or database work, so it is safe to import during
+web, worker, script, and test bootstrap.  Derived Redis keys all share the same
+deployment namespace to prevent local, canary, and production queues colliding.
+"""
 
 import os
 
@@ -41,6 +46,7 @@ DIFF_ERROR_KEY_PREFIX = f"{REDIS_KEY_PREFIX}:diff:error"
 
 
 def oauth_callback_url() -> str:
+    """Return the explicit OAuth callback or the canonical Toolforge URL."""
     configured = os.environ.get("USER_OAUTH_CALLBACK_URL")
     if configured:
         return configured

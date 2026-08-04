@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
+    {# Log text is escaped in preformatted output; filenames are resolved by the route. #}
     <h2>Log text for {{ log_name }}</h2>
     <div>
         <pre class="log-pre">{{ log }}</pre>

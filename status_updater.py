@@ -20,6 +20,7 @@ from redis_state import r as _redis
 
 
 def _pywikibot_unavailable(*args, **kwargs):
+    """Fail explicitly when an edit helper is used without Pywikibot installed."""
     raise RuntimeError("pywikibot is unavailable in this runtime")
 
 
@@ -28,6 +29,8 @@ _PYWIKIBOT_DIR_READY = ensure_pywikibot_env(strict=False) is not None
 try:
     import pywikibot as _pywikibot  # type: ignore[import-not-found]
 except Exception:  # noqa: BLE001
+    # Web/status imports should survive incomplete development dependencies; any
+    # attempted wiki operation still fails through the explicit stubs below.
     _pywikibot = None
 
 if _pywikibot is None:
@@ -43,6 +46,7 @@ _PYWIKIBOT_AVAILABLE = bool(_pywikibot)
 
 
 def _log_status_debug(message: str) -> None:
+    """Write best-effort status diagnostics without depending on app logging."""
     print(f"[status_updater] {message}", file=sys.stderr)
 
 
@@ -76,6 +80,7 @@ _STATUS_LAST_PAYLOAD_KEY = "rollback:status:last_payload"
 
 
 def _get_authenticated_site() -> Any:
+    """Create and log in a Commons site for status-page mutations."""
     if not _PYWIKIBOT_AVAILABLE:
         raise RuntimeError("pywikibot is unavailable in this runtime")
 
@@ -112,6 +117,7 @@ def _save_status_subpage(site: Any, key: str, text: str) -> None:
 
 
 def _env_int(name: str, default: int) -> int:
+    """Read an integer environment setting with a safe malformed-value default."""
     try:
         return int(os.environ.get(name, str(default)))
     except (TypeError, ValueError):
@@ -119,10 +125,12 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _status_update_min_interval_seconds() -> int:
+    """Return the non-negative duplicate-status suppression interval."""
     return max(0, _env_int("STATUS_UPDATE_MIN_INTERVAL_SECONDS", 0))
 
 
 def _redis_text(value: Any) -> str:
+    """Normalize Redis client byte/string responses for comparison."""
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return str(value or "")
@@ -135,6 +143,7 @@ def _status_payload_fingerprint(fields: dict[str, str]) -> str:
 
 
 def _should_skip_status_update(fields: dict[str, str]) -> bool:
+    """Return whether an identical recent payload should avoid redundant edits."""
     min_interval = _status_update_min_interval_seconds()
     if min_interval <= 0:
         return False
@@ -144,6 +153,8 @@ def _should_skip_status_update(fields: dict[str, str]) -> bool:
         last_fingerprint = _redis_text(_redis.get(_STATUS_LAST_PAYLOAD_KEY))
         last_update = float(_redis_text(_redis.get(_STATUS_LAST_UPDATE_KEY)) or "0")
     except Exception:  # noqa: BLE001
+        # Redis suppression is an optimization; cache loss must not suppress a
+        # needed on-wiki status update.
         return False
 
     return bool(
@@ -152,6 +163,7 @@ def _should_skip_status_update(fields: dict[str, str]) -> bool:
 
 
 def _mark_status_update(fields: dict[str, str]) -> None:
+    """Best-effort persist the last successful status fingerprint and time."""
     try:
         _redis.set(_STATUS_LAST_PAYLOAD_KEY, _status_payload_fingerprint(fields))
         _redis.set(_STATUS_LAST_UPDATE_KEY, str(time.time()))
@@ -274,6 +286,8 @@ def update_wiki_status(
             _log_status_debug("status update skipped by STATUS_UPDATE_MIN_INTERVAL_SECONDS")
             return
 
+        # Separate subpages let on-wiki templates transclude fields independently
+        # and keep each edit small; a later call repairs any partial update.
         for key, value in fields.items():
             _save_status_subpage(active_site, key, value)
         _mark_status_update(fields)

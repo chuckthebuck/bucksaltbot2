@@ -1,4 +1,11 @@
-"""Runtime configuration for the Four Award module."""
+"""Import-time defaults and identity metadata for the Four Award module.
+
+Environment variables establish standalone defaults.  When the module runs under
+the framework, :func:`four_award.service._apply_runtime_config` updates these
+module globals and mirrors values into submodules that imported them directly.
+The default HTTP User-Agent includes the package version and an operator/repository
+contact, as required for identifiable Wikimedia API traffic.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +27,11 @@ DEFAULT_VERSION = "0.0.0"
 
 
 def _pyproject_version() -> str | None:
+    """Return the nearest source-tree project version, if one is available.
+
+    Walking parents supports both the vendored checkout and the standalone module
+    repository without hard-coding their directory layouts.
+    """
     for parent in Path(__file__).resolve().parents:
         pyproject = parent / "pyproject.toml"
         if not pyproject.exists():
@@ -33,6 +45,12 @@ def _pyproject_version() -> str | None:
 
 @lru_cache(maxsize=1)
 def module_version() -> str:
+    """Resolve and cache the source, installed-package, or fallback version.
+
+    A nearby ``pyproject.toml`` is authoritative during development.  Installed
+    metadata is used for packaged deployments, with ``0.0.0`` reserved for
+    unusual unpackaged environments where neither source is available.
+    """
     local_version = _pyproject_version()
     if local_version:
         return local_version
@@ -43,12 +61,15 @@ def module_version() -> str:
 
 
 def default_http_user_agent() -> str:
+    """Build the versioned Wikimedia User-Agent with operator contact details."""
     return (
         f"FourAwardHelper/{module_version()} "
         f"(User:Alachuckthebuck; {REPOSITORY_URL})"
     )
 
 
+# A non-blank deployment override wins; blank values deliberately retain the
+# versioned, contact-bearing default rather than sending an anonymous User-Agent.
 HTTP_USER_AGENT = os.getenv("FOUR_AWARD_HTTP_USER_AGENT", "").strip() or default_http_user_agent()
 FOUR_PAGE = os.getenv("FOUR_AWARD_PAGE", "Wikipedia:Four Award")
 RECORDS_PAGE = os.getenv("FOUR_AWARD_RECORDS_PAGE", "Wikipedia:Four Award/Records")
@@ -60,7 +81,8 @@ DEFAULT_EDIT_SUMMARY_SUFFIX = os.getenv("FOUR_AWARD_EDIT_SUMMARY_SUFFIX", EDIT_T
 BRFA_TASK = DEFAULT_BRFA_TASK
 EDIT_SUMMARY_SUFFIX = DEFAULT_EDIT_SUMMARY_SUFFIX
 
-# Default to dry-run so framework/module config has to opt into live writes.
+# Safety defaults: execution is available, but target-page writes remain previews
+# until framework/module config explicitly opts into live mode.
 ENABLED = os.getenv("FOUR_AWARD_ENABLED", "1") == "1"
 DRY_RUN = os.getenv("FOUR_AWARD_DRY_RUN", "1") == "1"
 ENABLE_REPLIES = os.getenv("FOUR_AWARD_ENABLE_REPLIES", "1") == "1"

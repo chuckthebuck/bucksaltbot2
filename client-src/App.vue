@@ -1,4 +1,9 @@
 <script setup lang="ts">
+/**
+ * Main rollback queue workspace for creating manual jobs and tracking the
+ * authenticated user's recent work. Server APIs remain authoritative for
+ * authorization, namespace policy, cancellation, and durable progress.
+ */
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { CdxButton, CdxCheckbox, CdxMessage } from "@wikimedia/codex";
 import JobItemRow from "./components/JobItemRow.vue";
@@ -12,8 +17,12 @@ import {
   type CreateJobItem
 } from "./api";
 
+// Embedded props provide a fast first paint and support the legacy tuple-shaped
+// job payload. Mount refreshes replace them with current API state when possible.
 const props = getInitialProps();
 
+// Creation drafts use stable keys independent of array indexes so removing a
+// row does not cause Vue to reuse another row component's local input state.
 const requestedBy = ref(props.username || "");
 const items = ref<Array<{ key: number; data: CreateJobItem | null }>>([
   { key: Date.now(), data: null },
@@ -28,6 +37,7 @@ const createResult = ref("");
 const pollingTimer = ref<number | null>(null);
 const terminalStatuses = new Set(["completed", "failed", "canceled"]);
 
+/** Normalize booleans from JSON objects and legacy database tuple values. */
 function asBoolean(value: unknown): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value !== 0;
@@ -40,6 +50,7 @@ function asBoolean(value: unknown): boolean {
   return false;
 }
 
+/** Convert legacy tuples or current objects into the single table row shape. */
 function normalizeJob(row: unknown): UiJob | null {
   if (Array.isArray(row)) {
     // rollback_queue.html currently injects DB tuples:
@@ -83,12 +94,15 @@ const jobs = ref<UiJob[]>(
     .filter((j): j is UiJob => j !== null)
 );
 
+// Only nonterminal rows need the compact progress API. The full job list is
+// still reloaded first so newly created or externally updated rows appear.
 const activeJobIds = computed(() =>
   jobs.value
     .filter((j) => !terminalStatuses.has(j.status))
     .map((j) => j.id)
 );
 
+/** Parse database/ISO timestamps while truncating unsupported microseconds. */
 function createdTimeMs(created: string): number | null {
   const trimmed = created.trim();
   if (!trimmed) return null;
@@ -104,6 +118,7 @@ function createdTimeMs(created: string): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+/** Apply the UI retention window while always retaining active work. */
 function shouldShowInUserJobs(job: UiJob): boolean {
   if (!terminalStatuses.has(job.status)) return true;
   if (job.status !== "failed" && job.status !== "completed") return false;
@@ -122,6 +137,7 @@ function shouldShowInUserJobs(job: UiJob): boolean {
 
 const visibleJobs = computed(() => jobs.value.filter(shouldShowInUserJobs));
 
+/** Replace local rows with the authenticated user's latest durable snapshot. */
 async function loadJobs() {
   const rows = await fetchUserJobs();
 
@@ -130,19 +146,23 @@ async function loadJobs() {
     .filter((j): j is UiJob => j !== null);
 }
 
+/** Add a blank keyed creation row. */
 function addItem() {
   items.value.push({ key: Date.now() + Math.floor(Math.random() * 1000), data: null });
 }
 
+/** Remove one row while preserving the invariant that the form is never empty. */
 function removeItem(index: number) {
   items.value.splice(index, 1);
   if (!items.value.length) addItem();
 }
 
+/** Receive normalized row data from a child editor. */
 function updateItem(index: number, data: CreateJobItem | null) {
   items.value[index].data = data;
 }
 
+/** Submit valid child rows and optimistically prepend the returned queued job. */
 async function submitJob() {
   console.log({
     items: items.value.map((item) => item.data).filter(Boolean),
@@ -172,6 +192,8 @@ async function submitJob() {
   createResult.value = JSON.stringify(result, null, 2);
 
   if (ok && result.job_id) {
+    // This optimistic row makes the new job visible before the next poll. The
+    // durable API snapshot will replace it, including canonical timestamps.
     jobs.value.unshift({
       id: result.job_id,
       status: "queued",
@@ -184,6 +206,12 @@ async function submitJob() {
   }
 }
 
+/** Reload durable rows, then overlay compact progress for currently active IDs.
+ *
+ * Refresh calls may overlap (timer, visibility, child updates). Each operation
+ * is an idempotent server snapshot; a later polling cycle repairs any response
+ * that happens to arrive out of order.
+ */
 async function refresh() {
   await loadJobs();
 
@@ -212,11 +240,13 @@ async function refresh() {
   }
 }
 
+/** Reconcile the table after a child action such as cancellation. */
 async function onJobUpdated() {
   await loadJobs();
   await refresh();
 }
 
+/** Start one five-second polling loop and refresh immediately. */
 function startPolling() {
   if (pollingTimer.value !== null) return;
   void refresh();
@@ -225,6 +255,7 @@ function startPolling() {
   }, 5000);
 }
 
+/** Stop polling idempotently. */
 function stopPolling() {
   if (pollingTimer.value !== null) {
     clearInterval(pollingTimer.value);
@@ -232,6 +263,7 @@ function stopPolling() {
   }
 }
 
+/** Suspend background requests while the tab is hidden. */
 function onVisibilityChange() {
   if (document.hidden) {
     stopPolling();
@@ -240,6 +272,8 @@ function onVisibilityChange() {
   }
 }
 
+// Bootstrap current jobs/namespaces, enforce the non-maintainer namespace
+// default in the controls, and attach visibility-aware polling.
 onMounted(async () => {
   try {
     await loadJobs();
@@ -257,6 +291,7 @@ onMounted(async () => {
   document.addEventListener("visibilitychange", onVisibilityChange);
 });
 
+// Avoid leaking the interval or document listener across Vue remounts.
 onBeforeUnmount(() => {
   stopPolling();
   document.removeEventListener("visibilitychange", onVisibilityChange);
@@ -265,11 +300,13 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="container rollback-queue-container">
+    <!-- Make the external-effect boundary explicit before job creation. -->
     <CdxMessage class="top-message">
       Submitting a job will trigger your configured rollback bot account on Wikimedia Commons.
       You are responsible for reviewing results.
     </CdxMessage>
 
+    <!-- Creation rows and shared job settings form one submitted payload. -->
     <div class="layout">
       <div class="left-panel">
         <h3>Create job</h3>
@@ -301,6 +338,7 @@ onBeforeUnmount(() => {
         <input v-model="statusToken" type="password" />
 
         <label>Namespace</label>
+        <!-- Disabling is a UX gate; the server must enforce namespace rights. -->
         <select v-model="namespaceId" :disabled="!props.is_maintainer">
           <option value="">All</option>
           <option v-for="ns in namespaces" :key="ns.id" :value="ns.id">
@@ -328,6 +366,7 @@ onBeforeUnmount(() => {
 
     <pre id="create-result">{{ createResult }}</pre>
 
+    <!-- Polling-backed history is filtered by the documented retention window. -->
     <h3>Your jobs</h3>
     <p>Showing active jobs, failed jobs from the last 24 hours, and completed jobs from the last 2 hours.</p>
     <p>To cancel a queued or running job, use the <em>Cancel rollback job</em> button in the Actions column.</p>

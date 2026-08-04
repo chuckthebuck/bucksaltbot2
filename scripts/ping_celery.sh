@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Ping only the deployment-namespaced Celery workers and fail when none answer.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

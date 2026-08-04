@@ -19,6 +19,7 @@ from router.module_registry import (  # noqa: E402
 
 
 def main() -> int:
+    """Print discovery diagnostics and fail for missing or broken entry points."""
     enabled = load_enabled_module_names()
     local_definitions = discover_module_definitions("modules")
     local_names = {definition.name for definition in local_definitions}
@@ -32,6 +33,8 @@ def main() -> int:
             name = definition.get("name")
             if isinstance(name, str) and name:
                 installed_names.add(name)
+    # Local manifests and installed package entry points are the two supported
+    # deployment sources; remote runtime installation is intentionally absent.
     available_names = local_names | installed_names
     missing = sorted(enabled - available_names)
     failed_entry_points = [item for item in entry_points if not item.get("ok")]

@@ -1,4 +1,9 @@
-"""Manual-run controller for Chuck the Buckbot Framework module jobs."""
+"""Supervise isolated subprocesses for framework-managed module job runs.
+
+The durable registry claims work before this controller starts a subprocess.
+The controller then enforces manifest timeouts and cooperative cancellation even
+when module code is blocked, while the child runner records normal terminal state.
+"""
 
 from __future__ import annotations
 
@@ -22,6 +27,7 @@ TERMINATE_GRACE_SECONDS = 5.0
 
 
 def _job_timeout_seconds(run: dict) -> int:
+    """Return the run's manifest timeout or a conservative missing-record default."""
     record = get_module_definition(run["module_name"])
     if record is None:
         return 300
@@ -37,6 +43,7 @@ def _job_timeout_seconds(run: dict) -> int:
 
 
 def _poll_seconds() -> float:
+    """Return the bounded cancellation/timeout polling interval."""
     try:
         configured = float(os.getenv("MODULE_JOB_CONTROLLER_POLL_SECONDS", "0.5"))
     except ValueError:
@@ -45,9 +52,12 @@ def _poll_seconds() -> float:
 
 
 def _signal_process(process: subprocess.Popen, sig: signal.Signals) -> None:
+    """Signal the child process group when supported, ignoring exited races."""
     if process.poll() is not None:
         return
     try:
+        # The runner can create its own descendants, so POSIX supervision targets
+        # the fresh process group rather than leaving grandchildren alive.
         if os.name == "posix":
             os.killpg(process.pid, sig)
         elif sig == signal.SIGTERM:
@@ -59,6 +69,7 @@ def _signal_process(process: subprocess.Popen, sig: signal.Signals) -> None:
 
 
 def _terminate_process(process: subprocess.Popen) -> None:
+    """Request graceful termination, then force-kill after the grace period."""
     _signal_process(process, signal.SIGTERM)
     try:
         process.wait(timeout=TERMINATE_GRACE_SECONDS)
@@ -76,6 +87,7 @@ def _update_if_active(
     error: str,
     exit_code: int,
 ) -> None:
+    """Write a terminal outcome only if no competing path already finished it."""
     current = get_module_job_run(run_id)
     if current and current.get("status") in ACTIVE_RUN_STATUSES:
         update_module_job_run(
@@ -131,6 +143,7 @@ def run_claimed_run(run: dict) -> int:
         )
         return 127
 
+    # Monotonic time is immune to NTP/system-clock changes during long jobs.
     deadline = time.monotonic() + timeout_seconds
     poll_seconds = _poll_seconds()
 
@@ -163,6 +176,8 @@ def run_claimed_run(run: dict) -> int:
     exit_code = int(process.returncode or 0)
     current = get_module_job_run(run_id) or {}
     if current.get("status") in ACTIVE_RUN_STATUSES:
+        # A zero-exit child must have recorded completion itself.  Treat a still-
+        # active row as a protocol failure rather than silently losing the run.
         if exit_code == 0:
             _update_if_active(
                 run_id,
@@ -181,6 +196,7 @@ def run_claimed_run(run: dict) -> int:
 
 
 def run_once() -> bool:
+    """Claim and supervise at most one queued run, reporting whether work existed."""
     run = claim_next_queued_module_job_run()
     if not run:
         return False
@@ -190,6 +206,7 @@ def run_once() -> bool:
 
 
 def main() -> int:
+    """Run one controller iteration or poll indefinitely for queued module work."""
     os.environ.setdefault("NOTDEV", "1")
     sleep_seconds = int(os.getenv("MODULE_JOB_CONTROLLER_SLEEP", "15"))
     once = "--once" in sys.argv

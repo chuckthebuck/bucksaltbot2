@@ -13,6 +13,7 @@ SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 
 def _read_version(path: Path) -> tuple[int, int, int]:
+    """Parse a strict three-part semantic version from ``path``."""
     text = path.read_text(encoding="utf-8").strip()
     match = SEMVER_RE.fullmatch(text)
     if not match:
@@ -21,6 +22,7 @@ def _read_version(path: Path) -> tuple[int, int, int]:
 
 
 def _bump(version: tuple[int, int, int], part: str) -> str:
+    """Increment one SemVer component and reset its less-significant parts."""
     major, minor, patch = version
     if part == "major":
         return f"{major + 1}.0.0"
@@ -32,6 +34,7 @@ def _bump(version: tuple[int, int, int], part: str) -> str:
 
 
 def _update_json_version(path: Path, version: str, *, package_lock: bool = False) -> None:
+    """Update package metadata and the lockfile root package when requested."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["version"] = version
     if package_lock and isinstance(payload.get("packages"), dict):
@@ -42,6 +45,7 @@ def _update_json_version(path: Path, version: str, *, package_lock: bool = False
 
 
 def main() -> None:
+    """Bump all framework version sources and emit CI handoff metadata."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--part",

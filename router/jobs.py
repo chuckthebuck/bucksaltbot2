@@ -1,4 +1,10 @@
-"""Job creation and resolution logic for rollback requests."""
+"""Turn approved rollback requests into durable, worker-sized job chunks.
+
+The route layer stores approval metadata and an expiring request payload.  This
+module resolves wiki facts, stages item rows transactionally, and only then makes
+the jobs runnable.  Its forwarding helpers preserve the legacy ``router`` patch
+surface used by tests and rolling deployments after the router was split.
+"""
 
 import sys as _sys
 import time
@@ -54,10 +60,12 @@ _ALLOWED_REQUEST_TYPES = frozenset(
 
 
 def _r():
+    """Return the compatibility router package without importing it eagerly."""
     return _sys.modules.get("router")
 
 
 def _get_conn():
+    """Use a router-level patched connection factory when installed."""
     _router = _r()
     router_get_conn = getattr(_router, "get_conn", None) if _router else None
     if callable(router_get_conn):
@@ -66,6 +74,7 @@ def _get_conn():
 
 
 def _max_job_items() -> int:
+    """Resolve the live per-worker chunk limit through the compatibility seam."""
     _router = _r()
     if _router and hasattr(_router, "MAX_JOB_ITEMS"):
         value = getattr(_router, "MAX_JOB_ITEMS")
@@ -79,6 +88,7 @@ def _max_job_items() -> int:
 
 
 def _load_diff_payload_via_router(job_id: int):
+    """Load request state through the patchable public router helper."""
     _router = _r()
     fn = getattr(_router, "_load_diff_payload", None) if _router else None
     if callable(fn) and fn is not _load_diff_payload:
@@ -87,6 +97,7 @@ def _load_diff_payload_via_router(job_id: int):
 
 
 def _update_diff_payload_via_router(job_id: int, updates: dict) -> None:
+    """Merge request state through the patchable public router helper."""
     _router = _r()
     fn = getattr(_router, "_update_diff_payload", None) if _router else None
     if callable(fn) and fn is not _update_diff_payload:
@@ -96,6 +107,7 @@ def _update_diff_payload_via_router(job_id: int, updates: dict) -> None:
 
 
 def _store_diff_payload_via_router(job_id: int, payload: dict) -> None:
+    """Store request state through the patchable public router helper."""
     _router = _r()
     fn = getattr(_router, "_store_diff_payload", None) if _router else None
     if callable(fn) and fn is not _store_diff_payload:
@@ -105,6 +117,7 @@ def _store_diff_payload_via_router(job_id: int, payload: dict) -> None:
 
 
 def _set_diff_error_via_router(job_id: int, message: str | None) -> None:
+    """Set resolver error state through the patchable public router helper."""
     _router = _r()
     fn = getattr(_router, "_set_diff_error", None) if _router else None
     if callable(fn) and fn is not _set_diff_error:
@@ -114,6 +127,7 @@ def _set_diff_error_via_router(job_id: int, message: str | None) -> None:
 
 
 def _append_mw_debug_via_router(job_id: int, event: dict) -> None:
+    """Append bounded wiki diagnostics through the public router helper."""
     _router = _r()
     fn = getattr(_router, "_append_mw_debug", None) if _router else None
     if callable(fn) and fn is not _append_mw_debug:
@@ -123,6 +137,7 @@ def _append_mw_debug_via_router(job_id: int, event: dict) -> None:
 
 
 def _fetch_diff_author_and_timestamp_via_router(oldid, debug_callback=None):
+    """Resolve diff metadata through the patchable wiki-query helper."""
     _router = _r()
     fn = getattr(_router, "fetch_diff_author_and_timestamp", None) if _router else None
     if callable(fn) and fn is not fetch_diff_author_and_timestamp:
@@ -133,6 +148,7 @@ def _fetch_diff_author_and_timestamp_via_router(oldid, debug_callback=None):
 def _fetch_rollbackable_window_end_timestamp_via_router(
     target_user, start_timestamp, limit, debug_callback=None
 ):
+    """Resolve the rollback-safe window boundary through the router seam."""
     _router = _r()
     fn = (
         getattr(_router, "fetch_rollbackable_window_end_timestamp", None)
@@ -157,6 +173,7 @@ def _fetch_rollbackable_window_end_timestamp_via_router(
 def _fetch_recent_rollbackable_contribs_via_router(
     target_user, limit, debug_callback=None
 ):
+    """Fetch account rollback candidates through the patchable router seam."""
     _router = _r()
     fn = (
         getattr(_router, "fetch_recent_rollbackable_contribs", None)
@@ -173,6 +190,7 @@ def _fetch_recent_rollbackable_contribs_via_router(
 def _fetch_creator_only_restore_candidate_via_router(
     title, target_user, debug_callback=None
 ):
+    """Resolve the creator-only fallback through the patchable router seam."""
     _router = _r()
     fn = (
         getattr(_router, "fetch_creator_only_restore_candidate", None)
@@ -194,6 +212,7 @@ def _iter_contribs_after_timestamp_via_router(
     rollbackable_only=False,
     debug_callback=None,
 ):
+    """Iterate diff-anchored candidates through the patchable router seam."""
     _router = _r()
     fn = getattr(_router, "iter_contribs_after_timestamp", None) if _router else None
     if callable(fn) and fn is not iter_contribs_after_timestamp:
@@ -223,6 +242,12 @@ def create_rollback_jobs_from_diff(
     limit=None,
     rollback_through_bots=False,
 ):
+    """Create and dispatch legacy immediate jobs from one diff anchor.
+
+    New approval-gated requests use :func:`resolve_diff_rollback_job_impl`; this
+    entry point remains for compatible callers that are already authorized to
+    resolve and queue work in one operation.
+    """
     oldid = _extract_oldid(diff)
     diff_metadata = _fetch_diff_author_and_timestamp_via_router(oldid)
 
@@ -243,6 +268,8 @@ def create_rollback_jobs_from_diff(
 
     with _get_conn() as conn:
         with conn.cursor() as cursor:
+            # All chunks share one batch identifier for status and notifications,
+            # but each remains within the worker's bounded item limit.
             max_items = _max_job_items()
             for i in range(0, len(items), max_items):
                 chunk = items[i : i + max_items]
@@ -306,6 +333,13 @@ def create_rollback_jobs_from_diff(
 
 
 def resolve_diff_rollback_job_impl(job_id: int):
+    """Resolve an approved diff/account request and queue its staged chunks.
+
+    Wiki queries happen before any chunk becomes ``queued``.  Item rows are
+    written as ``staging`` inside one DB transaction, preventing a worker from
+    observing a partially resolved request.  Failures leave the original job in
+    a terminal state with both human-readable and diagnostic cache context.
+    """
     payload = _load_diff_payload_via_router(job_id)
 
     if not payload:
@@ -338,6 +372,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
         approved_endpoint = _ENDPOINT_FROM_DIFF
 
     def _debug(event: dict) -> None:
+        """Attach one bounded MediaWiki query event to this request payload."""
         _append_mw_debug_via_router(job_id, event)
 
     try:
@@ -398,12 +433,14 @@ def resolve_diff_rollback_job_impl(job_id: int):
 
                 batch_id = row[0] or int(time.time() * 1000)
 
-                # Clear any stale items from previous failed attempts.
+                # Resolution is repeatable after failure.  Replace stale items
+                # rather than appending duplicates from the previous attempt.
                 cursor.execute(
                     "DELETE FROM rollback_job_items WHERE job_id=%s", (job_id,)
                 )
 
                 def _persist_chunk(chunk_items, target_job_id):
+                    """Insert one already-validated chunk under a staging job."""
                     for item in chunk_items:
                         cursor.execute(
                             """
@@ -433,6 +470,7 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         )
 
                 def _next_target_job_id():
+                    """Reuse the source job for the first chunk, then clone metadata."""
                     if not created_job_ids:
                         cursor.execute(
                             """
@@ -481,7 +519,8 @@ def resolve_diff_rollback_job_impl(job_id: int):
                     )
                     chunk_job_id = cursor.lastrowid
 
-                    # Keep the same diff/query context on every chunk job.
+                    # Keep the same diff/query context on every chunk job so any
+                    # item can be diagnosed without following an implicit parent.
                     _store_diff_payload_via_router(
                         chunk_job_id,
                         {
@@ -538,6 +577,9 @@ def resolve_diff_rollback_job_impl(job_id: int):
                     )
 
                     for item in account_items:
+                        # Native rollback cannot act when one account is the
+                        # page's only author; represent the reviewed text-restore
+                        # fallback explicitly on the item instead.
                         restore_item = _fetch_creator_only_restore_candidate_via_router(
                             item["title"],
                             target_user,
@@ -634,7 +676,8 @@ def resolve_diff_rollback_job_impl(job_id: int):
                         "No rollbackable contributions found for the approved request"
                     )
 
-                # Move all staged jobs to queued only after full list/chunks are built.
+                # Publish staged jobs only after the full candidate list and all
+                # chunks are durable.  This is the resolver's commit boundary.
                 for staged_job_id in created_job_ids:
                     cursor.execute(
                         "UPDATE rollback_jobs SET status=%s WHERE id=%s",

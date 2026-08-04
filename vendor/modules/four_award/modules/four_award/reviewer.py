@@ -1,3 +1,17 @@
+"""Verify Four Award eligibility and produce explainable staged decisions.
+
+Review proceeds from structural checks (article, credited users, page existence)
+through existing-record detection, Article history/milestone evidence, and each
+credited user's participation during creation, DYK, GA, and FA windows.  Every
+step emits :class:`VerificationStage` data for APIs and dry-run reports.  Hard
+structural failures are ``failed_to_verify``; missing or inconclusive evidence is
+sent to manual review.  Approval is possible only when all evidence passes and
+``ALLOW_AUTOMATED_APPROVAL`` is explicitly enabled.
+
+Historical replays may bypass current records with ``IGNORE_EXISTING_RECORDS``.
+That switch is never an evidence substitute for normal live runs.
+"""
+
 from __future__ import annotations
 
 import re
@@ -35,13 +49,15 @@ def _stage(
     end: date | None = None,
     details: dict[str, str] | None = None,
 ) -> VerificationStage:
-    """Create a structured evidence stage for UI and dry-run reporting."""
+    """Create a consistently serialized evidence stage for UI/report consumers."""
     return VerificationStage(
         key=key,
         label=label,
         status=status,
         reason=reason,
         expected_users=list(expected_users or []),
+        # Stable case-insensitive ordering keeps API payloads and replay reports
+        # deterministic even though most evidence collectors return sets.
         evidence_users=sorted(evidence_users or [], key=lambda value: value.casefold()),
         pages=list(pages or []),
         start=to_iso(start),
@@ -51,7 +67,7 @@ def _stage(
 
 
 def _contains_record(records_text: str, article: str, users: list[str]) -> bool:
-    """Return whether the records page already credits one of the users."""
+    """Return whether a parsed record already claims this article/user pairing."""
     return page_text_contains_record(records_text, article, users)
 
 
@@ -62,13 +78,15 @@ def _action_date(text: str, action_name: str) -> Optional[date]:
 
 
 def _action_value(text: str, action_name: str) -> str:
-    """Return an action date/value from numbered or named Article history params."""
+    """Return an action date/value from numbered or legacy named history params."""
     params = _template_params(text)
+    # Numbered action/actionNdate pairs are the modern Article history shape.
     for key, value in params.items():
         match = re.fullmatch(r"action(\d+)", key, re.I)
         if not match or action_name.casefold() not in value.casefold():
             continue
         return params.get(f"action{match.group(1)}date", "").strip()
+    # Older pages may expose a direct dykdate/fac_date-style field instead.
     return (
         params.get(f"{action_name.casefold()}date")
         or params.get(f"{action_name.casefold()}_date")
@@ -90,7 +108,7 @@ def _action_link(text: str, action_name: str) -> str:
 
 
 def _template_params(template_text: str) -> dict[str, str]:
-    """Parse template parameters while preserving nested templates and links."""
+    """Parse named template parameters while preserving nested links/templates."""
     text = template_text.strip()
     if text.startswith("{{") and text.endswith("}}"):
         text = text[2:-2]
@@ -110,6 +128,8 @@ def _template_params(template_text: str) -> dict[str, str]:
             current.append(pair)
             i += 2
             continue
+        # Only top-level pipes delimit parameters; dykentry and link/template
+        # values may legitimately contain their own pipes.
         if text[i] == "|" and depth == 0:
             pieces.append("".join(current))
             current = []
@@ -205,7 +225,12 @@ def _bot_process_date(text: str, bot_names: tuple[str, ...]) -> str:
 
 
 def _latest_process_date(article: str, pages: list[str], bot_names: tuple[str, ...]) -> str:
-    """Infer a process date from bot text or the latest revision date."""
+    """Return the first candidate's bot-stamped or latest-revision process date.
+
+    Candidate order encodes evidence preference.  Bot-generated promotion text
+    is preferred; revision date is a fallback when the page exists but has no
+    recognizable bot line.  Unreadable candidates contribute no date.
+    """
     wiki = get_wiki()
     for page in pages:
         if not page:
@@ -224,7 +249,13 @@ def _latest_process_date(article: str, pages: list[str], bot_names: tuple[str, .
 
 
 def _record_for(nomination: FourAwardNomination, history: str, creation_date: Optional[date]) -> FourAwardRecord:
-    """Build the Four Award record from nomination, history, and revision evidence."""
+    """Build a milestone record template from history, hints, and page evidence.
+
+    The first credited user is a placeholder here; the service later clones the
+    verified milestone fields into one record for every credited user.
+    """
+    # Prefer explicit Article history dates, then nomination hints, then process
+    # page bot/revision evidence for GA and FA.
     dyk_date = _action_value(history, "DYK") or nomination.dyk or ""
     ga_date = (
         _action_value(history, "GAN")
@@ -278,7 +309,7 @@ def _signature_users(text: str) -> set[str]:
 
 
 def _safe_text(title: str) -> str:
-    """Fetch page text, treating missing/unreadable evidence pages as empty."""
+    """Fetch optional evidence text, treating any read failure as no evidence."""
     try:
         return get_wiki().get_text(title)
     except Exception:
@@ -286,7 +317,7 @@ def _safe_text(title: str) -> str:
 
 
 def _process_page_users(title: str, start: date | None = None, end: date | None = None) -> set[str]:
-    """Collect users from process-page revision history and signatures."""
+    """Union process-page revision authors with users visible in signatures."""
     if not title:
         return set()
     wiki = get_wiki()
@@ -296,7 +327,7 @@ def _process_page_users(title: str, start: date | None = None, end: date | None 
 
 
 def _stage_evidence_users(article: str, process_pages: list[str], start: date | None, end: date | None) -> set[str]:
-    """Collect article and process-page contributors inside a milestone window."""
+    """Union article and process-page contributors for one milestone window."""
     wiki = get_wiki()
     users = wiki.revision_users(article, start=start, end=end)
     for page in process_pages:
@@ -310,7 +341,7 @@ def _default_dyk_page(nomination: FourAwardNomination) -> str:
 
 
 def _process_page_title(article: str, page: str) -> str:
-    """Resolve relative process-page links against the article talk page."""
+    """Resolve a relative ``/GA``-style link against the article talk page."""
     normalized = normalize_title(page)
     if normalized.startswith("/"):
         return f"Talk:{article}{normalized}"
@@ -318,7 +349,7 @@ def _process_page_title(article: str, page: str) -> str:
 
 
 def _ga_pages(nomination: FourAwardNomination, history: str) -> list[str]:
-    """Return candidate GA process pages from nomination, history, and convention."""
+    """Return ordered GA evidence candidates from hints, history, and convention."""
     nominated = _raw_link_target(nomination.ga)
     return [
         nominated if _looks_like_process_page(nominated, "ga") else "",
@@ -329,7 +360,7 @@ def _ga_pages(nomination: FourAwardNomination, history: str) -> list[str]:
 
 
 def _fa_pages(nomination: FourAwardNomination, history: str) -> list[str]:
-    """Return candidate FAC process pages from nomination, history, and convention."""
+    """Return ordered FAC evidence candidates from hints, history, and convention."""
     nominated = _raw_link_target(nomination.fac)
     return [
         nominated if _looks_like_process_page(nominated, "fa") else "",
@@ -344,7 +375,12 @@ def _contribution_review(
     history: str,
     record: FourAwardRecord,
 ) -> tuple[list[VerificationIssue], list[VerificationStage]]:
-    """Verify credited users contributed during creation, DYK, GA, and FA windows."""
+    """Verify every credited user across creation, DYK, GA, and FA windows.
+
+    Creation accepts the first revision user or an article edit during the first
+    seven days.  Each later stage accepts either an article edit or process-page
+    revision/signature evidence between the previous and current milestone.
+    """
     wiki = get_wiki()
     issues: list[VerificationIssue] = []
     stages: list[VerificationStage] = []
@@ -417,6 +453,8 @@ def _contribution_review(
         ),
     )
     for code, label, pages, start, end in checks:
+        # Resolve relative links and deduplicate candidates without losing the
+        # configured evidence-preference order.
         clean_pages = [
             page
             for page in dict.fromkeys(
@@ -455,8 +493,15 @@ def _contribution_review(
 
 
 def review_nomination(nomination: FourAwardNomination) -> NominationResult:
-    """Review one nomination and classify it as approved, failed, or manual."""
+    """Run staged verification and classify one nomination.
+
+    Early structural/duplicate/FA failures stop immediately because later
+    evidence cannot make them valid.  Missing milestone or contribution evidence
+    remains reviewable by a human.  A fully verified nomination is also manual
+    unless the independent automated-approval gate is enabled.
+    """
     stages: list[VerificationStage] = []
+    # Validate parser output before making any wiki calls.
     if not nomination.article:
         issue = _issue("missing_article", "The nomination does not identify an article.")
         stages.append(_stage("nomination_article", "Nomination article", "failed", issue.reason))
@@ -474,7 +519,8 @@ def review_nomination(nomination: FourAwardNomination) -> NominationResult:
     stages.append(_stage("article_page", "Article page exists", "passed", "Article page exists.", pages=[nomination.article]))
 
     if IGNORE_EXISTING_RECORDS:
-        # Replay/dry-run mode may intentionally reprocess historical cases.
+        # Historical input is evaluated against its original evidence even when
+        # today's live records page already contains the eventual award.
         stages.append(
             _stage(
                 "duplicate_record",
@@ -491,6 +537,8 @@ def review_nomination(nomination: FourAwardNomination) -> NominationResult:
     else:
         stages.append(_stage("duplicate_record", "Existing Four Award record", "passed", "No matching existing record was found.", pages=[RECORDS_PAGE]))
 
+    # Article history is preferred structured evidence, but historical/manual
+    # nominations can fall back to supplied and conventional process pages.
     history = _article_history_template(wiki.get_text(f"Talk:{nomination.article}"))
     if not history:
         stages.append(
@@ -532,6 +580,8 @@ def review_nomination(nomination: FourAwardNomination) -> NominationResult:
         (record.ga_date, "GA date"),
         (record.fa_date, "FA date"),
     ):
+        # A missing scalar date is inconclusive rather than fatal when a process
+        # page still gives a human reviewer inspectable milestone evidence.
         if not value and not _has_milestone_evidence(nomination, history, label):
             issues.append(_issue("missing_milestone", f"Could not determine the {label}."))
     stages.append(
@@ -548,11 +598,14 @@ def review_nomination(nomination: FourAwardNomination) -> NominationResult:
             },
         )
     )
+    # Contribution windows require the best available milestone boundaries; do
+    # not manufacture misleading per-stage failures when those inputs are absent.
     if not issues:
         contribution_issues, contribution_stages = _contribution_review(nomination, history, record)
         issues.extend(contribution_issues)
         stages.extend(contribution_stages)
 
+    # Evidence completeness and permission to automate are independent gates.
     if issues or not ALLOW_AUTOMATED_APPROVAL:
         if not ALLOW_AUTOMATED_APPROVAL:
             issue = _issue(

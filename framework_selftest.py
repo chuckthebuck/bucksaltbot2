@@ -32,6 +32,8 @@ OK = "ok"
 
 @dataclass(frozen=True)
 class SelfTestCheck:
+    """One named probe with severity, outcome, message, and optional evidence."""
+
     name: str
     severity: str
     ok: bool
@@ -39,6 +41,7 @@ class SelfTestCheck:
     detail: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
+        """Return the machine-readable representation of this probe."""
         payload = {
             "name": self.name,
             "severity": self.severity,
@@ -52,10 +55,13 @@ class SelfTestCheck:
 
 @dataclass(frozen=True)
 class SelfTestResult:
+    """Ordered collection of probes with aggregate status and exit policy."""
+
     checks: tuple[SelfTestCheck, ...]
 
     @property
     def status(self) -> str:
+        """Return the highest failed severity, or ``ok`` when all pass."""
         if any(not check.ok and check.severity == FATAL for check in self.checks):
             return FATAL
         if any(not check.ok and check.severity == DEGRADED for check in self.checks):
@@ -65,6 +71,7 @@ class SelfTestResult:
         return OK
 
     def exit_code(self, *, strict: bool = False) -> int:
+        """Map aggregate status to a process exit code under the chosen policy."""
         if self.status == FATAL:
             return 1
         if strict and self.status in {DEGRADED, WARNING}:
@@ -72,6 +79,7 @@ class SelfTestResult:
         return 0
 
     def as_dict(self) -> dict[str, Any]:
+        """Return the complete machine-readable self-test report."""
         return {
             "status": self.status,
             "checks": [check.as_dict() for check in self.checks],
@@ -79,6 +87,7 @@ class SelfTestResult:
 
 
 def _check(name: str, severity: str, ok: bool, message: str, **detail: Any) -> SelfTestCheck:
+    """Build a check while dropping absent evidence fields."""
     return SelfTestCheck(
         name=name,
         severity=severity,
@@ -89,6 +98,7 @@ def _check(name: str, severity: str, ok: bool, message: str, **detail: Any) -> S
 
 
 def _import_dependencies() -> SelfTestCheck:
+    """Verify that every framework runtime dependency is import-resolvable."""
     required = (
         "celery",
         "flask",
@@ -100,6 +110,8 @@ def _import_dependencies() -> SelfTestCheck:
     )
     missing: list[str] = []
     for module_name in required:
+        # find_spec avoids package import side effects such as network/config
+        # initialization while still catching missing dependency trees.
         try:
             available = importlib.util.find_spec(module_name) is not None
         except (ModuleNotFoundError, ValueError):
@@ -119,6 +131,7 @@ def _import_dependencies() -> SelfTestCheck:
 
 
 def _load_module_definitions():
+    """Discover enabled, local, and vendored module definitions for probes."""
     os.environ.setdefault("NOTDEV", "1")
     os.environ.setdefault("ENABLE_MODULE_LOADING", "0")
     _add_vendored_source_roots()
@@ -138,11 +151,14 @@ def _load_module_definitions():
         for manifest in discover_module_manifests(vendor_root):
             definition = load_module_definition(manifest)
             vendored[definition.name] = definition
+    # Vendored snapshots match deployment precedence when a local migration
+    # example and a packaged production module share a name.
     available = {**local, **vendored}
     return enabled, local, vendored, available
 
 
 def _add_vendored_source_roots() -> None:
+    """Expose conventional vendored ``modules`` roots for shallow resolution."""
     vendor_root = REPO_ROOT / "vendor" / "modules"
     if not vendor_root.exists():
         return
@@ -155,6 +171,7 @@ def _add_vendored_source_roots() -> None:
 
 
 def _module_availability_checks() -> tuple[list[SelfTestCheck], dict[str, Any]]:
+    """Check discovery and return reusable module context for later probes."""
     try:
         enabled, local, vendored, available = _load_module_definitions()
     except Exception as exc:  # noqa: BLE001 - self-test reports exact failure
@@ -195,6 +212,7 @@ def _module_availability_checks() -> tuple[list[SelfTestCheck], dict[str, Any]]:
 
 
 def _resolve_handler_module(handler_path: str) -> None:
+    """Verify handler syntax and module availability without importing it."""
     module_name, sep, attr = handler_path.partition(":")
     if not sep or not module_name or not attr:
         raise ValueError("handler must be in module.path:function form")
@@ -231,6 +249,7 @@ def _vendored_package_dirs() -> dict[str, Path]:
 
 
 def _vendored_module_path(module_name: str) -> Path | None:
+    """Resolve a dotted module beneath declared vendored package directories."""
     package_name, *children = module_name.split(".")
     package_root = _vendored_package_dirs().get(package_name)
     if package_root is None:
@@ -249,6 +268,7 @@ def _module_handler_checks(
     *,
     deep_import_handlers: bool = False,
 ) -> list[SelfTestCheck]:
+    """Check every enabled job handler at shallow or deep import depth."""
     errors: list[str] = []
     checked: list[str] = []
     for module_name in sorted(enabled):
@@ -286,6 +306,7 @@ def _module_blueprint_checks(
     enabled: set[str],
     available: dict[str, Any],
 ) -> list[SelfTestCheck]:
+    """Verify that every enabled module blueprint entry point is resolvable."""
     errors: list[str] = []
     checked: list[str] = []
     for module_name in sorted(enabled):
@@ -313,6 +334,7 @@ def _module_blueprint_checks(
 
 
 def _deep_import_handler(handler_path: str) -> None:
+    """Import a handler, loading its vendored package alias when necessary."""
     module_name, sep, attr = handler_path.partition(":")
     if not sep or not module_name or not attr:
         raise ValueError("handler must be in module.path:function form")
@@ -328,6 +350,7 @@ def _deep_import_handler(handler_path: str) -> None:
 
 
 def _load_vendored_package_alias(package_name: str) -> ModuleType:
+    """Load one vendored package under its production import name."""
     package_root = _vendored_package_dirs().get(package_name)
     if package_root is None:
         raise ModuleNotFoundError(package_name)
@@ -341,6 +364,8 @@ def _load_vendored_package_alias(package_name: str) -> ModuleType:
         raise ModuleNotFoundError(package_name)
     module = importlib.util.module_from_spec(spec)
     sys.modules[package_name] = module
+    # Remove half-initialized modules on failure so later checks/imports do not
+    # observe a poisoned sys.modules entry.
     try:
         spec.loader.exec_module(module)
     except Exception:
@@ -350,6 +375,7 @@ def _load_vendored_package_alias(package_name: str) -> ModuleType:
 
 
 def _vendored_resource_exists(module_name: str, resource_path: str) -> bool:
+    """Return whether a declared resource exists in supported source layouts."""
     candidates = (
         REPO_ROOT / "vendor" / "modules" / module_name / "modules" / module_name / resource_path,
         REPO_ROOT / "modules" / module_name / resource_path,
@@ -358,6 +384,7 @@ def _vendored_resource_exists(module_name: str, resource_path: str) -> bool:
 
 
 def _package_resource_exists(resource_spec: str, module_name: str) -> bool:
+    """Resolve a package resource with a vendored-tree development fallback."""
     package, sep, resource_path = resource_spec.partition(":")
     if not sep:
         return False
@@ -368,6 +395,7 @@ def _package_resource_exists(resource_spec: str, module_name: str) -> bool:
 
 
 def _resource_exists(resource_spec: str | None, module_name: str) -> bool:
+    """Check URL, absolute, package, and vendored resource-spec forms."""
     if not resource_spec:
         return True
     if resource_spec.startswith(("http://", "https://")):
@@ -378,6 +406,7 @@ def _resource_exists(resource_spec: str | None, module_name: str) -> bool:
 
 
 def _module_resource_checks(enabled: set[str], available: dict[str, Any]) -> list[SelfTestCheck]:
+    """Verify every enabled frontend's declared script, styles, and docs."""
     missing: list[str] = []
     checked: list[str] = []
     for module_name in sorted(enabled):
@@ -412,6 +441,7 @@ def _module_resource_checks(enabled: set[str], available: dict[str, Any]) -> lis
 
 
 def _redis_check() -> SelfTestCheck:
+    """Perform the optional live Redis PING probe."""
     try:
         from redis_state import r
 
@@ -427,6 +457,7 @@ def _redis_check() -> SelfTestCheck:
 
 
 def _toolsdb_check() -> SelfTestCheck:
+    """Perform the optional live ToolsDB SELECT probe."""
     try:
         from toolsdb import get_conn
 
@@ -449,6 +480,7 @@ def run_selftest(
     include_services: bool = False,
     deep_import_handlers: bool = False,
 ) -> SelfTestResult:
+    """Run deterministic repository probes and optional service connectivity."""
     checks: list[SelfTestCheck] = [_import_dependencies()]
     module_checks, module_context = _module_availability_checks()
     checks.extend(module_checks)
@@ -466,6 +498,8 @@ def run_selftest(
         checks.extend(_module_blueprint_checks(enabled, available))
         checks.extend(_module_resource_checks(enabled, available))
 
+    # Service checks are opt-in so image builds and developer linting do not
+    # require credentials or a running local stack.
     if include_services:
         checks.extend([_redis_check(), _toolsdb_check()])
 
@@ -473,6 +507,7 @@ def run_selftest(
 
 
 def _print_text(result: SelfTestResult) -> None:
+    """Render a compact human-readable report to stdout."""
     print(f"Buckbot self-test: {result.status}")
     for check in result.checks:
         marker = "ok" if check.ok else check.severity
@@ -484,6 +519,7 @@ def _print_text(result: SelfTestResult) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse CLI options, run checks, print the report, and return its exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--services",

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Stop every container in this repository's Compose project; host-run app
+# processes started in another terminal are outside this script's scope.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh

@@ -1,8 +1,26 @@
-"""Module manifest parsing and registry helpers.
+"""Validate module manifests and persist the framework's module control plane.
 
-This is the first step toward a module-first framework: a module must be
-declared by a manifest, must expose a UI, cron job, or worker job, and may opt
-into its own OAuth consumer instead of the framework default worker consumer.
+A module starts as a JSON or TOML manifest, either stored in the repository or
+advertised by an installed Python package.  This module turns that loosely
+shaped input into immutable :class:`ModuleDefinition` values before any runtime
+entry point, blueprint, or handler is activated.  Bootstrap then stores the
+canonical manifest in ToolsDB, mirrors editable cron fields into
+``module_cron_jobs``, and leaves the module's operator-controlled enabled state
+intact across rediscovery.
+
+The same registry owns the durable coordination records around module code:
+explicit access grants, non-secret configuration, and queued job-run state.
+It does *not* execute handlers or install repositories.  Web blueprints are
+loaded by :mod:`router.module_runtime`; scheduled and manual handlers run via
+``module_runner`` (with manual runs supervised by ``module_job_controller``).
+Keeping import and execution out of this file makes manifest inspection and
+database lifecycle operations usable without activating module code.
+
+The SQL projections intentionally retain a compact, backward-compatible
+shape.  ``manifest_json`` is authoritative for fields that have been added to
+the manifest over time, while dedicated tables hold values that operators may
+change at runtime.  Schema creation and additive legacy-column upgrades live
+in :mod:`toolsdb`.
 """
 
 from __future__ import annotations
@@ -31,17 +49,24 @@ MODULE_ENTRY_POINT_GROUP = "chuck_buckbot.modules"
 ENABLED_MODULES_FILENAME = "enabled-modules.txt"
 GENERATED_MODULE_RIGHTS = ("view", "estop")
 LOGGER = logging.getLogger(__name__)
+
+# Non-blank history scans may need to skip many successful no-op runs.  Bound
+# and gently throttle those scans so a UI request cannot monopolize ToolsDB.
 MODULE_RUN_SCAN_LIMIT_MAX = 50000
 MODULE_RUN_SCAN_THROTTLE_AFTER = 1000
 MODULE_RUN_SCAN_THROTTLE_SECONDS = 0.05
 MODULE_RUN_CACHE_TTL_SECONDS = 86400
+
+# These states all represent work that can conflict with a new forbid/replace
+# run.  Terminal states are deliberately absent.
 ACTIVE_MODULE_RUN_STATUSES = ("queued", "launching", "running", "cancel_requested")
 
 
 class ModuleJobConcurrencyError(RuntimeError):
-    """Raised when a forbid-policy job already has active work."""
+    """Report the active run ids that caused a ``forbid`` policy rejection."""
 
     def __init__(self, module_name: str, job_name: str, active_run_ids: list[int]):
+        """Build an actionable error for one module/job concurrency conflict."""
         self.module_name = module_name
         self.job_name = job_name
         self.active_run_ids = active_run_ids
@@ -53,7 +78,7 @@ class ModuleJobConcurrencyError(RuntimeError):
 
 @dataclass(frozen=True)
 class ModuleCronJob:
-    """Declarative cron job entry from a module manifest."""
+    """Validated schedule and execution policy for a recurring module job."""
 
     name: str
     schedule: str
@@ -67,12 +92,13 @@ class ModuleCronJob:
     required_right: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
+        """Return the canonical JSON-serializable cron-job representation."""
         return asdict(self)
 
 
 @dataclass(frozen=True)
 class ModuleWorkerJob:
-    """Declarative queue-backed worker job entry from a module manifest."""
+    """Validated definition for a manually queued module handler."""
 
     name: str
     handler: str
@@ -82,12 +108,13 @@ class ModuleWorkerJob:
     required_right: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
+        """Return the canonical JSON-serializable worker-job representation."""
         return asdict(self)
 
 
 @dataclass(frozen=True)
 class ModuleFrontend:
-    """Packaged browser assets for a module-owned UI."""
+    """Validated resource locations and DOM integration ids for a module UI."""
 
     script: str
     styles: tuple[str, ...] = ()
@@ -97,6 +124,7 @@ class ModuleFrontend:
     bundled: bool = False
 
     def as_dict(self) -> dict[str, Any]:
+        """Return frontend metadata using JSON arrays instead of tuples."""
         return {
             "script": self.script,
             "styles": list(self.styles),
@@ -109,7 +137,7 @@ class ModuleFrontend:
 
 @dataclass(frozen=True)
 class ModuleDefinition:
-    """Validated module manifest used by the framework registry."""
+    """Canonical, immutable module manifest consumed by framework services."""
 
     name: str
     repo_url: str
@@ -131,26 +159,31 @@ class ModuleDefinition:
 
     @property
     def is_cron_only(self) -> bool:
+        """Return whether the module exposes cron work but no web UI."""
         return not self.ui_enabled and bool(self.cron_jobs)
 
     @property
     def is_ui_enabled(self) -> bool:
+        """Expose the normalized UI flag for API/template callers."""
         return bool(self.ui_enabled)
 
     @property
     def exposes_module_surface(self) -> bool:
+        """Return whether the manifest declares any supported module surface."""
         return self.ui_enabled or bool(self.cron_jobs) or bool(self.worker_jobs)
 
     @property
     def has_custom_buildpacks(self) -> bool:
+        """Return whether deployment metadata overrides the default build path."""
         return bool(self.buildpacks)
 
     @property
     def effective_rights(self) -> tuple[str, ...]:
-        """Return generated framework rights plus module-declared worker rights."""
+        """Return framework-generated rights plus module-declared job rights."""
         return tuple(sorted({*GENERATED_MODULE_RIGHTS, *self.rights}))
 
     def as_dict(self) -> dict[str, Any]:
+        """Serialize the normalized definition for APIs and ``manifest_json``."""
         payload = asdict(self)
         payload["cron_jobs"] = [job.as_dict() for job in self.cron_jobs]
         payload["worker_jobs"] = [job.as_dict() for job in self.worker_jobs]
@@ -160,29 +193,33 @@ class ModuleDefinition:
 
 @dataclass(frozen=True)
 class ModuleRecord:
-    """Module definition as stored in the registry database."""
+    """Pair a canonical definition with its operator-controlled enabled flag."""
 
     definition: ModuleDefinition
     enabled: bool = False
 
     def as_dict(self) -> dict[str, Any]:
+        """Return the definition plus registry state as an API-safe mapping."""
         payload = self.definition.as_dict()
         payload["enabled"] = bool(self.enabled)
         return payload
 
 
 def _default_redis_namespace(name: str) -> str:
+    """Derive a stable, Redis-key-safe namespace from a validated module name."""
     normalized = re.sub(r"[^a-z0-9]+", "_", name.strip().lower())
     return normalized.strip("_") or "module"
 
 
 def _normalize_module_name(raw_value: str) -> str:
+    """Normalize allowlist input without claiming that it is a valid manifest name."""
     normalized = str(raw_value or "").strip().lower().replace("-", "_")
     normalized = re.sub(r"[^a-z0-9_]+", "_", normalized)
     return normalized.strip("_")
 
 
 def _validate_module_name(name: str) -> str:
+    """Require the canonical lowercase identifier used in URLs, SQL, and rights."""
     normalized = _normalize_module_name(name)
     if not normalized:
         raise ValueError("module manifest requires a name")
@@ -194,6 +231,11 @@ def _validate_module_name(name: str) -> str:
 
 
 def _validate_import_path(value: str, *, field_name: str) -> str:
+    """Validate ``package.module[:attribute.path]`` without importing it.
+
+    Importing is intentionally deferred until a module is enabled and loaded;
+    manifest discovery must remain free of module-code side effects.
+    """
     cleaned = str(value or "").strip()
     if not cleaned:
         raise ValueError(f"module manifest requires {field_name}")
@@ -215,6 +257,7 @@ def _validate_env_var_name(
     field_name: str,
     required: bool = False,
 ) -> str | None:
+    """Validate a credential variable *name* while never reading its secret."""
     cleaned = str(value or "").strip()
     if not cleaned:
         if required:
@@ -226,6 +269,7 @@ def _validate_env_var_name(
 
 
 def _validate_resource_spec(value: Any, *, field_name: str, required: bool = False) -> str | None:
+    """Validate a URL, absolute file path, or safe ``package:path`` resource."""
     cleaned = str(value or "").strip()
     if not cleaned:
         if required:
@@ -243,6 +287,7 @@ def _validate_resource_spec(value: Any, *, field_name: str, required: bool = Fal
 
 
 def _load_manifest_text(path: Path) -> dict[str, Any]:
+    """Decode a supported manifest file into the raw mapping validation consumes."""
     if not path.exists():
         raise FileNotFoundError(path)
 
@@ -259,6 +304,7 @@ def _load_manifest_text(path: Path) -> dict[str, Any]:
 
 
 def _coerce_bool(value: Any, *, field_name: str) -> bool:
+    """Accept common manifest boolean spellings and reject ambiguous values."""
     if isinstance(value, bool):
         return value
     if value in (0, 1):
@@ -273,6 +319,7 @@ def _coerce_bool(value: Any, *, field_name: str) -> bool:
 
 
 def _coerce_positive_int(value: Any, *, field_name: str, default: int) -> int:
+    """Parse a strictly positive integer, using *default* only when omitted."""
     if value is None:
         return default
     try:
@@ -285,6 +332,14 @@ def _coerce_positive_int(value: Any, *, field_name: str, default: int) -> int:
 
 
 def _parse_cron_jobs(raw_jobs: Any) -> tuple[ModuleCronJob, ...]:
+    """Validate recurring-job entries and infer their execution mode.
+
+    ``run``/``schedule_text`` is the human-readable compatibility form and is
+    translated to cron once at validation time.  A handler-only entry defaults
+    to direct handler execution; an endpoint keeps the legacy in-app HTTP mode.
+    Explicit ``execution_mode`` always wins and is checked against the resource
+    it requires.
+    """
     if raw_jobs in (None, ""):
         return ()
     if not isinstance(raw_jobs, list):
@@ -295,6 +350,8 @@ def _parse_cron_jobs(raw_jobs: Any) -> tuple[ModuleCronJob, ...]:
         if not isinstance(raw_job, dict):
             raise ValueError(f"cron job {index} must be an object")
 
+        # ``job_id`` and ``schedule_text`` predate the canonical manifest keys;
+        # accepting them keeps installed packages from breaking on bootstrap.
         name = str(raw_job.get("name") or raw_job.get("job_id") or "").strip()
         schedule_text = str(
             raw_job.get("run") or raw_job.get("schedule_text") or ""
@@ -306,6 +363,8 @@ def _parse_cron_jobs(raw_jobs: Any) -> tuple[ModuleCronJob, ...]:
         handler = str(raw_job.get("handler") or "").strip() or None
         execution_mode = str(raw_job.get("execution_mode") or "").strip().lower()
         if not execution_mode:
+            # Endpoint jobs run through the Flask surface.  A handler with no
+            # endpoint is safe to classify as direct execution automatically.
             execution_mode = "handler" if handler and not endpoint else "http"
         concurrency_policy = (
             str(raw_job.get("concurrency_policy") or "forbid").strip().lower()
@@ -372,6 +431,7 @@ def _parse_cron_jobs(raw_jobs: Any) -> tuple[ModuleCronJob, ...]:
 
 
 def _parse_worker_jobs(raw_jobs: Any) -> tuple[ModuleWorkerJob, ...]:
+    """Validate queue-backed handler entries from the manifest."""
     if raw_jobs in (None, ""):
         return ()
     if not isinstance(raw_jobs, list):
@@ -382,6 +442,7 @@ def _parse_worker_jobs(raw_jobs: Any) -> tuple[ModuleWorkerJob, ...]:
         if not isinstance(raw_job, dict):
             raise ValueError(f"worker job {index} must be an object")
 
+        # ``job_id`` remains an accepted alias for early module packages.
         name = str(raw_job.get("name") or raw_job.get("job_id") or "").strip()
         handler = str(raw_job.get("handler") or "").strip()
         timeout_seconds = _coerce_positive_int(
@@ -430,6 +491,7 @@ def _parse_worker_jobs(raw_jobs: Any) -> tuple[ModuleWorkerJob, ...]:
 
 
 def _parse_job_required_right(value: Any, *, field_name: str) -> str | None:
+    """Normalize an optional module-local right to lowercase snake_case."""
     cleaned = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
     if not cleaned:
         return None
@@ -439,6 +501,12 @@ def _parse_job_required_right(value: Any, *, field_name: str) -> str | None:
 
 
 def _parse_buildpacks(raw_buildpacks: Any) -> tuple[str, ...]:
+    """Normalize ordered, opaque deployment buildpack identifiers.
+
+    The registry records buildpack intent but does not resolve or execute it.
+    Deployment tooling owns that decision; an empty tuple means it should use
+    the framework's normal build configuration.
+    """
     if raw_buildpacks in (None, ""):
         return ()
     if isinstance(raw_buildpacks, str):
@@ -446,6 +514,8 @@ def _parse_buildpacks(raw_buildpacks: Any) -> tuple[str, ...]:
     if not isinstance(raw_buildpacks, list):
         raise ValueError("buildpacks must be a list of strings")
 
+    # Preserve author order because buildpack order can affect a platform build.
+    # Values stay opaque so platform-specific URLs and short names both survive.
     buildpacks = []
     for index, raw_buildpack in enumerate(raw_buildpacks, start=1):
         buildpack = str(raw_buildpack or "").strip()
@@ -457,6 +527,7 @@ def _parse_buildpacks(raw_buildpacks: Any) -> tuple[str, ...]:
 
 
 def _parse_module_rights(raw_rights: Any) -> tuple[str, ...]:
+    """Return unique module-local rights, excluding framework-owned rights."""
     if raw_rights in (None, ""):
         return ()
     if isinstance(raw_rights, str):
@@ -474,6 +545,8 @@ def _parse_module_rights(raw_rights: Any) -> tuple[str, ...]:
                 f"right {index} must be lowercase snake_case and must not contain ':'"
             )
         if right in GENERATED_MODULE_RIGHTS:
+            # ``view`` and ``estop`` exist for every module.  Ignoring duplicate
+            # declarations keeps old manifests valid without changing policy.
             LOGGER.warning(
                 "Ignoring framework-generated module right '%s' in manifest",
                 right,
@@ -485,11 +558,14 @@ def _parse_module_rights(raw_rights: Any) -> tuple[str, ...]:
 
 
 def _parse_frontend(raw_frontend: Any) -> ModuleFrontend | None:
+    """Validate optional browser resources without opening or importing them."""
     if raw_frontend in (None, ""):
         return None
     if not isinstance(raw_frontend, dict):
         raise ValueError("frontend must be an object")
 
+    # ``entry``/``css``/``framework_bundled`` are retained as compatibility
+    # aliases; serialization always emits the canonical field names.
     script = _validate_resource_spec(
         raw_frontend.get("script") or raw_frontend.get("entry"),
         field_name="frontend.script",
@@ -533,10 +609,17 @@ def _parse_frontend(raw_frontend: Any) -> ModuleFrontend | None:
 
 
 def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
-    """Validate and normalize a module manifest dictionary."""
+    """Validate raw manifest data and return its canonical immutable form.
+
+    Validation covers identifiers, import/resource syntax, supported module
+    surfaces, job-name uniqueness, rights references, and OAuth variable names.
+    No import, network request, secret lookup, or database write occurs here.
+    """
     if not isinstance(raw, dict):
         raise ValueError("module manifest must be an object")
 
+    # Several aliases were published during the module framework's early
+    # iterations.  Read them at this boundary, then use only canonical names.
     name = _validate_module_name(str(raw.get("name") or "").strip())
     repo_url = str(raw.get("repo") or raw.get("repo_url") or "").strip()
     entry_point = _validate_import_path(
@@ -577,6 +660,8 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
     if frontend and not ui_enabled:
         raise ValueError("frontend assets require ui=true")
 
+    # A run is addressed by (module_name, job_name), so names must be unique
+    # across both execution surfaces, not merely within each manifest list.
     job_names = [job.name for job in (*cron_jobs, *worker_jobs)]
     duplicate_job_names = sorted(
         {job_name for job_name in job_names if job_names.count(job_name) > 1}
@@ -587,6 +672,8 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
             + ", ".join(duplicate_job_names)
         )
 
+    # Jobs may narrow execution to a declared right, but cannot silently mint a
+    # policy atom that operators never saw in the module's advertised rights.
     undeclared_job_rights = sorted(
         {
             job.required_right
@@ -605,6 +692,8 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
         raise ValueError("oauth_consumer_mode must be 'default' or 'module'")
 
     if oauth_consumer_mode == "module":
+        # Store environment-variable names only.  The isolated job runner maps
+        # their values into Pywikibot's expected names immediately before use.
         oauth_consumer_key_env = _validate_env_var_name(
             raw.get("oauth_consumer_key_env"),
             field_name="oauth_consumer_key_env",
@@ -626,6 +715,8 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
             required=True,
         )
     else:
+        # Default-consumer modules inherit framework credentials; discarding
+        # stray names prevents a misleading half-configured credential set.
         oauth_consumer_key_env = None
         oauth_consumer_secret_env = None
         oauth_access_token_env = None
@@ -656,18 +747,20 @@ def parse_module_definition(raw: dict[str, Any]) -> ModuleDefinition:
 
 
 def load_module_definition(path: str | Path) -> ModuleDefinition:
-    """Load and validate a single module manifest file."""
+    """Decode and validate one JSON/TOML manifest file."""
     manifest_path = Path(path)
     raw_manifest = _load_manifest_text(manifest_path)
     return parse_module_definition(raw_manifest)
 
 
 def discover_module_manifests(root: str | Path) -> list[Path]:
-    """Return manifest files under *root* in deterministic order."""
+    """Return unique manifest files below *root* in deterministic path order."""
     root_path = Path(root)
     candidates: list[Path] = []
     for filename in MODULE_MANIFEST_FILENAMES:
         candidates.extend(sorted(root_path.glob(f"**/{filename}")))
+    # ``resolve`` collapses duplicate spellings/symlinks before definitions are
+    # bootstrapped twice; sorting keeps startup and diagnostics reproducible.
     unique_candidates = {
         candidate.resolve() for candidate in candidates if candidate.is_file()
     }
@@ -675,7 +768,7 @@ def discover_module_manifests(root: str | Path) -> list[Path]:
 
 
 def discover_module_definitions(root: str | Path) -> list[ModuleDefinition]:
-    """Load every manifest found under *root*."""
+    """Validate every locally discovered manifest, failing on the first error."""
     return [load_module_definition(path) for path in discover_module_manifests(root)]
 
 
@@ -690,6 +783,9 @@ def _definition_from_package_entry_point(entry_point) -> ModuleDefinition:
     - a path string pointing at a TOML/JSON manifest
     - a ModuleDefinition
     """
+    # Calling ``load`` imports code from an already installed package.  This is
+    # only used during trusted application bootstrap, never for a remote URL
+    # supplied to the registry API.
     loaded = entry_point.load()
     value = loaded() if callable(loaded) else loaded
 
@@ -707,16 +803,23 @@ def _definition_from_package_entry_point(entry_point) -> ModuleDefinition:
 
 
 def _legacy_group_entry_points(entry_points: Any, group: str) -> list[Any]:
-    """Handle old metadata.entry_points() dict output from older Python runtimes."""
+    """Read a group from the mapping returned by old ``importlib.metadata``."""
     if isinstance(entry_points, dict):
         return list(entry_points.get(group, []))
     return []
 
 
 def discover_installed_module_definitions() -> list[ModuleDefinition]:
-    """Discover module definitions exposed by installed Python packages."""
+    """Load valid definitions advertised by installed Python distributions.
+
+    One broken third-party entry point is logged and skipped so it cannot hide
+    other installed modules or abort application startup.
+    """
     try:
         entry_points = metadata.entry_points()
+        # Python's entry-point API changed from a mapping to an EntryPoints
+        # object with ``select``.  Supporting both keeps older runtime images
+        # inspectable even though current production uses modern Python.
         if hasattr(entry_points, "select"):
             selected = entry_points.select(group=MODULE_ENTRY_POINT_GROUP)
         else:  # pragma: no cover - compatibility with old importlib.metadata
@@ -740,7 +843,11 @@ def discover_installed_module_definitions() -> list[ModuleDefinition]:
 
 
 def inspect_installed_module_entry_points() -> list[dict[str, Any]]:
-    """Return diagnostic info for installed module package entry points."""
+    """Inspect installed entry points without letting one failure abort the list.
+
+    Each item includes its advertised name/value, a normalized definition when
+    successful, or a printable error for framework diagnostics.
+    """
     try:
         entry_points = metadata.entry_points()
         if hasattr(entry_points, "select"):
@@ -785,6 +892,8 @@ def load_enabled_module_names(path: str | Path | None = None) -> set[str]:
     are installed by ``requirements-modules.txt``; this file says which
     installed package manifests the framework should register.
     """
+    # Environment and file values are additive: an emergency deployment
+    # override can enable a packaged module without rewriting the image.
     raw_names: list[str] = []
     env_value = os.getenv("ENABLED_MODULES", "").strip()
     if env_value:
@@ -797,6 +906,7 @@ def load_enabled_module_names(path: str | Path | None = None) -> set[str]:
     )
     try:
         for raw_line in config_path.read_text(encoding="utf-8").splitlines():
+            # Inline comments make the checked-in allowlist self-documenting.
             line = raw_line.split("#", 1)[0].strip()
             if line:
                 raw_names.append(line)
@@ -815,6 +925,7 @@ def _filter_enabled_definitions(
     definitions: Iterable[ModuleDefinition],
     enabled_names: set[str] | None,
 ) -> list[ModuleDefinition]:
+    """Apply an optional exact-name allowlist while preserving input order."""
     if enabled_names is None:
         return list(definitions)
     return [
@@ -836,6 +947,8 @@ def bootstrap_module_definitions(
     module repos should be vendored into the repo and installed from
     ``requirements-modules.txt`` during build.
     """
+    # Discovery/validation completes before the first database write, avoiding
+    # a partially refreshed registry when a later local manifest is malformed.
     definitions = _filter_enabled_definitions(
         discover_module_definitions(root),
         enabled_names,
@@ -850,7 +963,7 @@ def bootstrap_installed_module_definitions(
     enabled_default: bool = True,
     enabled_names: set[str] | None = None,
 ) -> list[ModuleDefinition]:
-    """Persist module manifests advertised by installed Python packages."""
+    """Discover, allowlist, and persist installed-package module manifests."""
     definitions = _filter_enabled_definitions(
         discover_installed_module_definitions(),
         enabled_names,
@@ -861,6 +974,7 @@ def bootstrap_installed_module_definitions(
 
 
 def _serialize_manifest(definition: ModuleDefinition) -> str:
+    """Encode a canonical definition deterministically for ``manifest_json``."""
     return json.dumps(definition.as_dict(), sort_keys=True)
 
 
@@ -868,7 +982,12 @@ def _definition_with_cron_runtime_overrides(
     definition: ModuleDefinition,
     rows: Iterable[tuple[Any, ...]],
 ) -> ModuleDefinition:
-    """Overlay mutable persisted cron settings onto a discovered definition."""
+    """Overlay operator-edited cron fields onto a rediscovered manifest.
+
+    Schedules, timeouts, and per-job enabled flags are mutable runtime state.
+    Rediscovery may add or remove jobs, but must not reset those fields for jobs
+    that still exist.
+    """
     overrides = {
         str(row[0]): row
         for row in rows
@@ -896,6 +1015,13 @@ def _definition_with_cron_runtime_overrides(
 
 
 def _row_to_definition(row: tuple[Any, ...]) -> ModuleRecord:
+    """Rehydrate a registry row using canonical ``manifest_json`` as authority.
+
+    The selected scalar columns remain part of the SQL projection for schema
+    compatibility and operational queries.  Parsing the JSON again ensures old
+    rows receive today's validation/defaults and newer manifest-only fields are
+    not lost.
+    """
     (
         _name,
         _repo_url,
@@ -915,9 +1041,17 @@ def _row_to_definition(row: tuple[Any, ...]) -> ModuleRecord:
 
 
 def upsert_module_definition(definition: ModuleDefinition, enabled: bool = False) -> None:
-    """Persist a definition while preserving mutable runtime state on updates."""
+    """Persist a definition and cron projection in one transaction.
+
+    Existing cron overrides and the registry-level enabled flag are preserved.
+    The *enabled* argument therefore supplies the initial insert value only; an
+    operator's later toggle is never undone merely because startup rediscovered
+    the module.
+    """
     with get_conn() as conn:
         with conn.cursor() as cursor:
+            # Read mutable job fields before replacing the cron projection, then
+            # fold them into both the JSON snapshot and replacement rows.
             cursor.execute(
                 """
                 SELECT job_name, schedule, schedule_text, timeout_seconds, enabled
@@ -930,6 +1064,8 @@ def upsert_module_definition(definition: ModuleDefinition, enabled: bool = False
                 definition,
                 cursor.fetchall() or (),
             )
+            # The duplicate-key update intentionally omits ``enabled``.
+            # Registry enablement belongs to operators, not repeatable startup.
             cursor.execute(
                 """
                 INSERT INTO module_registry
@@ -960,6 +1096,8 @@ def upsert_module_definition(definition: ModuleDefinition, enabled: bool = False
                     _serialize_manifest(definition),
                 ),
             )
+            # Rebuild the cron projection so deleted manifest jobs disappear;
+            # surviving jobs already carry the runtime overlays applied above.
             cursor.execute(
                 "DELETE FROM module_cron_jobs WHERE module_name=%s",
                 (definition.name,),
@@ -999,7 +1137,7 @@ def upsert_module_definition(definition: ModuleDefinition, enabled: bool = False
 
 
 def get_module_definition(name: str) -> ModuleRecord | None:
-    """Return a stored module definition by name."""
+    """Return one stored module record, or ``None`` for blank/unknown names."""
     module_name = str(name or "").strip()
     if not module_name:
         return None
@@ -1026,7 +1164,7 @@ def get_module_definition(name: str) -> ModuleRecord | None:
 
 
 def list_module_definitions(enabled_only: bool = False) -> list[ModuleRecord]:
-    """Return stored module definitions from the registry."""
+    """Return all stored records, optionally limited to enabled modules."""
     query = (
         """
         SELECT name, repo_url, entry_point, ui_enabled, enabled,
@@ -1049,7 +1187,11 @@ def list_module_definitions(enabled_only: bool = False) -> list[ModuleRecord]:
 
 
 def list_module_cron_jobs(module_name: str | None = None) -> list[dict[str, Any]]:
-    """Return persisted cron jobs for one module or all modules."""
+    """Return the scheduler projection for one module or the whole registry.
+
+    Both job-level and module-level enabled flags are returned because schedule
+    generation must require both; toggling one must not erase the other.
+    """
     query = """
         SELECT jobs.module_name, jobs.job_name, jobs.schedule, jobs.endpoint,
                jobs.timeout_seconds, jobs.enabled, jobs.schedule_text,
@@ -1068,6 +1210,8 @@ def list_module_cron_jobs(module_name: str | None = None) -> list[dict[str, Any]
             cursor.execute(query, params)
             rows = cursor.fetchall()
 
+    # Defaults on execution/concurrency fields keep rows created before those
+    # columns were populated readable after an additive schema upgrade.
     return [
         {
             "module_name": row[0],
@@ -1095,7 +1239,12 @@ def update_module_cron_job(
     timeout_seconds: int | None = None,
     enabled: bool | None = None,
 ) -> dict[str, Any]:
-    """Update a persisted module job schedule and keep manifest JSON in sync."""
+    """Edit mutable cron fields in both SQL projections atomically.
+
+    The dedicated cron row drives schedule generation, while ``manifest_json``
+    reconstructs :class:`ModuleDefinition`.  Updating both prevents reads and
+    the next bootstrap from disagreeing about operator edits.
+    """
     module_name = str(module_name or "").strip()
     job_name = str(job_name or "").strip()
     if not module_name or not job_name:
@@ -1115,6 +1264,8 @@ def update_module_cron_job(
     new_schedule = current.schedule
 
     if schedule_text is not None:
+        # Human text is stored for display, but cron remains the executable
+        # scheduler contract and is regenerated whenever that text changes.
         new_schedule_text = str(schedule_text or "").strip() or None
         if new_schedule_text:
             new_schedule = human_schedule_to_cron(new_schedule_text)
@@ -1150,6 +1301,8 @@ def update_module_cron_job(
     )
     cron_jobs[job_index] = updated_job
 
+    # Rebuild the whole immutable definition so unrelated worker jobs, rights,
+    # frontend data, and credential metadata survive this narrow edit.
     updated_definition = ModuleDefinition(
         name=record.definition.name,
         repo_url=record.definition.repo_url,
@@ -1223,7 +1376,14 @@ def create_module_job_run(
     payload: dict[str, Any] | None = None,
     concurrency_policy: str = "allow",
 ) -> int:
-    """Create a tracked run row for a managed module job."""
+    """Create a queued run while enforcing its durable concurrency policy.
+
+    ``allow`` always inserts.  ``forbid`` raises
+    :class:`ModuleJobConcurrencyError` when active work exists.  ``replace``
+    terminally cancels work that has not begun and requests cancellation from
+    running work before inserting the successor.  The policy check and insert
+    share one transaction so concurrent request processes reach one decision.
+    """
     module_name = str(module_name or "").strip()
     job_name = str(job_name or "").strip()
     if not module_name or not job_name:
@@ -1275,6 +1435,8 @@ def create_module_job_run(
                 ]
 
             if concurrency_policy == "forbid" and active_run_ids:
+                # Roll back explicitly before exposing the conflicting ids;
+                # this releases the module-row lock promptly on live databases.
                 conn.rollback()
                 raise ModuleJobConcurrencyError(
                     module_name,
@@ -1284,6 +1446,9 @@ def create_module_job_run(
 
             if concurrency_policy == "replace" and active_run_ids:
                 id_placeholders = ", ".join(["%s"] * len(active_run_ids))
+                # Queued/launching work can become terminal immediately.  A
+                # running process must observe ``cancel_requested`` and stop at
+                # its controller or handler cancellation boundary.
                 cursor.execute(
                     f"""
                     UPDATE module_job_runs
@@ -1308,6 +1473,8 @@ def create_module_job_run(
                     ),
                 )
 
+            # Insert only after the selected policy has been resolved while
+            # holding the module lock; otherwise two forbid runs could race.
             cursor.execute(
                 """
                 INSERT INTO module_job_runs
@@ -1336,7 +1503,7 @@ def create_module_job_run(
 
 
 def get_module_job_run(run_id: int) -> dict[str, Any] | None:
-    """Return one tracked module job run by id."""
+    """Return one run with JSON and timestamps decoded for framework callers."""
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -1373,7 +1540,13 @@ def get_module_job_run(run_id: int) -> dict[str, Any] | None:
 
 
 def claim_next_queued_module_job_run() -> dict[str, Any] | None:
-    """Claim one queued manual/module run for the local controller."""
+    """Claim the oldest queued run for a polling controller.
+
+    Selection is followed by a compare-and-set update from ``queued`` to
+    ``launching``.  Competing controllers may select the same id, but only one
+    update succeeds; a loser returns ``None`` and polls again rather than ever
+    executing a run twice.
+    """
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -1390,6 +1563,8 @@ def claim_next_queued_module_job_run() -> dict[str, Any] | None:
                 return None
 
             run_id = int(row[0])
+            # The status predicate is the ownership token.  Do not weaken this
+            # to an unconditional update: it is what makes the claim atomic.
             cursor.execute(
                 """
                 UPDATE module_job_runs
@@ -1407,7 +1582,11 @@ def claim_next_queued_module_job_run() -> dict[str, Any] | None:
 
 
 def claim_module_job_run(run_id: int) -> dict[str, Any] | None:
-    """Atomically claim a specific queued run for one execution owner."""
+    """Atomically claim a specific queued run, returning its refreshed record.
+
+    Celery/manual dispatch paths use this id-specific compare-and-set.  A
+    ``None`` result means another owner claimed or canceled the run first.
+    """
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -1436,7 +1615,13 @@ def update_module_job_run(
     k8s_job_name: str | None = None,
     result: dict[str, Any] | None = None,
 ) -> None:
-    """Update lifecycle state for a tracked module job run."""
+    """Persist a run transition and its optional terminal metadata.
+
+    The first launching/running transition sets ``started_at``; terminal states
+    set ``finished_at``.  Optional exit/result/Kubernetes fields retain their
+    previous values when omitted so independent controller and runner updates
+    do not erase each other's diagnostics.
+    """
     status = str(status or "").strip()
     if not status:
         raise ValueError("status is required")
@@ -1485,6 +1670,8 @@ def update_module_job_run(
             updated_module_name = str(row[0] or "") if row else ""
         conn.commit()
 
+    # Four Award's history view filters no-op runs and is expensive to compute;
+    # refresh its best-effort Redis index only after a successful terminal run.
     if status == "completed" and updated_module_name == "four_award":
         refresh_module_job_run_hit_cache(updated_module_name)
 
@@ -1497,7 +1684,12 @@ def list_module_job_runs(
     non_blank: bool = False,
     scan_limit: int = 1000,
 ) -> list[dict[str, Any]]:
-    """Return recent tracked runs for managed module jobs."""
+    """Return recent runs, optionally filtering semantic no-op results.
+
+    Normal history is one bounded query.  ``non_blank=True`` pages through a
+    bounded scan until it finds *limit* meaningful results because older job
+    result schemas do not expose a queryable SQL flag for that distinction.
+    """
     conditions = []
     params: list[Any] = []
     if module_name:
@@ -1524,6 +1716,8 @@ def list_module_job_runs(
         while offset < requested_scan_limit:
             fetch_limit = requested_limit
             if non_blank:
+                # Never scan beyond the caller's remaining cap, even when the
+                # requested result count is much smaller than ``scan_limit``.
                 fetch_limit = min(requested_limit, requested_scan_limit - offset)
             page_params = [*params, fetch_limit, offset]
             with conn.cursor() as cursor:
@@ -1560,12 +1754,14 @@ def list_module_job_runs(
 
 
 def _module_run_scan_limit(scan_limit: int | None, requested_limit: int) -> int:
+    """Clamp a history scan while ensuring it can satisfy the requested count."""
     if scan_limit is None:
         return MODULE_RUN_SCAN_LIMIT_MAX
     return max(requested_limit, min(int(scan_limit), MODULE_RUN_SCAN_LIMIT_MAX))
 
 
 def _throttle_module_run_scan(scanned: int, scan_limit: int) -> None:
+    """Yield briefly during unusually deep semantic-history scans."""
     if scan_limit <= MODULE_RUN_SCAN_THROTTLE_AFTER:
         return
     if scanned < MODULE_RUN_SCAN_THROTTLE_AFTER:
@@ -1574,7 +1770,15 @@ def _throttle_module_run_scan(scanned: int, scan_limit: int) -> None:
 
 
 def _module_run_is_non_blank(run: dict[str, Any]) -> bool:
+    """Interpret meaningful work across current and legacy result payloads.
+
+    Newer handlers emit ``run_kind``/``has_nominations`` explicitly.  Fallbacks
+    for nomination counts and dry-run edits keep history useful for records
+    written before those schema conventions existed.
+    """
     result = run.get("result")
+    # A failed/in-progress record without a result is still meaningful; only a
+    # completed result-less record is treated as an empty success.
     if not isinstance(result, dict) or not result:
         return run.get("status") not in {"completed", "succeeded"}
     if result.get("run_kind") == "duplicate_noop":
@@ -1593,6 +1797,7 @@ def _module_run_is_non_blank(run: dict[str, Any]) -> bool:
 
 
 def module_job_run_hit_cache_key(module_name: str) -> str:
+    """Return the Redis key for one module's semantic-run history cache."""
     return f"module_runs:{module_name}:non_blank_hits"
 
 
@@ -1602,7 +1807,11 @@ def refresh_module_job_run_hit_cache(
     hits: int = 50,
     scan_limit: int | None = MODULE_RUN_SCAN_LIMIT_MAX,
 ) -> dict[str, Any]:
-    """Refresh a best-effort cache of recent non-blank module job runs."""
+    """Refresh and return a best-effort cache of meaningful recent runs.
+
+    Cache failure is logged but never changes the authoritative ToolsDB result;
+    callers can still render the freshly scanned payload.
+    """
     requested_hits = max(1, min(int(hits), 100))
     requested_scan_limit = _module_run_scan_limit(scan_limit, requested_hits)
     runs = list_module_job_runs(
@@ -1634,7 +1843,7 @@ def refresh_module_job_run_hit_cache(
 
 
 def get_module_job_run_hit_cache(module_name: str) -> dict[str, Any] | None:
-    """Return the cached recent non-blank runs payload, if available."""
+    """Return a valid cached history mapping, or ``None`` on miss/corruption."""
     try:
         from redis_state import r
 
@@ -1648,7 +1857,12 @@ def get_module_job_run_hit_cache(module_name: str) -> dict[str, Any] | None:
 
 
 def request_module_job_run_cancel(run_id: int) -> None:
-    """Cancel work that has not started, or request a running process stop."""
+    """Record cooperative cancellation for one active run.
+
+    Queued work becomes terminal immediately with shell-style exit code 130.
+    Launching/running work moves to ``cancel_requested`` so its execution owner
+    can terminate the process and record the final ``canceled`` transition.
+    """
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -1672,7 +1886,13 @@ def request_module_job_run_cancel(run_id: int) -> None:
 
 
 def request_module_job_runs_cancel(module_name: str) -> list[dict[str, Any]]:
-    """Mark every active run for a module as canceled by an emergency stop."""
+    """Terminally cancel all active rows for a module emergency stop.
+
+    Unlike one-run cooperative cancellation, emergency stop records every row
+    as terminal immediately.  The caller (:mod:`router.module_estop`) separately
+    kills framework and platform processes, so the returned pre-update records
+    identify which external work still needs cleanup.
+    """
     module_name = str(module_name or "").strip()
     if not module_name:
         return []
@@ -1693,6 +1913,8 @@ def request_module_job_runs_cancel(module_name: str) -> list[dict[str, Any]]:
                 """,
                 (module_name, *active_statuses),
             )
+            # Capture identifiers before the update so the e-stop orchestrator
+            # can still locate any Kubernetes/Toolforge work it must terminate.
             rows = cursor.fetchall()
             cursor.execute(
                 f"""
@@ -1735,7 +1957,12 @@ def request_module_job_runs_cancel(module_name: str) -> list[dict[str, Any]]:
 
 
 def get_module_config(module_name: str) -> dict[str, Any]:
-    """Return DB-backed non-secret config for a module."""
+    """Return decoded, non-secret runtime configuration for one module.
+
+    Current writes use JSON.  The ``value_type`` branch preserves compatibility
+    with older text rows, and malformed legacy JSON is returned verbatim rather
+    than making all module configuration unreadable.
+    """
     module_name = str(module_name or "").strip()
     if not module_name:
         return {}
@@ -1758,6 +1985,8 @@ def get_module_config(module_name: str) -> dict[str, Any]:
             try:
                 config[str(key)] = json.loads(raw_value)
             except (TypeError, json.JSONDecodeError):
+                # Be liberal when reading old/manual rows; a later PUT will
+                # rewrite the value using the canonical JSON representation.
                 config[str(key)] = raw_value
         else:
             config[str(key)] = raw_value
@@ -1770,7 +1999,12 @@ def upsert_module_config(
     *,
     updated_by: str | None = None,
 ) -> None:
-    """Persist DB-backed non-secret config for a module."""
+    """Upsert non-secret module settings as canonical JSON values.
+
+    Callers must keep credentials in environment-backed manifest fields.  This
+    table is intended for operator-editable behavior such as dry-run flags,
+    limits, and page names; ``updated_by`` provides the audit attribution.
+    """
     module_name = str(module_name or "").strip()
     if not module_name:
         raise ValueError("module_name is required")
@@ -1782,6 +2016,8 @@ def upsert_module_config(
             for key, value in updates.items():
                 config_key = str(key or "").strip()
                 if not config_key:
+                    # Ignore an unusable key rather than writing a row that no
+                    # caller can address consistently.
                     continue
                 cursor.execute(
                     """
@@ -1811,7 +2047,7 @@ def upsert_module_config(
 
 
 def set_module_enabled(name: str, enabled: bool) -> None:
-    """Toggle a module's enabled flag."""
+    """Set the operator-controlled registry enablement flag for one module."""
     with get_conn() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -1822,7 +2058,12 @@ def set_module_enabled(name: str, enabled: bool) -> None:
 
 
 def upsert_module_access(module_name: str, username: str, enabled: bool = True) -> None:
-    """Grant or revoke explicit access to a module for a username."""
+    """Grant or revoke a case-insensitive legacy explicit-access row.
+
+    New policy can grant module rights through :mod:`router.authz`; this table
+    remains a supported direct grant source for existing deployments and the
+    module-access management API.
+    """
     module_name = str(module_name or "").strip()
     username = str(username or "").strip().lower()
     if not module_name or not username:
@@ -1848,7 +2089,14 @@ def upsert_module_access(module_name: str, username: str, enabled: bool = True) 
 
 
 def user_has_module_access(module_name: str, username: str, *, is_maintainer: bool = False) -> bool:
-    """Return True when the user may enter a module."""
+    """Resolve module entry access across maintainer, authz, and legacy grants.
+
+    Maintainers bypass module-specific checks.  Other users receive access from
+    either the canonical ``module:<name>:access``/``view`` rights or an enabled
+    ``module_access`` row.  Authz lookup failures fall through to the durable
+    explicit table so a transient policy/cache problem does not erase existing
+    grants.
+    """
     if is_maintainer:
         return True
 
@@ -1865,6 +2113,8 @@ def user_has_module_access(module_name: str, username: str, *, is_maintainer: bo
         if user_has_module_right(username, module_name, "view"):
             return True
     except Exception:
+        # Preserve the independent legacy access path when authz configuration
+        # or its backing services are temporarily unavailable.
         pass
 
     with get_conn() as conn:

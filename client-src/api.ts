@@ -1,4 +1,7 @@
-// TYPES
+/** Typed browser clients for read-only MediaWiki queries and framework APIs. */
+
+// Shared response/request shapes mirror the versioned Flask endpoints.  Optional
+// legacy spellings remain here only where deployed templates still emit them.
 
 export interface JobRow {
   id: number;
@@ -143,6 +146,7 @@ export interface RollbackRequestPreview {
 // ------------------------
 
 export function getInitialProps(): QueueProps {
+  /** Parse the server-owned JSON props element for the current page. */
   const el =
     document.getElementById("rollback-queue-props") ||
     document.getElementById("modules-props") ||
@@ -172,6 +176,7 @@ export function getInitialProps(): QueueProps {
 // ------------------------
 
 export function mwApi(params: string): string {
+  /** Build a CORS-enabled Commons Action API URL from encoded query parameters. */
   return "https://commons.wikimedia.org/w/api.php?origin=*&format=json&" + params;
 }
 
@@ -180,6 +185,7 @@ export function mwApi(params: string): string {
 // ------------------------
 
 export async function loadNamespaces(): Promise<Array<{ id: string; name: string }>> {
+  /** Load namespace choices directly from current Commons site metadata. */
   const r = await fetch(
     mwApi(
       "action=query&meta=siteinfo&siprop=namespaces"
@@ -205,6 +211,7 @@ export async function searchTitles(
   value: string,
   namespaceId: string
 ): Promise<Array<{ label: string; value: string }>> {
+  /** Return autocomplete title choices within an optional namespace. */
   if (!value) return [];
 
   const nsParam = namespaceId ? "&namespace=" + namespaceId : "";
@@ -232,6 +239,7 @@ export async function searchTitles(
 export async function searchUsernames(
   value: string
 ): Promise<Array<{ label: string; value: string }>> {
+  /** Return Commons username-prefix autocomplete choices. */
   const query = value.trim();
   if (!query) return [];
 
@@ -263,6 +271,7 @@ export async function searchUsernames(
 export async function loadEditorsForTitle(
   title: string
 ): Promise<{ users: string[]; latestUser: string; latestComment: string }> {
+  /** Load recent distinct editors and latest summary for a rollback target. */
   const r = await fetch(
     mwApi(
       "action=query" +
@@ -310,6 +319,7 @@ export async function loadEditorsForTitle(
 // ------------------------
 
 export async function fetchJobDetails(id: number): Promise<JobRow> {
+  /** Fetch one visible rollback job and its item-level details. */
   const r = await fetch(`/api/v1/rollback/jobs/${id}`);
 
   if (!r.ok) throw new Error(`Failed to fetch job ${id}: ${r.status}`);
@@ -318,6 +328,7 @@ export async function fetchJobDetails(id: number): Promise<JobRow> {
 }
 
 export async function fetchUserJobs(): Promise<JobRow[]> {
+  /** Fetch the current user's active and recently terminal jobs. */
   const r = await fetch("/api/v1/rollback/jobs");
 
   if (!r.ok) throw new Error(`Failed to fetch jobs: ${r.status}`);
@@ -327,6 +338,7 @@ export async function fetchUserJobs(): Promise<JobRow[]> {
 }
 
 export async function fetchAllJobs(): Promise<AllJobsRow[]> {
+  /** Fetch privileged cross-user rollback history as JSON. */
   const r = await fetch("/rollback-queue/all-jobs?format=json");
 
   if (!r.ok) throw new Error(`Failed to fetch all jobs: ${r.status}`);
@@ -336,6 +348,7 @@ export async function fetchAllJobs(): Promise<AllJobsRow[]> {
 }
 
 export async function fetchRollbackRequests(): Promise<RollbackRequestsResponse> {
+  /** Fetch approval requests visible to the current reviewer/requester. */
   const r = await fetch("/api/v1/rollback/requests");
 
   if (!r.ok) throw new Error(`Failed to fetch rollback requests: ${r.status}`);
@@ -348,6 +361,7 @@ export async function fetchRollbackRequestPreview(
   endpoint?: string,
   full: boolean = true,
 ): Promise<RollbackRequestPreview> {
+  /** Resolve the exact item list represented by a pending approval request. */
   const query = new URLSearchParams();
   if (endpoint) query.set("endpoint", endpoint);
   query.set("full", full ? "1" : "0");
@@ -360,6 +374,7 @@ export async function fetchRollbackRequestPreview(
 }
 
 export async function fetchProgress(ids: number[]): Promise<Record<number, any>> {
+  /** Fetch best-effort Redis progress projections for several jobs. */
   const r = await fetch(`/api/v1/rollback/jobs/progress?ids=${ids.join(",")}`);
 
   if (!r.ok) throw new Error(`Failed to fetch progress: ${r.status}`);
@@ -368,6 +383,7 @@ export async function fetchProgress(ids: number[]): Promise<Record<number, any>>
 }
 
 export async function retryJob(id: number): Promise<void> {
+  /** Request a durable rollback retry. */
   const r = await fetch(`/api/v1/rollback/jobs/${id}/retry`, {
     method: "POST",
   });
@@ -376,6 +392,7 @@ export async function retryJob(id: number): Promise<void> {
 }
 
 export async function approveJob(id: number, endpoint?: string): Promise<any> {
+  /** Approve a pending request under an optional supported endpoint override. */
   const body: Record<string, unknown> = {};
   if (endpoint) {
     body.endpoint = endpoint;
@@ -404,6 +421,7 @@ export async function approveJob(id: number, endpoint?: string): Promise<any> {
 }
 
 export async function rejectRollbackRequest(id: number): Promise<any> {
+  /** Reject a pending request and its sibling batch chunks. */
   const r = await fetch(`/api/v1/rollback/jobs/${id}/reject`, {
     method: "POST",
     headers: {
@@ -427,6 +445,7 @@ export async function rejectRollbackRequest(id: number): Promise<any> {
 }
 
 export async function forceDryRunRequest(id: number): Promise<any> {
+  /** Reduce a pending request to dry-run mode without approving it. */
   const r = await fetch(`/api/v1/rollback/jobs/${id}/force-dry-run`, {
     method: "POST",
     headers: {
@@ -450,6 +469,7 @@ export async function forceDryRunRequest(id: number): Promise<any> {
 }
 
 export async function runJobLive(id: number): Promise<any> {
+  /** Requeue an authorized completed dry run for live execution. */
   const r = await fetch(`/api/v1/rollback/jobs/${id}/run-live`, {
     method: "POST",
     headers: {
@@ -473,6 +493,7 @@ export async function runJobLive(id: number): Promise<any> {
 }
 
 export async function cancelJob(id: number, token?: string): Promise<void> {
+  /** Cancel a rollback job using session auth or an optional status-site token. */
   const headers: Record<string, string> = {};
 
   if (token) headers["X-Status-Token"] = token;
@@ -496,6 +517,7 @@ export async function createJob(payload: {
   items: CreateJobItem[];
   token?: string;
 }): Promise<{ ok: boolean; result: any }> {
+  /** Submit a validated batch and preserve backend error details for the form. */
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
@@ -528,6 +550,7 @@ export async function createJob(payload: {
 }
 
 export async function fetchRuntimeAuthzConfig(): Promise<RuntimeAuthzResponse> {
+  /** Load effective authorization config and editor option metadata. */
   const r = await fetch("/api/v1/config/authz");
 
   if (!r.ok) throw new Error(`Failed to fetch runtime config: ${r.status}`);
@@ -538,6 +561,7 @@ export async function fetchRuntimeAuthzConfig(): Promise<RuntimeAuthzResponse> {
 export async function updateRuntimeAuthzConfig(
   config: Partial<RuntimeAuthzConfig>
 ): Promise<RuntimeAuthzResponse> {
+  /** Persist a validated partial runtime authorization update. */
   const r = await fetch("/api/v1/config/authz", {
     method: "PUT",
     headers: {
@@ -558,6 +582,7 @@ export async function fetchRuntimeUserGrants(
   username: string,
   options?: { refreshCommons?: boolean }
 ): Promise<RuntimeUserGrantsResponse> {
+  /** Load one user's explicit and derived grants, optionally refreshing Commons. */
   const normalized = username.trim();
   const params = new URLSearchParams();
   if (options?.refreshCommons) {
@@ -584,6 +609,7 @@ export async function updateRuntimeUserGrants(
     reason?: string;
   }
 ): Promise<RuntimeUserGrantsResponse> {
+  /** Replace one user's explicit authorization groups and rights. */
   const normalized = username.trim();
   const r = await fetch(`/api/v1/config/authz/user-grants/${encodeURIComponent(normalized)}`, {
     method: "PUT",
@@ -679,6 +705,7 @@ export interface ModuleRunItem {
 }
 
 export async function fetchModules(): Promise<ModuleItem[]> {
+  /** Load module definitions with caller-specific capability flags. */
   const r = await fetch("/api/v1/modules");
   const data = await r.json();
 
@@ -693,6 +720,7 @@ export async function toggleModuleEnabled(
   moduleName: string,
   enabled: boolean
 ): Promise<{ module: string; enabled: boolean }> {
+  /** Enable or disable one registered module. */
   const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/enabled`, {
     method: "PUT",
     headers: {
@@ -716,6 +744,7 @@ export async function emergencyStopModule(moduleName: string): Promise<{
   kill_results: Array<unknown>;
   module_specific?: Record<string, unknown>;
 }> {
+  /** Disable a module, cancel runs, and request active workload termination. */
   const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/estop`, {
     method: "POST",
   });
@@ -733,6 +762,7 @@ export async function updateModuleAccess(
   username: string,
   enabled: boolean
 ): Promise<{ module: string; username: string; enabled: boolean }> {
+  /** Set one user's explicit access toggle for a module. */
   const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/access`, {
     method: "PUT",
     headers: {
@@ -759,6 +789,7 @@ export async function updateModuleJob(
     enabled?: boolean;
   }
 ): Promise<{ detail?: string; jobs: ModuleItem["cron_jobs"] }> {
+  /** Update supported runtime controls for one scheduled module job. */
   const r = await fetch(
     `/api/v1/modules/${encodeURIComponent(moduleName)}/jobs/${encodeURIComponent(jobName)}`,
     {
@@ -781,6 +812,7 @@ export async function updateModuleJob(
 export async function fetchModuleJobs(
   moduleName: string
 ): Promise<{ jobs: ModuleItem["cron_jobs"]; runs: ModuleRunItem[] }> {
+  /** Load one module's schedules and recent execution history. */
   const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/jobs`);
   const data = await r.json();
 
@@ -797,6 +829,7 @@ export async function fetchModuleJobs(
 export async function fetchModuleConfig(
   moduleName: string
 ): Promise<Record<string, unknown>> {
+  /** Load runtime configuration for one accessible module. */
   const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/config`);
   const data = await r.json();
 
@@ -811,6 +844,7 @@ export async function updateModuleConfig(
   moduleName: string,
   config: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
+  /** Merge an authorized module runtime-configuration update. */
   const r = await fetch(`/api/v1/modules/${encodeURIComponent(moduleName)}/config`, {
     method: "PUT",
     headers: {

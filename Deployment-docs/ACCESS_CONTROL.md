@@ -1,118 +1,173 @@
-# Chuck the Buckbot Framework Access Control
+# Access Control
 
-Access control now mirrors the way MediaWiki user rights are usually reasoned
-about:
+Buckbot evaluates access from four sources. In descending order of authority:
 
-1. Users belong to groups.
-2. Groups provide rights.
-3. Automatic roles can place users into groups.
-4. Tool maintainers sit above the rollback-control system.
+1. `BOT_ADMIN_ACCOUNTS` and Toolhub maintainers.
+2. Explicit user grants in `ROLLBACK_CONTROL_JSON`.
+3. Automatic Wikimedia-role grants in `ROLE_GRANTS_JSON`.
+4. Compatibility-only module access rows in the `module_access` table.
 
-There should not be separate pages that grant the same capability through
-different lists. The runtime config UI should treat groups as the normal editing
-surface and show derived rights as explanation.
+The effective configuration is assembled in `router/authz.py`; route-level
+checks are in `router/permissions.py` and `router/routes.py`. Runtime values in
+the `runtime_config` table override environment defaults for the current keys.
 
-## Inputs
+## Maintainers and protected configuration
 
-### Maintainers
+`app.is_maintainer()` returns true for a configured bot-admin account or a
+maintainer returned by Toolhub. Maintainers can manage modules and normal
+rollback work. Bot admins have one additional rollback capability: they may
+cancel work owned by another maintainer.
 
-Tool maintainers, including configured bot-admin accounts, receive full
-framework control. They can manage rollback work, module controls, runtime
-access config, and user groups.
+Runtime authorization configuration is intentionally more restrictive than
+ordinary module administration:
 
-### Role Auto Grants
+- Bot admins and Toolhub maintainers may view it.
+- The bot admin named by `CONFIG_EDIT_PRIMARY_ACCOUNT` (default `chuckbot`) may
+  edit the whole authorization configuration.
+- A user with the `edit_config` right may also edit it.
+- Any bot admin, or a user with `manage_user_grants`, may edit individual user
+  assignments.
 
-Stored in `ROLE_GRANTS_JSON`.
+Do not assume that every maintainer can change the protected authorization
+document. The checks above are enforced independently by the `/api/v1/config/authz`
+routes.
 
-This maps implicit roles to groups:
+## Current runtime keys
+
+| Key | Meaning |
+| --- | --- |
+| `ROLLBACK_CONTROL_JSON` | Maps normalized MediaWiki usernames to `group:<name>` atoms and/or direct rights. |
+| `ROLE_GRANTS_JSON` | Maps implicit Wikimedia roles to groups or direct rights. |
+| `CHUCKBOT_GROUPS_JSON` | Defines custom group bundles. Built-in groups are present in the effective default. |
+| `CHUCKBOT_GROUP_DESCRIPTIONS_JSON` | Stores optional descriptions for custom groups. |
+| `RATE_LIMIT_JOBS_PER_HOUR` | Per-user rollback submission limit; `0` disables it. |
+| `RATE_LIMIT_TESTER_JOBS_PER_HOUR` | Tester-specific limit; defaults to the regular limit. |
+
+Usernames are normalized to MediaWiki's first-letter-uppercase form and
+underscores become spaces when policy is saved. There is an important current
+compatibility limitation: the main `_user_permissions()` path lowercases the
+entire authenticated username before direct framework-grant lookup. A stored
+key such as `AlaChuckthebuck` is therefore looked up as `Alachuckthebuck` on
+those routes, even though MediaWiki can treat them as distinct accounts.
+Module-scoped helper checks preserve the original session spelling. Until the
+legacy lowercase lookup is removed, verify effective access for mixed-case
+usernames and do not rely on later-character case to isolate grants.
+
+Example:
 
 ```json
 {
-  "commons_admin": ["group:basic"],
-  "commons_rollbacker": ["group:basic"]
+  "Alice": ["group:rollbacker", "group:batch_runner"],
+  "Bob": ["group:read_only"],
+  "Carol": ["module:four_award:view", "module:four_award:run_jobs"]
 }
 ```
 
-Supported auto-grant roles:
+Direct rights remain supported, but groups are easier to audit when several
+users need the same capability.
+
+## Built-in groups
+
+| Group | Expanded rights |
+| --- | --- |
+| `basic` | Submit and manage the user's own basic rollback queue work. |
+| `read_only` | View only the user's own rollback jobs. This group short-circuits normal rollback grants. |
+| `tester` | Basic work, all-job viewing, diff/account rollback, and batch rollback. |
+| `viewer` | View all rollback jobs and module runs. |
+| `rollbacker` | Basic work plus diff and account rollback. |
+| `rollbacker_dry_run` | Diff/account rollback with the dry-run-only restriction. |
+| `batch_runner` | Basic work plus batch rollback. |
+| `jobs_moderator` | Approve, force dry run, cancel, and retry regular users' jobs. |
+| `config_editor` | Edit runtime authorization configuration. |
+| `rights_manager` | Manage individual user grant assignments. |
+| `module_operator` | Full authority over every module, including all present and future module-scoped sensitive rights such as live apply. |
+| `admin` | Broad rollback, moderation, config, user-grant, and full module authority. |
+
+Custom groups may contain framework rights or module atoms. The API rejects
+unknown framework rights, while module-specific atoms are deliberately dynamic
+so a module can introduce a right without changing the authorization engine.
+
+## Automatic Wikimedia-role grants
+
+`ROLE_GRANTS_JSON` supports these role selectors:
 
 - `authenticated`
 - `commons_admin`
 - `commons_rollbacker`
-- project/global roles exposed by the auth layer, when configured
+- `project:<project>:<group>`, for example
+  `project:enwiki:extendedconfirmed`
+- `global:<group>`, for example `global:global-sysop`
 
-### Rollback Control
-
-Stored in `ROLLBACK_CONTROL_JSON`.
-
-This maps usernames to groups:
+Example:
 
 ```json
 {
-  "alice": ["group:rollbacker", "group:batch_runner"],
-  "bob": ["group:read_only"],
-  "carol": ["group:jobs_moderator"]
+  "commons_admin": ["group:basic"],
+  "project:enwiki:extendedconfirmed": ["module:four_award:view"],
+  "global:global-sysop": ["group:module_operator"]
 }
 ```
 
-Direct rights may still be accepted as a migration escape hatch, but groups are
-the normal interface.
+Project and global membership is fetched from Wikimedia and cached for five
+minutes. Failed lookups do not invent membership.
 
-## Groups
+## Module rights and access
 
-| Group | Meaning |
-|---|---|
-| `basic` | Can submit and manage own rollback queue jobs. |
-| `read_only` | Can only view own jobs. |
-| `tester` | Can use rollback tools with tester rate limits and no cross-user moderation. |
-| `viewer` | Can view all jobs. |
-| `rollbacker` | Can use diff and account rollback tools. |
-| `rollbacker_dry_run` | Can use diff/account rollback tools, forced to dry-run mode. |
-| `batch_runner` | Can submit batch rollback jobs. |
-| `jobs_moderator` | Can approve jobs and cancel/retry regular users' jobs. |
-| `config_editor` | Can edit runtime access configuration. |
-| `rights_manager` | Can manage rollback-control groups for users. |
-| `module_operator` | Can manage modules, module config, and module jobs. |
-| `admin` | Broad rollback, jobs, config, and module rights. |
+Module atoms have this shape:
 
-## Migration
+```text
+module:<module_name>:<right>
+```
 
-Legacy runtime/env keys are read as migration input only:
+The framework generates `view` and `estop` for every registered module. A
+module manifest declares its worker/config rights, such as `manage`,
+`run_jobs`, `edit_config`, or a sensitive action right such as
+`apply_changes`. A job's `required_right` is checked in addition to the normal
+run permission.
 
-| Legacy key | New equivalent |
-|---|---|
+Salt Shack also generates three independently grantable rights for every
+compiled Saltlick:
+
+```text
+module:chuck_salt_shack:saltlick_<saltlick_id>_preview
+module:chuck_salt_shack:saltlick_<saltlick_id>_apply
+module:chuck_salt_shack:saltlick_<saltlick_id>_estop
+```
+
+The older `module_access` table still provides a simple enter/view grant and is
+edited by `PUT /api/v1/modules/<module>/access`. It does not replace
+operation-specific rights. Prefer group or direct module-right grants whenever
+the user needs run, config, apply, or E-STOP capabilities.
+
+`view_all` allows broad module-run discovery on the registry and compatible
+list surfaces. It is not, by itself, accepted by every module-owned or legacy
+detail route. In particular, the framework-hosted
+`/modules/runs/<run_id>/report` page currently requires direct module access or
+`module:<name>:view`, module/global management, or maintainer status. A user who
+can see a run in a list through `view_all` may therefore receive `403` when
+following its report link. Grant the module's `view` right when report access is
+required; use `view_jobs` only for surfaces whose route explicitly accepts it.
+
+## Compatibility inputs
+
+The following environment variables and persisted runtime rows are still read
+so an older deployment does not lose access during upgrade:
+
+| Compatibility key | Effective current grant |
+| --- | --- |
 | `EXTRA_AUTHORIZED_USERS` | `group:basic` |
 | `USERS_READ_ONLY` | `group:read_only` |
 | `USERS_TESTER` | `group:tester` |
 | `USERS_GRANTED_FROM_DIFF` | `group:rollbacker` |
 | `USERS_GRANTED_VIEW_ALL` | `group:viewer` |
 | `USERS_GRANTED_BATCH` | `group:batch_runner` |
-| `USERS_GRANTED_CANCEL_ANY` | direct `cancel_any` migration right |
-| `USERS_GRANTED_RETRY_ANY` | direct `retry_any` migration right |
-| `USER_GRANTS_JSON` | `ROLLBACK_CONTROL_JSON` |
-| `AUTO_GRANTS_JSON` | `ROLE_GRANTS_JSON` |
+| `USERS_GRANTED_CANCEL_ANY` | direct `cancel_any` |
+| `USERS_GRANTED_RETRY_ANY` | direct `retry_any` |
+| `USER_GRANTS_JSON` | fallback input for `ROLLBACK_CONTROL_JSON` |
+| `AUTO_GRANTS_JSON` | merged into `ROLE_GRANTS_JSON` |
 
-New UI and API writes should use `ROLLBACK_CONTROL_JSON` and
-`ROLE_GRANTS_JSON`.
-
-## Module Rights
-
-Module rights use the same right engine as framework rights. The atom shape is:
-
-```txt
-module:<module_name>:<right>
-```
-
-Examples:
-
-- `module:four_award:view`
-- `module:four_award:run_jobs`
-- `module:four_award:edit_config`
-- `module:four_award:manage`
-- `module:four_award:estop`
-
-Modules declare only their module-owned rights in the manifest. The framework
-generates `view` and `estop` for every module because those are framework
-surfaces and do not require worker implementation.
-
-Framework `view_all` also allows viewing module job runs. Use explicit module
-rights when granting access to one module without broad job visibility.
+Legacy atom aliases such as `group:operator`, `from_diff`, `batch`, and
+`read_all` are resolved while permissions are expanded. The framework does not
+delete or rewrite those old values automatically. Save current keys through the
+runtime config UI/API, verify effective access, and then remove the old inputs
+from the deployment.

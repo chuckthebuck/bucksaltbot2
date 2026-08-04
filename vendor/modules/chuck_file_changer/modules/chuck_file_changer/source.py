@@ -1,3 +1,10 @@
+"""Resolve bounded Commons API source modes into normalized file targets.
+
+Uploader logs, category members, page images, and file-namespace search all use
+the same identifying headers, request timeout, continuation loop, global source
+limit, and final title de-duplication.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -9,6 +16,8 @@ from .config import COMMONS_API_URL, http_headers
 from .models import FileChangeTarget
 from .quarry import dedupe_targets, normalize_file_title
 
+# MediaWiki accepts at most a bounded page of results per request; the larger
+# source cap is fulfilled through continuation rather than one oversized call.
 API_BATCH_LIMIT = 500
 DEFAULT_SOURCE_LIMIT = 5000
 MAX_SOURCE_LIMIT = 50000
@@ -17,6 +26,7 @@ SOURCE_MODES = {"user", "category", "page", "search"}
 
 
 def source_mode_from_payload(payload: dict[str, Any]) -> str:
+    """Read the current or compatibility source-mode field spelling."""
     return str(
         payload.get("source_mode")
         or payload.get("file_source_mode")
@@ -26,10 +36,16 @@ def source_mode_from_payload(payload: dict[str, Any]) -> str:
 
 
 def has_vfc_source(payload: dict[str, Any]) -> bool:
+    """Return whether payload selection belongs to a live Commons source mode."""
     return source_mode_from_payload(payload) in SOURCE_MODES
 
 
 def source_url_for_payload(payload: dict[str, Any]) -> str:
+    """Build descriptive source metadata recorded with the queued batch.
+
+    This URL identifies the mode and target for auditing; it is not a replay of
+    every MediaWiki request or continuation token used during resolution.
+    """
     mode = source_mode_from_payload(payload)
     target = source_target(payload)
     query = urlencode({"source_mode": mode, "target": target})
@@ -37,6 +53,7 @@ def source_url_for_payload(payload: dict[str, Any]) -> str:
 
 
 def source_target(payload: dict[str, Any]) -> str:
+    """Read and trim the current or compatibility source-target field."""
     return str(
         payload.get("source_target")
         or payload.get("target")
@@ -46,6 +63,7 @@ def source_target(payload: dict[str, Any]) -> str:
 
 
 def source_limit(payload: dict[str, Any]) -> int:
+    """Coerce the requested result cap into the supported 1..50000 range."""
     try:
         value = int(payload.get("source_limit") or payload.get("limit") or DEFAULT_SOURCE_LIMIT)
     except (TypeError, ValueError):
@@ -54,6 +72,7 @@ def source_limit(payload: dict[str, Any]) -> int:
 
 
 def resolve_vfc_source(payload: dict[str, Any]) -> tuple[list[FileChangeTarget], str]:
+    """Dispatch a validated source mode and de-duplicate its ordered results."""
     mode = source_mode_from_payload(payload)
     target = source_target(payload)
     if mode not in SOURCE_MODES:
@@ -69,10 +88,13 @@ def resolve_vfc_source(payload: dict[str, Any]) -> tuple[list[FileChangeTarget],
         targets = _resolve_page_images(target, payload)
     else:
         targets = _resolve_search(target, payload)
+    # API pages can overlap while Commons changes during pagination. Apply the
+    # same first-seen title identity rule used by pasted and Quarry sources.
     return dedupe_targets(targets), source_url_for_payload(payload)
 
 
 def _get(params: dict[str, Any]) -> dict[str, Any]:
+    """Perform one identified, timed Commons API GET and decode its JSON body."""
     response = requests.get(
         COMMONS_API_URL,
         params={"format": "json", "formatversion": 2, **params},
@@ -84,6 +106,11 @@ def _get(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _continue_params(payload: dict[str, Any]) -> dict[str, str]:
+    """Normalize an optional compatibility continuation mapping.
+
+    The normal UI omits this field. API clients may round-trip MediaWiki's
+    opaque continuation object to resume a previously paged read.
+    """
     raw = payload.get("continue")
     if isinstance(raw, dict):
         return {str(key): str(value) for key, value in raw.items() if value is not None}
@@ -91,10 +118,12 @@ def _continue_params(payload: dict[str, Any]) -> dict[str, str]:
 
 
 def _source_sort(payload: dict[str, Any]) -> str:
+    """Return the normalized source sort label, defaulting to newest first."""
     return str(payload.get("source_sort") or payload.get("sort") or "newest").strip().lower()
 
 
 def _resolve_user_uploads(user: str, payload: dict[str, Any]) -> list[FileChangeTarget]:
+    """Page through upload log events for one Commons username."""
     remaining = source_limit(payload)
     params: dict[str, Any] = {
         "action": "query",
@@ -109,6 +138,8 @@ def _resolve_user_uploads(user: str, payload: dict[str, Any]) -> list[FileChange
 
     targets: list[FileChangeTarget] = []
     while remaining > 0:
+        # Decrement only for usable upload rows; continuation advances the API
+        # window until the requested target count or the result set is exhausted.
         data = _get(params)
         for event in data.get("query", {}).get("logevents", []):
             if event.get("action") != "upload" or not event.get("title"):
@@ -132,6 +163,7 @@ def _resolve_user_uploads(user: str, payload: dict[str, Any]) -> list[FileChange
 
 
 def _resolve_category(category: str, payload: dict[str, Any]) -> list[FileChangeTarget]:
+    """Resolve file members of a category through the generic pager."""
     title = category if ":" in category else f"Category:{category}"
     sort = _source_sort(payload)
     params: dict[str, Any] = {
@@ -151,6 +183,7 @@ def _resolve_category(category: str, payload: dict[str, Any]) -> list[FileChange
 
 
 def _resolve_page_images(page: str, payload: dict[str, Any]) -> list[FileChangeTarget]:
+    """Page through images embedded on one existing Commons page."""
     remaining = source_limit(payload)
     params: dict[str, Any] = {
         "action": "query",
@@ -165,6 +198,8 @@ def _resolve_page_images(page: str, payload: dict[str, Any]) -> list[FileChangeT
     while remaining > 0:
         data = _get(params)
         for page_data in data.get("query", {}).get("pages", []):
+            # Missing and invalid source pages are input errors, not successful
+            # empty target lists that would hide a mistyped title.
             if page_data.get("missing") or page_data.get("invalid"):
                 raise ValueError("Page source does not exist or is invalid")
             for image in page_data.get("images", []):
@@ -183,6 +218,7 @@ def _resolve_page_images(page: str, payload: dict[str, Any]) -> list[FileChangeT
 
 
 def _resolve_search(query: str, payload: dict[str, Any]) -> list[FileChangeTarget]:
+    """Search only Commons namespace 6 and collect matching file pages."""
     params: dict[str, Any] = {
         "action": "query",
         "list": "search",
@@ -199,6 +235,7 @@ def _collect_paged_targets(
     result_key: str,
     limit: int,
 ) -> list[FileChangeTarget]:
+    """Collect title rows from a list API until continuation or limit ends."""
     remaining = limit
     targets: list[FileChangeTarget] = []
     while remaining > 0:
@@ -218,6 +255,8 @@ def _collect_paged_targets(
         cont = data.get("continue")
         if not cont or remaining <= 0:
             break
+        # MediaWiki continuation is opaque; preserve every returned key for the
+        # next request and then shrink the module-specific batch size.
         params.update(cont)
         if result_key == "categorymembers":
             params["cmlimit"] = min(API_BATCH_LIMIT, remaining)

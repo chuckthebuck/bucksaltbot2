@@ -1,58 +1,57 @@
 # Deployment Summary
 
-Chuck the Buckbot Framework deploys as one Toolforge webservice plus
-Toolforge-managed jobs. Module code is bundled into the framework deploy as
-known-good package snapshots.
+Chuck the Buckbot deploys one versioned framework bundle through Toolforge
+Build Service. The webservice, Celery worker, module run controller, status
+cron, and generated module schedules all use source and module snapshots from
+that same committed bundle.
 
-## Current Model
+## Bundle contents
 
-- The framework owns Flask, OAuth, shared APIs, ToolsDB state, Redis state,
-  module registry, generated module rights, E-STOP controls, and jobs YAML
-  generation.
-- Rollback is the built-in framework module.
-- External modules, such as 4Award, should live in their own repo and be
-  vendored into this repo under `vendor/modules/<module>/` for deploy.
-- Local development can use editable installs from a neighboring module clone.
-  Vendoring is only needed when preparing a deployable framework commit.
+- The framework owns Flask/OAuth, shared routing, authorization, ToolsDB and
+  Redis integration, the module registry, generic jobs, and emergency controls.
+- Rollback is framework-owned under `modules/rollback`.
+- 4Award, File Changer, and Salt Shack are standalone repository snapshots
+  committed below `vendor/modules` and installed by
+  `requirements-modules.txt`.
+- `enabled-modules.txt` selects manifests; `module-frontend-packages.json`
+  selects source frontends compiled into the framework Vite bundle.
+- `static/dist` is intentionally not committed. Toolforge's documented
+  [Python-plus-Node Build Service behavior](https://wikitech.wikimedia.org/wiki/Help:Toolforge/Build_service#Using_Node.js_in_addition_to_another_language)
+  detects the root `package.json`, and the documented
+  [Node Cloud Native Buildpack flow](https://devcenter.heroku.com/articles/nodejs-cloud-native-buildpack-builds)
+  runs its `build` script after dependency installation, producing the Vite
+  manifest and hashed assets inside the image.
+- Toolforge does not fetch a module repository at runtime or install modules
+  through an API. The removed install endpoint remains a `410` compatibility
+  response.
 
-## What Must Be True For Deploy
+## Release path
 
-- Module loading has not been explicitly disabled with
-  `ENABLE_MODULE_LOADING=0`; enabled modules load by default.
-- Required framework and module environment variables are configured.
-- `requirements.txt` plus `requirements-modules.txt` install cleanly.
-- `enabled-modules.txt` names only modules that should load.
-- Module manifests declare only module-owned rights. The framework generates
-  `module:<name>:view` and `module:<name>:estop`.
-- Module-owned CTB APIs live under `/api/v1/modules/<module>/...`.
-- Toolforge `jobs.yaml` has been updated if cron definitions changed.
-- The Toolforge web process starts `app:flask_app`, not the legacy
-  `router:app` Flask re-export that bypasses module bootstrap.
+1. Develop a standalone module in its own checkout and install it editable for
+   local integration.
+2. Refresh reviewed vendored snapshots with `npm run modules:update`.
+3. Run the changed modules' tests and `bash scripts/canary-build.sh`.
+4. If schedules changed, copy the reviewed `/jobs-yaml` output into the marked
+   block in `jobs.yaml` and commit it.
+5. Push the deploy commit to `main`. The Toolforge deploy GitHub workflow
+   invokes `scripts/toolforge-deploy-new-version.sh`.
 
-## Useful Commands
+The wrapper fast-forwards `/data/project/buckbot`, starts a Build Service build,
+restarts the webservice, flushes Toolforge jobs, and loads the committed
+`jobs.yaml`. It does not regenerate schedules or initialize a new database;
+those are first-deploy/bootstrap responsibilities.
 
-```bash
-python scripts/check-module-install.py
-python3 -m pytest -q tests/test_module_registry.py tests/test_module_runtime.py
-npm run build
-bash scripts/check-secrets.sh live
-```
+## Runtime boundaries
 
-For 4Award module work developed inside the framework:
+Generic manual module runs are persisted in `module_job_runs` and claimed by
+`buckbot-module-controller`. Scheduled handler jobs run through
+`python3 -m module_runner`. Rollback and some module-owned APIs use Celery.
 
-```bash
-bash scripts/backport-four-award-subtree.sh --dry-run
-```
+Disabling a module blocks generic run dispatch but does not unmount an already
+registered custom Blueprint until restart. Generic E-STOP cancels generic
+module rows and attempts to delete Toolforge jobs/pods; only Rollback has
+additional built-in queue cleanup. Modules with separate queues, including
+File Changer today, need separate stop handling.
 
-## Deployment Docs
-
-Start with:
-
-- [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)
-- [MODULE_DEPLOYMENT_PREP.md](MODULE_DEPLOYMENT_PREP.md)
-- [MODULE_DEVELOPMENT_GUIDE.md](MODULE_DEVELOPMENT_GUIDE.md)
-- [VERSIONING.md](VERSIONING.md)
-- [LOCAL_CANARY.md](LOCAL_CANARY.md)
-
-Avoid using old branch-specific notes or old test-count claims as deployment
-authority. Re-run the checks for the current branch instead.
+Use [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) for the release gate and
+[TOOLFORGE_FIRST_DEPLOY.md](TOOLFORGE_FIRST_DEPLOY.md) for a new tool account.

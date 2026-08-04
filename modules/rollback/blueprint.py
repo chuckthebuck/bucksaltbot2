@@ -16,6 +16,9 @@ blueprint = Blueprint("rollback_module", __name__)
 
 
 _ROLLBACK_PAGES = [
+    # These are framework-owned workflows.  The module supplies discovery and
+    # access control, then hands users to the canonical routes so queue state
+    # and authorization logic are not duplicated in a second blueprint.
     ("Rollback queue", "/rollback-queue"),
     ("From diff", "/rollback-from-diff"),
     ("By account", "/rollback-account"),
@@ -26,7 +29,11 @@ _ROLLBACK_PAGES = [
 
 
 def _require_module_access() -> str:
-    """Require a signed-in user with access to the rollback module."""
+    """Require a signed-in user with access to the rollback module.
+
+    Authentication and module membership are separate checks so clients receive
+    a useful 401 before login and a non-leaking 403 for denied module access.
+    """
     username = session.get("username")
     if not username:
         abort(401)
@@ -43,6 +50,8 @@ def _require_module_access() -> str:
 
 def _rollback_definition():
     """Return the registered rollback module definition or 404 if unavailable."""
+    # Route registration can outlive a disabled or invalid module record during
+    # a rolling deployment.  Resolve the live registry on every request.
     record = get_module_definition("rollback")
     if record is None:
         abort(404)
@@ -55,6 +64,8 @@ def index():
     username = _require_module_access()
     definition = _rollback_definition()
 
+    # This deliberately remains a small server-rendered migration example.  The
+    # actual rollback forms continue to live in framework templates linked below.
     return render_template_string(
         """
         <div class="module-shell">

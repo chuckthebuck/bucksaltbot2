@@ -1,11 +1,16 @@
-"""Router package: splits the monolithic router.py into logical submodules.
+"""Assemble the framework router and preserve its historical public surface.
 
-Re-exports key names for backward compatibility so that ``import router``
-continues to work for existing callers.
+The router was split from one module into focused authorization, state, job,
+registry, wiki, and route modules.  Imports are intentionally re-exported here:
+workers, extensions, and older tests still patch or call names on ``router``.
+Several helpers in the child modules therefore resolve this package lazily to
+honor those patches without introducing circular imports during startup.
 """
 
 import os
 
+# Development shells traditionally source a local .env file.  Production sets
+# NOTDEV so deployment secrets come exclusively from the process environment.
 if not os.environ.get("NOTDEV"):
     try:
         from dotenv import load_dotenv
@@ -119,6 +124,8 @@ from router.permissions import (  # noqa: F401
     is_authorized,
     is_tester,
 )
+# Import routes last: decorators need the assembled compatibility exports above,
+# while route helpers lazily call back through this package during requests.
 from router.routes import (  # noqa: F401
     _can_actor_approve,
     _can_review_requests,

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Start the legacy Vite build watcher and reloadable Gunicorn process.
+# Debug templates still need a separate real Vite server on port 5173.
 set -euo pipefail
 
 echo "Starting development environment"

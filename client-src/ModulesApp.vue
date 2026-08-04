@@ -1,4 +1,12 @@
 <script setup lang="ts">
+/**
+ * Framework module administration surface.
+ *
+ * The page exposes server-advertised capabilities for registry state, generic
+ * framework runs, schedules, config, and access grants. Those capabilities are
+ * presentation gates only: every mutating API remains responsible for authz.
+ * Module-owned queues and controls intentionally remain outside this generic UI.
+ */
 import { computed, onMounted, ref } from "vue";
 import { CdxButton, CdxProgressBar } from "@wikimedia/codex";
 import {
@@ -49,11 +57,15 @@ interface Module {
   }>;
 }
 
+// Initial props are server-rendered hints. They decide which controls to show,
+// while the module API repeats the authoritative permission checks.
 const props = getInitialProps();
 const canManageModules = computed(
   () => props.can_manage_modules ?? props.is_maintainer
 );
 
+// Registry data is refreshed after writes; transient editor/action state stays
+// local so the selected module can remain open across those refreshes.
 const modules = ref<Module[]>([]);
 const loading = ref(true);
 const error = ref("");
@@ -73,6 +85,7 @@ const moduleConfigDraft = ref<Record<string, unknown>>({});
 const configLoadedFor = ref<string | null>(null);
 const savingConfig = ref(false);
 
+/** Load the current registry snapshot and rebuild schedule drafts from it. */
 async function loadModules() {
   try {
     loading.value = true;
@@ -88,6 +101,12 @@ async function loadModules() {
   }
 }
 
+/**
+ * Recreate every schedule draft from the latest server snapshot.
+ *
+ * Callers invoke this after writes as well as initial load, so any unsaved edits
+ * elsewhere in the table are deliberately replaced by durable registry values.
+ */
 function syncJobDrafts() {
   const next: Record<
     string,
@@ -105,6 +124,7 @@ function syncJobDrafts() {
   jobDrafts.value = next;
 }
 
+/** Enable or disable framework dispatch, then reconcile registry state. */
 async function toggleModule(moduleName: string, enabled: boolean) {
   try {
     togglingModule.value = moduleName;
@@ -113,7 +133,7 @@ async function toggleModule(moduleName: string, enabled: boolean) {
     await toggleModuleEnabled(moduleName, enabled);
     success.value = enabled
       ? "Module enabled."
-      : "Module disabled. Active work was not killed; use E-STOP for immediate shutdown.";
+      : "Module disabled for framework dispatch. Module-owned queues and already-mounted custom APIs may continue; use module-native controls where implemented, otherwise follow the process-restart and incident procedure.";
     await loadModules();
   } catch (err) {
     error.value = `Failed to toggle module: ${String(err)}`;
@@ -123,13 +143,21 @@ async function toggleModule(moduleName: string, enabled: boolean) {
   }
 }
 
+/**
+ * Invoke the framework's generic emergency stop.
+ *
+ * This disables the registry entry and targets framework run records plus
+ * matching Toolforge jobs/pods. It cannot stop a module-owned queue or unmount an
+ * already registered custom API. File Changer is the concrete current example:
+ * its API does not consult registry-enabled state after the process has mounted it.
+ */
 async function estopModule(moduleName: string) {
   try {
     estoppingModule.value = moduleName;
     error.value = "";
     success.value = "";
     const result = await emergencyStopModule(moduleName);
-    success.value = `Emergency stop sent. ${result.canceled_runs} active framework run(s) were canceled.`;
+    success.value = `Emergency stop sent. The module was disabled and ${result.canceled_runs} active framework run(s) were canceled. Best-effort Toolforge termination was requested; inspect the returned kill results or server logs because commands may be disabled, skipped, or fail. Module-owned queues are not stopped. File Changer's mounted API can keep accepting and processing work until process restart; use module-native controls where implemented, otherwise follow the process-restart and incident procedure.`;
     await loadModules();
     await loadSelectedModuleRuns(moduleName);
   } catch (err) {
@@ -140,6 +168,7 @@ async function estopModule(moduleName: string) {
   }
 }
 
+/** Grant one normalized server-side identity access to a module. */
 async function grantAccess(moduleName: string, username: string) {
   if (!username.trim()) {
     error.value = "Username is required";
@@ -159,6 +188,7 @@ async function grantAccess(moduleName: string, username: string) {
   }
 }
 
+/** Revoke one module access grant and refresh the registry view. */
 async function revokeAccess(moduleName: string, username: string) {
   try {
     grantingAccess.value = { module: moduleName, username };
@@ -172,6 +202,7 @@ async function revokeAccess(moduleName: string, username: string) {
   }
 }
 
+/** Persist one cron draft; deployment of generated Jobs YAML is a separate step. */
 async function saveJob(moduleName: string, jobName: string) {
   const key = `${moduleName}/${jobName}`;
   const draft = jobDrafts.value[key];
@@ -189,7 +220,7 @@ async function saveJob(moduleName: string, jobName: string) {
       enabled: draft.enabled,
     });
     success.value =
-      "Schedule saved. Regenerate Jobs YAML and reload Toolforge jobs for the new interval.";
+      "Schedule saved. Replace only the marked generated block in jobs.yaml, review and commit it, then run the normal deploy wrapper to flush and reload Toolforge jobs.";
     await loadModules();
   } catch (err) {
     error.value = `Failed to update job: ${String(err)}`;
@@ -199,6 +230,7 @@ async function saveJob(moduleName: string, jobName: string) {
   }
 }
 
+/** Fetch recent framework-owned runs for the selected module. */
 async function loadSelectedModuleRuns(moduleName: string) {
   try {
     const data = await fetchModuleJobs(moduleName);
@@ -209,6 +241,7 @@ async function loadSelectedModuleRuns(moduleName: string) {
   }
 }
 
+/** Fetch a module config snapshot and keep form and JSON projections aligned. */
 async function loadSelectedModuleConfig(moduleName: string) {
   try {
     error.value = "";
@@ -225,6 +258,7 @@ async function loadSelectedModuleConfig(moduleName: string) {
   }
 }
 
+/** Parse and persist the advanced JSON editor as one object-valued config. */
 async function saveSelectedModuleConfig(moduleName: string) {
   let parsed: Record<string, unknown>;
   try {
@@ -257,6 +291,8 @@ async function saveSelectedModuleConfig(moduleName: string) {
   }
 }
 
+// All selected-module gates combine global management with the narrow module
+// capability returned by the server. They are UI hints, not API authorization.
 const selectedModuleData = computed(() => {
   return modules.value.find((m) => m.name === selectedModule.value) || null;
 });
@@ -277,6 +313,13 @@ const canEditSelectedModuleConfig = computed(
   () => canManageSelectedModule.value || !!selectedModuleData.value?.can_edit_config
 );
 
+/**
+ * Select a module and opportunistically load only data the server says is visible.
+ *
+ * These reads are not canceled or versioned. A rapid selection can therefore let
+ * an older response update the shared config/run refs briefly; a subsequent load
+ * for the current selection reconciles them.
+ */
 function selectModule(moduleName: string) {
   selectedModule.value = moduleName;
   const module = modules.value.find((item) => item.name === moduleName);
@@ -288,19 +331,23 @@ function selectModule(moduleName: string) {
   }
 }
 
+/** Hook for module-specific defaults before the fetched config is overlaid. */
 function defaultModuleConfig(_moduleName: string): Record<string, unknown> {
   return {};
 }
 
+/** Regenerate the canonical pretty JSON projection from structured form state. */
 function syncModuleConfigText() {
   moduleConfigText.value = JSON.stringify(moduleConfigDraft.value, null, 2);
 }
 
+/** Read a string-valued config field without coercing other JSON types. */
 function moduleConfigString(key: string): string {
   const value = moduleConfigDraft.value[key];
   return typeof value === "string" ? value : "";
 }
 
+/** Update one structured field immutably, then mirror it into advanced JSON. */
 function setModuleConfigString(key: string, value: string) {
   moduleConfigDraft.value = {
     ...moduleConfigDraft.value,
@@ -309,22 +356,27 @@ function setModuleConfigString(key: string, value: string) {
   syncModuleConfigText();
 }
 
+/** Count proposed edits from a dry-run result, tolerating partial old records. */
 function dryRunEditCount(run: ModuleRunItem): number {
   return run.result?.dry_run_edits?.length ?? 0;
 }
 
+/** Return the optional published dry-run report title. */
 function dryRunReportTitle(run: ModuleRunItem): string {
   return run.result?.dry_run_report?.published?.title || "";
 }
 
+/** Build a safely encoded English Wikipedia page URL for a report title. */
 function wikiPageUrl(title: string): string {
   return `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replaceAll(" ", "_"))}`;
 }
 
+/** Link to the framework-hosted immutable run report. */
 function moduleRunReportUrl(runId: number): string {
   return `/modules/runs/${runId}/report`;
 }
 
+// The initial registry read also seeds cron drafts; detail data stays lazy.
 onMounted(() => {
   loadModules();
 });
@@ -334,6 +386,7 @@ onMounted(() => {
   <div class="modules-app">
     <h1>Module Management</h1>
 
+    <!-- Global manager status is advisory; per-module rights can still expose detail controls. -->
     <div v-if="!canManageModules" class="cdx-message cdx-message--warning">
       <div class="cdx-message__content">
         You have limited module access. Management controls are only shown for
@@ -358,6 +411,7 @@ onMounted(() => {
     <CdxProgressBar v-if="loading" :animated="true" />
 
     <div v-else class="modules-container">
+      <!-- Selecting a registry row triggers capability-scoped lazy detail reads. -->
       <section class="modules-list">
         <h2>Modules</h2>
         <div v-if="modules.length === 0" class="no-modules">
@@ -383,6 +437,7 @@ onMounted(() => {
       </section>
 
       <section v-if="selectedModuleData" class="module-detail">
+        <!-- Registry enable/disable and generic E-STOP are intentionally distinct actions. -->
         <div class="detail-header">
           <h2>{{ selectedModuleData.title || selectedModuleData.name }}</h2>
           <div
@@ -424,6 +479,15 @@ onMounted(() => {
           </div>
         </div>
 
+        <p v-if="canEstopSelectedModule" class="help-text">
+          Generic E-STOP disables the registry entry and targets matching framework
+          module runs and Toolforge jobs or pods. It does not stop module-owned queues.
+          File Changer's mounted API can keep accepting and processing work until
+          process restart; use module-native controls where implemented, otherwise
+          follow the process-restart and incident procedure.
+        </p>
+
+        <!-- Read-only registry metadata and module-owned navigation targets. -->
         <div class="detail-info">
           <div class="info-row">
             <span class="label">Name:</span>
@@ -471,12 +535,14 @@ onMounted(() => {
           </div>
         </div>
 
+        <!-- Cron edits update framework metadata; deployment remains an explicit repo operation. -->
         <div v-if="selectedModuleData.cron_jobs.length > 0" class="cron-jobs">
           <h3>Cron Jobs</h3>
           <p class="help-text">
             Changes here update the framework registry and generated Jobs YAML.
-            Toolforge still needs the repo's jobs.yaml updated and reloaded before
-            a new interval starts running.
+            Replace only the marked generated block in the repo's jobs.yaml, review
+            and commit it, then run the normal deploy wrapper, which flushes and
+            reloads Toolforge jobs.
           </p>
           <div class="cron-table-scroll">
             <table class="cron-table">
@@ -549,6 +615,7 @@ onMounted(() => {
           </div>
         </div>
 
+        <!-- Structured fields and Advanced JSON are two projections of one config object. -->
         <section v-if="canEditSelectedModuleConfig" class="module-config">
           <h3>Module Config</h3>
           <p class="help-text">
@@ -627,6 +694,7 @@ onMounted(() => {
           </div>
         </section>
 
+        <!-- Global module managers can administer explicit per-module grants. -->
         <section v-if="canManageModules" class="module-access">
           <h3>Access Control</h3>
           <p class="help-text">
@@ -657,6 +725,7 @@ onMounted(() => {
           </div>
         </section>
 
+        <!-- These are framework module_job_runs, not arbitrary module-owned queues. -->
         <section v-if="canViewSelectedModuleJobs" class="module-runs">
           <h3>Recent Runs</h3>
           <p class="help-text">

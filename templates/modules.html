@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block content %}
 <div id="modules-container"></div>
+{# ModulesApp mounts on this dedicated container and treats these flags as UI hints. #}
 <script id="modules-props" type="application/json">
 {
   "username": "{{ username }}",

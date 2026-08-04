@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Run local backend processes and tear them down on exit.
+#
+# The historical npm `dev` script only watches production builds; FLASK_DEBUG=1
+# still requires a separate `npm exec vite -- --host 127.0.0.1` process on 5173.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
@@ -22,6 +26,7 @@ fi
 
 pids=()
 cleanup() {
+	# Stop only processes started by this script, then reap them before exit.
 	for pid in "${pids[@]:-}"; do
 		if kill -0 "$pid" >/dev/null 2>&1; then
 			kill "$pid" >/dev/null 2>&1 || true
@@ -30,11 +35,11 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-info "Starting Vite dev asset server"
+info "Starting legacy Vite production-bundle watcher (not the port-5173 server)"
 npm run dev &
 pids+=("$!")
 
-info "Starting Celery rollback worker in local safe mode"
+info "Starting shared Rollback/module Celery worker with scoped local safe mode"
 CELERY_QUEUE="$(celery_queue_name)"
 C_FORCE_ROOT=true run_python -m celery -A celery_worker:app worker \
 	--loglevel=INFO \

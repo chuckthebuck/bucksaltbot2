@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// Privileged preview of the cron fragment derived from current module manifests.
 import { onMounted, ref } from "vue";
 import { CdxButton, CdxProgressBar, CdxCopyTextLayout } from "@wikimedia/codex";
 import { getInitialProps } from "./api";
@@ -11,6 +12,7 @@ const error = ref("");
 const copied = ref(false);
 
 async function fetchYamlPreview() {
+  /** Refresh generated YAML and retain a user-readable request failure. */
   try {
     loading.value = true;
     error.value = "";
@@ -28,6 +30,7 @@ async function fetchYamlPreview() {
 }
 
 function copyToClipboard() {
+  /** Copy the reviewed fragment and show a short-lived confirmation state. */
   navigator.clipboard.writeText(yamlContent.value).then(() => {
     copied.value = true;
     setTimeout(() => {
@@ -59,12 +62,12 @@ onMounted(() => {
       <div class="instructions">
         <h2>Manual Workflow</h2>
         <ol>
-          <li>Copy the YAML entries below</li>
-          <li>Open or create <code>jobs.yaml</code> in the Toolforge-deployed repo</li>
-          <li>Add the entries to that file, keeping existing framework jobs</li>
-          <li>Commit and push to trigger Toolforge redeploy</li>
+          <li>Copy the generated module-job block below</li>
+          <li>Replace only the contents between <code># BEGIN GENERATED MODULE JOBS</code> and <code># END GENERATED MODULE JOBS</code> in the repository's checked <code>jobs.yaml</code></li>
+          <li>Review and commit <code>jobs.yaml</code>, preserving its framework-owned jobs and marker lines</li>
+          <li>Deploy the commit with the normal wrapper; it flushes Toolforge jobs and loads the committed file</li>
         </ol>
-        <p><strong>Note:</strong> The web UI updates the framework registry. Toolforge only changes real schedules after the generated entries are present in <code>jobs.yaml</code> and the tool is redeployed or jobs are reloaded.</p>
+        <p><strong>Note:</strong> Saving a schedule updates ToolsDB only. Toolforge does not use it until the reviewed generated block is committed to <code>jobs.yaml</code> and that file is loaded.</p>
       </div>
 
       <div class="yaml-section">

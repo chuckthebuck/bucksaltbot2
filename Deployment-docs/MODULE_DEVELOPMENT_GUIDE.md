@@ -14,10 +14,11 @@ module repo changes independently
 deploy pins known-good versions together
 ```
 
-That does not mean every edit has to go through GitHub and a subtree refresh.
+That does not mean every edit has to go through GitHub and a vendored refresh.
 For normal development, work in the module repo directly and install it into the
-framework virtualenv in editable mode. Vendor module repos as subtree snapshots
-under `vendor/modules/<module_name>/` only for deployable framework commits.
+framework virtualenv in editable mode. Vendor module repos as
+repository-shaped snapshots under `vendor/modules/<module_name>/` only for
+deployable framework commits.
 
 Framework files that matter:
 
@@ -35,7 +36,7 @@ There are three supported module modes:
 | --- | --- | --- | --- |
 | Framework-bundled | `modules/<module_name>/` | manifest discovery under `modules/` | rollback and other framework-owned modules |
 | Editable package | separate local module repo | Python entry point from `pip install -e` | day-to-day module development |
-| Vendored snapshot | `vendor/modules/<module_name>/` | Python entry point from `requirements-modules.txt` | Toolforge deploys and reproducible releases |
+| Vendored snapshot | `vendor/modules/<module_name>/` | Python entry point from `requirements-modules.txt` | Toolforge deploys and reproducible bundles |
 
 Chuck the Salt Shack is the reference for the last two modes. It is enabled in
 the default framework build but kept as a complete repository-shaped package under
@@ -44,7 +45,7 @@ clone editable without moving its implementation into the framework.
 
 Its canonical upstream is `https://github.com/chuckthebuck/chuck-the-salt-shack`. When
 Salt Shack changes are first developed in the framework snapshot, commit the
-framework work and split only the module directory back to that repository:
+framework work and backport only the module directory to that repository:
 
 ```bash
 bash scripts/backport-chuck-salt-shack-subtree.sh --dry-run
@@ -62,8 +63,8 @@ For 4Award development from the framework repo:
 
 ```bash
 # one-time setup, assuming the module repo is next to this repo
-python -m pip install -e ../module4awardhelper
-python scripts/check-module-install.py
+.venv/bin/python -m pip install -e ../module4awardhelper
+.venv/bin/python scripts/check-module-install.py
 ```
 
 The editable install exposes the same `chuck_buckbot.modules` entry point as
@@ -71,43 +72,33 @@ the vendored package. Python code changes in the module repo are picked up
 without copying files into `vendor/`; restart the local web/job process if the
 imported module is already loaded.
 
-When frontend code changes, build it in the module repo so the packaged static
-files are updated:
-
-```bash
-cd ../module4awardhelper
-npm install
-npm run build
-```
-
-Then run the framework locally as usual. The framework serves the package's
-built assets, not the module's Vue source files.
+Frontend code follows the manifest's assembly mode. With `bundled = false`,
+build the sibling module so its packaged static assets are updated and served
+through the authenticated module-asset route. With `bundled = true`, the root
+Vite build imports the path in `module-frontend-packages.json`; the checked
+4Award and File Changer entries point into `vendor/`, so an editable Python
+install does not expose sibling Vue changes. Refresh the vendored snapshot or
+temporarily point that registry entry at sibling source for local iteration,
+run the root build, and do not commit a developer-specific path.
 
 When you are ready to deploy, commit the module repo and refresh the framework's
-vendored snapshot. You can pull from a local clone while iterating:
+vendored snapshots with the checked repository command:
 
 ```bash
-git subtree pull \
-  --prefix=vendor/modules/four_award \
-  ../module4awardhelper \
-  main \
-  --squash
+npm run modules:update
 ```
 
-For a release that other people or Toolforge operators need to reproduce, tag
-the module repo and refresh from the GitHub URL/tag:
+`scripts/update-vendored-modules.sh` refuses a dirty worktree, clones the
+configured source branches into temporary directories, overlays only the three
+vendored module roots, runs `npm install`, and regenerates the static frontend
+registry. Its defaults currently use 4Award's `framework-dev` branch and the
+`main` branches for File Changer and Salt Shack. Override the corresponding
+`*_REMOTE` and `*_BRANCH` variables for a reviewed fork or release branch.
 
-```bash
-git subtree pull \
-  --prefix=vendor/modules/four_award \
-  https://github.com/chuckthebuck/module4awardhelper.git \
-  v0.1.3 \
-  --squash
-```
-
-Update `vendor/modules/four_award/SUBTREE.md` when the source commit or module
-version changes. That file is the human-readable link between the vendored copy
-and the source module repo.
+Review the complete vendored diff, run module-owned tests, and update the
+module's `SUBTREE.md` provenance when its recorded version or source revision
+changes. Toolforge builds the committed copy; it does not consult the upstream
+module branch during deployment.
 
 ## Package Shape
 
@@ -116,18 +107,17 @@ Recommended package layout:
 ```text
 module-repo/
 ├── pyproject.toml
-├── package_name/
-│   ├── __init__.py
-│   ├── manifest.py
-│   ├── service.py
-│   ├── static/
-│   │   ├── module-app.js
-│   │   └── style.css
-│   └── docs/
-│       └── module.md
 └── modules/
     └── module_name/
-        └── module.toml
+        ├── __init__.py
+        ├── manifest.py
+        ├── service.py
+        ├── module.toml
+        ├── static/
+        │   ├── module-app.js
+        │   └── style.css
+        └── docs/
+            └── module.md
 ```
 
 The package should expose an entry point in `pyproject.toml`:
@@ -206,8 +196,10 @@ docs = "chuck_the_4awardhelper:docs/four_award.md"
 
 Important fields:
 
-- `ui = true` means the module has a web surface.
-- `frontend` points to packaged static assets owned by the module package.
+- `ui = true` means the module has a web surface. It does not by itself require
+  a `[frontend]` section.
+- `frontend` points to packaged static assets owned by the module package and,
+  when present, requires `ui = true`.
 - `blueprint_entry_point` is optional and separate from the job handler entry
   point. Headless Pywikibot modules can omit it.
 - `jobs` are Toolforge cron-style jobs generated into `jobs.yaml`.
@@ -223,6 +215,10 @@ Important fields:
   atoms such as `module:four_award:run_jobs`. The framework automatically
   provides `module:<name>:view` and `module:<name>:estop`, so modules should not
   declare those rights.
+- `execution_mode = "handler"` and `execution_mode = "k8s_job"` currently
+  generate the same isolated `module_runner` Toolforge command. The bundled
+  template uses `handler`; `http` is the protected endpoint-backed
+  compatibility mode.
 
 ## CTB API Namespace
 
@@ -250,7 +246,7 @@ manifest should not need to declare the generated framework endpoint paths. If a
 module needs to describe external API behavior, such as Wikimedia API URL,
 user-agent, or edit-summary tag, keep that separate from CTB routes.
 
-A module Blueprint can own this standard namespace by declaring its Flask
+A module Blueprint can own its module namespace by declaring its Flask
 `url_prefix`, for example
 `Blueprint("chuck_salt_shack", __name__, url_prefix="/api/v1/modules/chuck_salt_shack")`.
 Blueprints without an explicit prefix retain the compatibility mount at
@@ -258,12 +254,13 @@ Blueprints without an explicit prefix retain the compatibility mount at
 
 ## Module Frontend
 
-Module Vue/TypeScript source should live in the module repo. Build it into
-package static assets and include those assets in the Python package.
+Module Vue/TypeScript source should live in the module repo. Whether the runtime
+uses packaged static assets or the framework's combined Vite bundle is selected
+by `frontend.bundled`.
 
-At runtime, the framework serves `/modules/<module>/ui` and loads the packaged
-script and styles declared in `[frontend]`. The page includes props as JSON in
-the element named by `props_id`.
+At runtime, the framework serves `/modules/<module>/ui`. The page includes props
+as JSON in the element named by `props_id`; it either loads declared package
+assets or relies on the module entry already compiled into the root bundle.
 
 Every enabled, accessible module with a frontend is also added to the Modules
 subnav from its manifest. Do not add module names to `templates/base.html`.
@@ -289,16 +286,16 @@ Provided props:
 Module-specific menus, preview pages, and configuration widgets belong in this
 module-owned frontend. Framework screens should stay generic.
 
-If a module also publishes a normal npm package for shared Vue/client code, pin
-it in framework `package.json` and add a static import to
-`module-frontend-packages.json`:
+For a bundled module frontend, add its actual source entry to
+`module-frontend-packages.json`. The current 4Award entry is:
 
 ```json
 {
   "modules": [
     {
       "name": "four_award",
-      "import": "@chuckbot/4award/client"
+      "enabled": true,
+      "import": "../vendor/modules/four_award/modules/four_award/frontend/entry.ts"
     }
   ]
 }
@@ -353,6 +350,12 @@ The generic run API accepts handler payload data but rejects
 `config_overrides`. Persistent configuration must go through the module config
 API, where the framework applies the module's config-edit permission.
 
+Generic manual runs are first persisted as `queued` rows. The continuous
+`buckbot-module-controller` process claims them and starts `module_runner` as a
+separate child process with the manifest timeout and cooperative cancellation.
+Some module-owned APIs dispatch a named Celery task immediately instead; that
+task atomically claims the same row so only one execution owner can win.
+
 For a separate OAuth identity, set `oauth_consumer_mode = "module"` and declare
 the source environment-variable names:
 
@@ -367,15 +370,28 @@ The isolated runner maps those four values into Pywikibot only for that module
 process. The manifest contains variable names, never credential values.
 
 Toolforge jobs are generated from registry rows. After editing cron schedules in
-the web UI, regenerate Jobs YAML and run:
+the web UI, regenerate the marked module block in `jobs.yaml`, review and
+commit it, then deploy. The deploy wrapper flushes current Toolforge jobs and
+loads the committed file. For an intentional exact jobs-only reconciliation
+from the tool checkout, accept a brief interruption to continuous jobs and run:
 
 ```bash
+toolforge jobs flush
 toolforge jobs load jobs.yaml
 ```
 
-Handler jobs are the default. Legacy `execution_mode = "http"` jobs require an
-application-path `endpoint` plus deploy-time `MODULE_CRON_BASE_URL` and secret
-`MODULE_CRON_TOKEN`; their public trigger rejects requests without that token.
+`load` alone can add/update definitions but does not guarantee that a removed or
+renamed job disappears.
+
+Handler jobs are the default. Compatibility `execution_mode = "http"` jobs
+require an application-path `endpoint` plus deploy-time
+`MODULE_CRON_BASE_URL` and secret `MODULE_CRON_TOKEN`; their public trigger
+rejects requests without that token.
+
+That protection applies to the framework-generated compatibility trigger, not
+arbitrary module Blueprint routes. 4Award currently retains an unsupported
+legacy `GET /four_award/api/v1/four_award/cron/run` route with no token, run
+tracking, or runtime-config injection. Do not copy or schedule that pattern.
 
 ## Permissions
 
@@ -387,6 +403,11 @@ Common module rights:
 - `edit_config` — edit non-secret module settings.
 - `manage` — manage module state and access.
 
+Salt Shack additionally generates `saltlick_<id>_preview`,
+`saltlick_<id>_apply`, and `saltlick_<id>_estop` rights for each discovered
+Saltlick. Those suffixes are still stored in the normal
+`module:chuck_salt_shack:<right>` atom shape.
+
 The module declares only the worker-facing vocabulary. The framework controls
 how users receive both module-declared and framework-generated rights through
 maintainers, runtime groups, and MediaWiki role auto grants.
@@ -395,8 +416,17 @@ maintainers, runtime groups, and MediaWiki role auto grants.
 
 Disable and E-STOP are different:
 
-- Disable changes the module enabled flag and prevents future normal runs.
-- E-STOP disables the module, cancels active framework module runs, and calls
-  module-specific stop hooks when present.
+- Disable changes the registry flag. The generic run API and `module_runner`
+  reject a disabled module, but an already registered custom Blueprint remains
+  mounted until web restart and must enforce its own state.
+- E-STOP disables the module, requests cancellation for active
+  `module_job_runs`, and attempts to delete its scheduled Toolforge jobs/pods.
+  Rollback also cancels rollback rows and purges the configured Buckbot Celery
+  queue. That queue is shared, so the purge can discard queued Salt Shack or
+  File Changer task messages as well. A module that owns a separate queue/table
+  must implement and wire its own cleanup; there is no generic stop-hook call
+  today.
 
-Use E-STOP when the bot needs to stop now.
+Use E-STOP only after identifying which execution owner and queue must stop. A
+custom Blueprint may remain mounted until web restart, and a module-owned queue
+may require its own incident control or coordinated web/worker shutdown.

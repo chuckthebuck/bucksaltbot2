@@ -33,6 +33,7 @@ SUPPORTED_WIKI_ACTIONS = frozenset(
 
 
 def _wiki_target(action: dict[str, Any]) -> tuple[str, str]:
+    """Normalize an action's wiki target for site-factory lookup and caching."""
     target = action.get("target") or {}
     wiki = target.get("wiki") or {}
     code = str(wiki.get("code") or "commons").strip().lower()
@@ -41,6 +42,9 @@ def _wiki_target(action: dict[str, Any]) -> tuple[str, str]:
 
 
 def _page(site: Any, target: dict[str, Any]):
+    """Construct a Pywikibot Page from a validated declarative target."""
+    # Import lazily so contract validation and dry-run planning do not require a
+    # configured Pywikibot environment or network-capable worker.
     import pywikibot
 
     title = str(target.get("title") or "").strip()
@@ -50,6 +54,7 @@ def _page(site: Any, target: dict[str, Any]):
 
 
 def _purge_page(site: Any, *, target: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """Execute purge through the Action API and retain its request/response."""
     page = _page(site, target)
     request_parameters: dict[str, Any] = {"action": "purge", "titles": page.title()}
     if bool(params.get("forcelinkupdate", False)):
@@ -61,9 +66,11 @@ def _purge_page(site: Any, *, target: dict[str, Any], params: dict[str, Any]) ->
 
 
 def _page_action(site: Any, operation: str, *, target: dict[str, Any], params: dict[str, Any]) -> Any:
+    """Dispatch one reviewed page operation with operation-specific validation."""
     if operation == "purge":
         return _purge_page(site, target=target, params=params)
     page = _page(site, target)
+    # Normalize the edit-summary vocabulary used by different child contracts.
     reason = str(params.get("reason") or params.get("summary") or "")
     if operation == "edit":
         text = params.get("text")
@@ -108,6 +115,7 @@ def _page_action(site: Any, operation: str, *, target: dict[str, Any], params: d
 
 
 def _operation(action_type: str) -> str:
+    """Extract the operation suffix from a validated action type atom."""
     _prefix, _page_kind, operation = action_type.split(".", 2)
     return operation
 
@@ -127,6 +135,9 @@ def execute_action_plan(
     progress to their module Redis namespace without exposing Redis to child
     Saltlick scripts.  A batch is also the cancellation/progress boundary.
     """
+    # Two independent allowlists apply: the immutable child contract declares
+    # what it intends to do, and the framework catalogue declares what it knows
+    # how to execute safely.
     allowed = set(allowed_types)
     unsupported_declared = sorted(allowed - SUPPORTED_WIKI_ACTIONS)
     if unsupported_declared:
@@ -139,6 +150,8 @@ def execute_action_plan(
     pending = [dict(action) for action in actions]
     items: list[dict[str, Any]] = []
     completed = errors = 0
+    # Reuse one authenticated site per wiki for the plan, while never sharing a
+    # site across wiki code/family boundaries.
     site_cache: dict[tuple[str, str], Any] = {}
     for batch_start in range(0, len(pending), size):
         batch = pending[batch_start : batch_start + size]
@@ -165,6 +178,8 @@ def execute_action_plan(
                 item["status"] = "completed"
                 completed += 1
             except Exception as exc:  # Item failures must not lose the batch.
+                # Plans are partial-success workloads: record each failure and
+                # continue so the caller receives a complete reconciliation list.
                 item["status"] = "error"
                 item["error"] = str(exc)
                 errors += 1

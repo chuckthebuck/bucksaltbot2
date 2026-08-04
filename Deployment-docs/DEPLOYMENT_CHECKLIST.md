@@ -1,97 +1,119 @@
 # Deployment Checklist
 
-Use this checklist before deploying the framework to Toolforge. This file is a
-living checklist for the current framework/module model, not a snapshot of one
-old feature branch.
+Use this checklist for a framework commit that will be deployed to Toolforge.
+The deployable unit is the framework revision plus the vendored module snapshots
+stored in that revision.
 
-## Before Deploying
+## Commit gate
 
-- [ ] Confirm the branch you intend to deploy is up to date.
-- [ ] Review `git status --short` and make sure only intended changes are
-  included.
-- [ ] Run the focused backend tests for the areas you changed.
-- [ ] Run the module-owned tests for any vendored module you changed.
-- [ ] Run `npm run build` if framework or module frontend assets changed.
-- [ ] Check required secrets without printing values:
+- [ ] `git status --short` contains only reviewed changes.
+- [ ] `VERSION`, `package.json`, and the root `package-lock.json` records agree.
+- [ ] `enabled-modules.txt` contains exactly the modules intended for this
+  deployment.
+- [ ] `requirements-modules.txt` installs every enabled external module from
+  its committed `vendor/modules/<module>/` path.
+- [ ] Any changed vendored snapshot has the expected upstream version and a
+  current `SUBTREE.md` provenance note.
+- [ ] Any changed module frontend has current compiled/package assets.
+- [ ] The checked `jobs.yaml` generated block matches the schedules intended
+  for production.
 
-  ```bash
-  bash scripts/check-secrets.sh live
-  ```
+If the upstream module repositories changed, refresh their snapshots from a
+clean framework checkout with:
 
-## Module Checks
+```bash
+npm run modules:update
+```
 
-- [ ] `enabled-modules.txt` lists every module that should load.
-- [ ] `requirements-modules.txt` pins every vendored module path needed for
-  deploy.
-- [ ] Each enabled module imports cleanly:
+Review the entire generated diff. The updater replaces the 4Award, File
+Changer, and Salt Shack snapshots from their configured branches; it is not a
+package-manager update and it is not a live subtree link.
 
-  ```bash
-  python scripts/check-module-install.py
-  ```
+## Verification gate
 
-- [ ] Vendored module snapshots under `vendor/modules/<module>/` contain only
-  module repo files, not framework files.
-- [ ] If a module has a frontend, its built static assets are committed under
-  the module package.
-- [ ] If cron schedules changed, regenerate and load Toolforge `jobs.yaml`.
+Run the module-owned tests for every module whose snapshot changed. Then run:
 
-## 4Award Backport Check
+```bash
+bash scripts/check-secrets.sh live
+.venv/bin/python scripts/check-module-install.py
+bash scripts/canary-build.sh
+```
 
-When changing the 4Award module inside this framework repo, preview the subtree
-split before pushing back to the module repo:
+Set `CANARY_FULL_TESTS=1` for the full non-live framework suite when the change
+touches shared routing, authorization, job control, database behavior, or the
+module contract. The default canary does not run every test suite stored inside
+each vendored module repository.
+
+Preview framework-first module backports before publishing them:
 
 ```bash
 bash scripts/backport-four-award-subtree.sh --dry-run
-```
-
-The split should show the module repo root (`modules/`, `tests/`,
-`pyproject.toml`, package files, and module docs). It should not include
-framework paths such as `router/`, `Deployment-docs/`, `vendor/`, or
-`requirements.txt`.
-
-Use the equivalent Chuck the Salt Shack check before publishing its independent module
-repository:
-
-```bash
+bash scripts/backport-chuck-file-changer-subtree.sh --dry-run
 bash scripts/backport-chuck-salt-shack-subtree.sh --dry-run
 ```
 
-## Toolforge Deploy
+The first two helpers use checked `git subtree split` output. Salt Shack uses a
+checked clone-and-overlay preview. None of these commands refreshes the
+framework's inbound snapshot.
 
-From the tool account:
+## Schedule gate
 
-```bash
-ssh login.toolforge.org
-become buckbot
-cd /data/project/buckbot
-git pull --ff-only
-toolforge build start https://github.com/<owner>/<repo>
-toolforge webservice buildservice restart
-```
+Toolforge schedules come from the committed `jobs.yaml`, not directly from the
+ToolsDB rows changed in the web UI.
 
-If cron jobs changed:
+- [ ] After a cron/config change, sign in as a module manager and open
+  `/jobs-yaml`.
+- [ ] Copy only the generated module-job block into the markers in
+  `jobs.yaml`; preserve the framework-owned continuous and status jobs.
+- [ ] Review and commit `jobs.yaml` before deploying.
 
-```bash
-toolforge jobs load jobs.yaml
-toolforge jobs list
-```
+The normal deploy wrapper flushes the current Toolforge job definitions and
+loads the committed file. It does not regenerate that file from ToolsDB.
 
-## Post-Deploy Verification
+## Deploy
 
-- [ ] Webservice responds.
-- [ ] `/api/v1/modules` lists the expected enabled modules.
-- [ ] Maintainer UI can open `/modules`.
-- [ ] Modules subnav lists every enabled, accessible frontend module.
-- [ ] Module UI pages load without static asset errors.
-- [ ] Salt Shack reports its compiled Saltlick count without “Module not found.”
-- [ ] File Changer `/chuck_file_changer/api/auth` responds while signed in.
-- [ ] Rollback worker health endpoint responds.
-- [ ] Module controller and Toolforge jobs are present.
-- [ ] Recent webservice and job logs have no new import or permission errors.
+A push to `main` starts `.github/workflows/toolforge-deploy.yml`. A maintainer
+can also dispatch that workflow for a reviewed branch and buildpack channel.
+The workflow connects to the tool account and invokes
+`scripts/toolforge-deploy-new-version.sh`, which:
 
-## Rollback
+1. Fast-forwards the checkout at `/data/project/buckbot`.
+2. starts the Toolforge build for the selected branch;
+3. restarts the buildservice webservice;
+4. flushes Toolforge jobs; and
+5. loads the committed `jobs.yaml` and lists the result.
 
-If the failure is module-specific, disable the module in the admin UI or set
-`ENABLE_MODULE_LOADING=0` and restart while you investigate. If the failure is
-framework-wide, revert or redeploy the last known-good framework commit, then
-reload `jobs.yaml` if job definitions changed.
+Do not replace this with an undocumented sequence of local `pip`, `npm`, or
+Gunicorn commands on Toolforge. Buildservice installs and starts the committed
+bundle through `Procfile`.
+
+## Post-deploy verification
+
+- [ ] The GitHub deploy workflow and Toolforge build both completed.
+- [ ] The webservice responds and a normal OAuth login succeeds.
+- [ ] `/modules` lists the expected enabled modules for a maintainer.
+- [ ] Each accessible module UI loads without missing asset errors.
+- [ ] `/api/v1/modules` returns the expected registry while signed in.
+- [ ] Salt Shack shows the expected discovered Saltlicks.
+- [ ] File Changer's `/chuck_file_changer/api/auth` responds while signed in.
+- [ ] Rollback worker health is current.
+- [ ] `toolforge jobs list` includes `buckbot-celery`,
+  `buckbot-module-controller`, the status job, and current generated schedules.
+- [ ] Recent webservice, Celery, controller, and scheduled-job logs contain no
+  new import, permission, or database errors.
+
+## Incident rollback
+
+Choose containment for the component that owns the work, then restore source by
+reverting the bad framework commit and deploying that new `main` revision.
+Generic disable/E-STOP blocks framework `module_job_runs` and targets scheduled
+Toolforge work, but it does not stop a custom Blueprint or module-owned queue
+such as File Changer's. Those incidents may require module-native controls or a
+coordinated web/shared-worker stop and restart. `ENABLE_MODULE_LOADING=0` is the
+whole-registry web-bootstrap opt-out and takes effect only after process restart.
+
+Generic E-STOP cancels framework `module_job_runs` and tries to remove the
+module's Toolforge jobs/pods. Rollback additionally purges the shared Buckbot
+Celery queue, which can discard queued Salt Shack and File Changer task messages
+as well as rollback messages. File Changer's durable
+`chuck_file_change_jobs` rows are not canceled by the generic module E-STOP.

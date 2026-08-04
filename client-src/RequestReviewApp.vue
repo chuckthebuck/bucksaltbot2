@@ -1,4 +1,11 @@
 <script setup lang="ts">
+/**
+ * Rollback request review and promotion surface.
+ *
+ * The client derives which actions to offer from server-provided capabilities
+ * and row state, but approve/reject/force-dry/live endpoints are the final
+ * authorization and transition authorities.
+ */
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { CdxButton, CdxMessage } from "@wikimedia/codex";
 import {
@@ -24,6 +31,7 @@ import {
   textColumn,
 } from "./components/tableColumnFactories";
 
+// Capabilities are presentation gates, never proof carried to mutation APIs.
 const props = JSON.parse(
   document.getElementById("request-review-props")!.textContent || "{}"
 ) as {
@@ -33,6 +41,8 @@ const props = JSON.parse(
   can_approve_batch: boolean;
 };
 
+// Initial-load and background-refresh state are separate so polling does not
+// replace the populated table with a loading screen.
 const loading = ref(true);
 const refreshing = ref(false);
 const hasLoadedOnce = ref(false);
@@ -40,6 +50,8 @@ const error = ref("");
 const notice = ref("");
 const requests = ref<RollbackRequestRow[]>([]);
 
+// Per-job maps allow unrelated rows to show independent pending controls. A
+// preview endpoint variant replaces the prior preview for that same job ID.
 const previewByJob = ref<Record<number, RollbackRequestPreview>>({});
 const previewLoading = ref<Record<number, boolean>>({});
 const approveLoading = ref<Record<number, boolean>>({});
@@ -66,20 +78,24 @@ interface PreviewItemRow {
   summary: string;
 }
 
+/** Normalize endpoint aliases to the underscore spelling used by UI logic. */
 function normalizeEndpoint(endpoint?: string | null): string | null {
   if (!endpoint) return null;
   const normalized = String(endpoint).trim().toLowerCase().replace(/-/g, "_");
   return normalized || null;
 }
 
+/** Identify diff records originally submitted through account semantics. */
 function isAccountStyleRequest(row: RollbackRequestRow): boolean {
   return row.request_type === "diff" && normalizeEndpoint(row.requested_endpoint) === "from_account";
 }
 
+/** Return whether a diff request may be interpreted as edits-after-diff. */
 function canUseFromDiffEndpoint(row: RollbackRequestRow): boolean {
   return row.request_type === "diff" && !isAccountStyleRequest(row);
 }
 
+/** Render account-origin requests distinctly from ordinary diff requests. */
 function requestTypeLabel(row: RollbackRequestRow): string {
   if (isAccountStyleRequest(row)) {
     return "account";
@@ -87,6 +103,7 @@ function requestTypeLabel(row: RollbackRequestRow): string {
   return row.request_type;
 }
 
+/** Gate approval controls to pending rows with the matching review capability. */
 function canApproveRequest(row: RollbackRequestRow): boolean {
   if (row.status !== "pending_approval") {
     return false;
@@ -95,6 +112,11 @@ function canApproveRequest(row: RollbackRequestRow): boolean {
   return canReviewDecision(row);
 }
 
+/** Derive UI eligibility from ownership, required review class, and request type.
+ *
+ * This helper is also used for post-preview promotion controls; API endpoints
+ * independently validate both ownership and current durable status.
+ */
 function canReviewDecision(row: RollbackRequestRow): boolean {
   if (row.status !== "pending_approval") {
     if (row.requested_by === props.username) {
@@ -121,14 +143,17 @@ function canReviewDecision(row: RollbackRequestRow): boolean {
   return false;
 }
 
+/** Offer rejection only while the request awaits a decision. */
 function canRejectRequest(row: RollbackRequestRow): boolean {
   return row.status === "pending_approval" && canReviewDecision(row);
 }
 
+/** Offer the one-way live-to-dry safety downgrade to eligible reviewers. */
 function canForceDryRun(row: RollbackRequestRow): boolean {
   return row.status === "pending_approval" && !row.dry_run && canReviewDecision(row);
 }
 
+/** Offer live promotion only after a completed dry run and eligible review. */
 function canRunLive(row: RollbackRequestRow): boolean {
   if (row.status !== "completed" || !row.dry_run) {
     return false;
@@ -141,10 +166,12 @@ function canRunLive(row: RollbackRequestRow): boolean {
   return canReviewDecision(row);
 }
 
+/** Return the compact request-mode label used in feedback. */
 function dryRunLabel(row: RollbackRequestRow): string {
   return row.dry_run ? "dry-run" : "live";
 }
 
+/** Build a consistent action cell and attach its durable row ID for diagnostics. */
 function buildButton(
   row: RollbackRequestRow,
   text: string,
@@ -167,6 +194,8 @@ function buildButton(
   });
 }
 
+// Action columns return null when a row/capability combination is ineligible;
+// they do not mutate row state optimistically before the server responds.
 const requestColumns: TableColumn<RollbackRequestRow>[] = [
   textColumn("id", "ID", (row) => row.id, { class: "request-col-id" }),
   textColumn("requester", "Requester", (row) => row.requested_by),
@@ -350,16 +379,19 @@ const previewColumns: TableColumn<PreviewItemRow>[] = [
   textColumn("summary", "Summary/Status", (row) => row.summary),
 ];
 
+/** Resolve UnifiedTable's generic row value to its cached preview. */
 function previewForRow(row: unknown): RollbackRequestPreview | undefined {
   const id = Number((row as { id?: number }).id);
   if (!Number.isFinite(id)) return undefined;
   return previewByJob.value[id];
 }
 
+/** Drive table expansion directly from preview-cache presence. */
 function hasPreview(row: unknown): boolean {
   return Boolean(previewForRow(row));
 }
 
+/** Normalize preview items into stable, text-rendered nested table rows. */
 function previewRowsFor(row: unknown): PreviewItemRow[] {
   const preview = previewForRow(row);
   if (!preview?.items?.length) return [];
@@ -373,6 +405,7 @@ function previewRowsFor(row: unknown): PreviewItemRow[] {
   }));
 }
 
+/** Refresh durable request rows without blanking an already loaded table. */
 async function loadRequests() {
   const isInitialLoad = !hasLoadedOnce.value;
   if (isInitialLoad) {
@@ -394,6 +427,11 @@ async function loadRequests() {
   }
 }
 
+/** Fetch one endpoint interpretation and replace that job's cached preview.
+ *
+ * The per-job loading flag disables all preview buttons for ordinary clicks.
+ * If calls overlap programmatically, the response that finishes last wins.
+ */
 async function loadPreview(row: RollbackRequestRow, endpoint?: string) {
   previewLoading.value[row.id] = true;
   error.value = "";
@@ -413,6 +451,7 @@ async function loadPreview(row: RollbackRequestRow, endpoint?: string) {
   }
 }
 
+/** Request approval, then reconcile the table from durable server state. */
 async function approve(row: RollbackRequestRow, endpoint?: string) {
   approveLoading.value[row.id] = true;
   error.value = "";
@@ -429,6 +468,7 @@ async function approve(row: RollbackRequestRow, endpoint?: string) {
   }
 }
 
+/** Request rejection and reload authoritative row state. */
 async function reject(row: RollbackRequestRow) {
   rejectLoading.value[row.id] = true;
   error.value = "";
@@ -445,6 +485,7 @@ async function reject(row: RollbackRequestRow) {
   }
 }
 
+/** Request a dry-run safety downgrade and reload authoritative row state. */
 async function forceDryRun(row: RollbackRequestRow) {
   forceDryRunLoading.value[row.id] = true;
   error.value = "";
@@ -461,6 +502,7 @@ async function forceDryRun(row: RollbackRequestRow) {
   }
 }
 
+/** Promote an eligible completed dry run to a newly authorized live run. */
 async function runLive(row: RollbackRequestRow) {
   runLiveLoading.value[row.id] = true;
   error.value = "";
@@ -477,6 +519,7 @@ async function runLive(row: RollbackRequestRow) {
   }
 }
 
+// Bootstrap before starting visibility-aware polling.
 onMounted(async () => {
   await loadRequests();
 
@@ -484,11 +527,13 @@ onMounted(async () => {
   document.addEventListener("visibilitychange", onVisibilityChange);
 });
 
+// Release document listener and timer across route/component teardown.
 onBeforeUnmount(() => {
   stopPolling();
   document.removeEventListener("visibilitychange", onVisibilityChange);
 });
 
+/** Start one interval and skip ticks while another list load is active. */
 function startPolling() {
   if (pollingTimer.value !== null) return;
 
@@ -498,12 +543,14 @@ function startPolling() {
   }, 5000);
 }
 
+/** Stop polling idempotently. */
 function stopPolling() {
   if (pollingTimer.value === null) return;
   clearInterval(pollingTimer.value);
   pollingTimer.value = null;
 }
 
+/** Pause hidden-tab work and refresh immediately when visible again. */
 function onVisibilityChange() {
   if (document.hidden) {
     stopPolling();
@@ -516,6 +563,7 @@ function onVisibilityChange() {
 
 <template>
   <div class="request-review-wrap">
+    <!-- Establish preview semantics before exposing review transitions. -->
     <CdxMessage type="notice" class="top-message">
       Review pending rollback requests. Diff previews load the full edit list for
       the "all edits after this diff" endpoint.
@@ -529,6 +577,7 @@ function onVisibilityChange() {
       {{ error }}
     </CdxMessage>
 
+    <!-- Manual refresh shares the same nonblanking path as background polling. -->
     <div class="request-review-actions">
       <CdxButton action="default" weight="quiet" :disabled="loading || refreshing" @click="loadRequests">
         {{ refreshing ? 'Refreshing...' : 'Refresh requests' }}
@@ -540,6 +589,8 @@ function onVisibilityChange() {
     <div v-else>
       <h3>Pending approval ({{ pendingRequests.length }})</h3>
 
+      <!-- The table contains pending decisions plus completed dry runs eligible
+           for a separate live-promotion decision. -->
       <UnifiedTable
         :rows="actionableRequests"
         :columns="requestColumns"
@@ -549,6 +600,7 @@ function onVisibilityChange() {
         :expanded="hasPreview"
       >
         <template #expanded="{ row }">
+          <!-- Preview content is rendered as text through a nested table. -->
           <div v-if="previewForRow(row)" class="request-preview">
             <div>
               <b>Preview endpoint:</b> {{ previewForRow(row)?.endpoint }}

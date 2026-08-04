@@ -11,6 +11,7 @@ import types
 
 
 def _load_module(name: str, path: Path):
+    """Load one source file under a controlled module name."""
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {path}")
@@ -22,10 +23,13 @@ def _load_module(name: str, path: Path):
 
 
 def _load_module_registry():
+    """Load manifest parsing without importing app/database router bootstrap."""
     root = Path(__file__).resolve().parent.parent
     router_dir = root / "router"
     sys.path.insert(0, str(root))
 
+    # Provide only the package shell required for module_schedule imports; the
+    # standalone registry must not construct Flask or initialize ToolsDB.
     router_pkg = types.ModuleType("router")
     router_pkg.__path__ = [str(router_dir)]  # type: ignore[attr-defined]
     sys.modules.setdefault("router", router_pkg)
@@ -37,6 +41,7 @@ def _load_module_registry():
 
 
 def main() -> int:
+    """Parse one manifest and print its normalized deployment-facing fields."""
     parser = argparse.ArgumentParser()
     parser.add_argument("manifest", help="Path to module.toml or module.json")
     args = parser.parse_args()

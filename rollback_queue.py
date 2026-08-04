@@ -1,3 +1,16 @@
+"""Execute queued rollback work and keep its durable progress in sync.
+
+The web process creates ``rollback_jobs`` and ``rollback_job_items`` rows; Celery
+workers in this module claim those rows and perform the corresponding Commons
+edits.  Database state is the source of truth.  Redis progress and the on-wiki
+status page are deliberately derived side channels so a lost cache entry or a
+failed status-page edit cannot make a completed rollback disappear.
+
+The worker also owns the compatibility behavior around creator-only pages,
+rollbacks hidden beneath trusted bot edits, and legacy Celery task names.  Keep
+those branches explicit: they protect already-queued work during deployments.
+"""
+
 import json
 import os
 import time
@@ -54,6 +67,11 @@ def _format_exception(exc: Exception) -> str:
 
 
 def _looks_like_not_current_rollback(error_text: str) -> bool:
+    """Return whether MediaWiki says the target edit is no longer current.
+
+    Pywikibot exceptions have varied between structured codes and prose across
+    versions, so the fallback path intentionally recognizes both forms.
+    """
     normalized = str(error_text or "").casefold()
     return any(code in normalized for code in _ROLLBACK_NOT_CURRENT_CODES) or any(
         phrase in normalized for phrase in _ROLLBACK_NOT_CURRENT_PHRASES
@@ -64,6 +82,7 @@ class _SummaryFields(dict):
     """Format-map fields that collapse missing optional values to an empty string."""
 
     def __missing__(self, key: str) -> str:
+        """Allow administrators to add optional placeholders incrementally."""
         return ""
 
 
@@ -74,6 +93,9 @@ def _configured_rollback_edit_summary_template() -> str | None:
         return env_template.strip()
 
     try:
+        # Module configuration is optional in worker-only and migration
+        # environments.  Falling back to the built-in summary keeps rollback
+        # processing available while the registry is unavailable.
         from router.module_registry import get_module_config
 
         value = get_module_config("rollback").get(_ROLLBACK_EDIT_SUMMARY_TEMPLATE_KEY)
@@ -101,6 +123,8 @@ def _summary_with_requester(
 
     template = _configured_rollback_edit_summary_template()
     if template:
+        # Format only a fixed vocabulary.  _SummaryFields makes unknown or
+        # newly introduced optional fields harmless to an older template.
         fields = _SummaryFields(
             summary=base,
             requested_by=requested_by,
@@ -164,10 +188,12 @@ def _restore_creation_revision(
 
 
 def _revision_user(revision: dict) -> str:
+    """Normalize the username carried by a MediaWiki revision record."""
     return str(revision.get("user") or "").strip()
 
 
 def _parse_configured_bot_users(raw_value: str | None) -> set[str]:
+    """Parse the bot allowlist from either JSON-array or comma-list syntax."""
     if not raw_value:
         return set()
 
@@ -196,6 +222,8 @@ def _configured_rollback_through_bot_users() -> set[str] | None:
     if time.time() < expires_at:
         return cached_users
 
+    # Environment configuration is useful during bootstrap; runtime config
+    # lets maintainers adjust the allowlist without rebuilding the worker.
     env_users = _parse_configured_bot_users(os.getenv(_ROLLBACK_THROUGH_BOT_CONFIG_KEY))
     runtime_users = set()
     try:
@@ -216,12 +244,14 @@ def _configured_rollback_through_bot_users() -> set[str] | None:
 
 
 def _revision_is_bot(site: pywikibot.Site, revision: dict) -> bool:
+    """Apply the configured allowlist, then fall back to live bot-group data."""
     user = _revision_user(revision)
     if not user:
         return False
     configured_users = _configured_rollback_through_bot_users()
     if configured_users is not None:
         return user.casefold() in configured_users
+    # The revision flag is cheap and authoritative when MediaWiki includes it.
     if revision.get("bot") is True:
         return True
     try:
@@ -231,6 +261,7 @@ def _revision_is_bot(site: pywikibot.Site, revision: dict) -> bool:
 
 
 def _fetch_recent_revisions(site: pywikibot.Site, title: str, limit: int = 50) -> list[dict]:
+    """Fetch newest-first revision metadata used by through-bot recovery."""
     request = site.simple_request(
         action="query",
         prop="revisions",
@@ -258,6 +289,7 @@ def _restore_revision_text(
     batch_id: int | str | None = None,
     job_id: int | str | None = None,
 ) -> None:
+    """Replace the live page with a selected historical revision's text."""
     page = pywikibot.Page(site, title)
     target_text = page.getOldVersion(int(revision_id))
     if page.get() == target_text:
@@ -297,6 +329,9 @@ def _rollback_through_bot_edits(
     target_parent_id = None
     found_target = False
 
+    # Walk down from the current revision.  Only bot edits may appear before
+    # the target user's contiguous edit run; encountering any other editor
+    # means an automatic restore could overwrite legitimate newer work.
     for revision in revisions:
         user_key = _revision_user(revision).casefold()
         if not found_target:
@@ -419,6 +454,9 @@ def _derive_job_status_from_items(job_id: int) -> tuple[str, dict[str, int]]:
     completed = counts.get("completed", 0)
     canceled = counts.get("canceled", 0)
 
+    # Failure wins over every other state.  Otherwise any unfinished item keeps
+    # the aggregate running, and cancellation remains visible even if a worker
+    # completed some items before observing it.
     if total == 0:
         return "completed", counts
     if failed:
@@ -448,6 +486,8 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
         with get_conn() as conn:
             with conn.cursor() as cursor:
                 if job_id is not None:
+                    # Job-scoped claims are retained for older callers and
+                    # focused tests; production workers normally share a batch.
                     cursor.execute(
                         """
                         SELECT id, file_title, target_user, summary,
@@ -474,6 +514,8 @@ def claim_next_item(job_id: int | None = None, preferred_batch_id: int | None = 
                             """
                         )
                     else:
+                        # Prefer siblings from the initiating batch without
+                        # starving older queued work once that batch drains.
                         cursor.execute(
                             """
                             SELECT i.id, i.job_id, i.file_title, i.target_user, i.summary,
@@ -533,7 +575,9 @@ def _bot_site() -> pywikibot.Site:
 
     site = pywikibot.Site("commons", "commons")
 
-    # Authenticate with OAuth
+    # Constructing a Site does not prove that OAuth credentials work.  Force a
+    # login here, before the first row is claimed, so auth failures are reported
+    # as task-level failures instead of a long series of per-item failures.
     try:
         site.login()
         logged_user = site.user()
@@ -549,7 +593,12 @@ def _bot_site() -> pywikibot.Site:
 
 @shared_task(ignore_result=True)
 def process_rollback_job(job_id: int):
-    """Process queued rollback items, updating DB progress and wiki status."""
+    """Drain queued items and reconcile DB, cache, and on-wiki status.
+
+    A worker may claim eligible items from sibling jobs in the same batch.  It
+    therefore reloads the owning job after each claim and writes item progress
+    against that owner rather than assuming every claim belongs to ``job_id``.
+    """
     site = None
     try:
         job = _fetch_job_meta(job_id)
@@ -570,6 +619,8 @@ def process_rollback_job(job_id: int):
             {"status": "running", "total": total_items, "completed": 0, "failed": 0},
         )
 
+        # Dry-run jobs deliberately avoid even authenticated site creation; this
+        # makes them safe in environments that have no edit credentials.
         if not dry_run:
             site = _bot_site()
 
@@ -616,6 +667,8 @@ def process_rollback_job(job_id: int):
         notified_bots: dict[str, int] = {}
 
         while True:
+            # Cancellation is cooperative.  Check durable state between every
+            # item so a request never depends on Celery message revocation.
             refreshed_job = _fetch_job_meta(job_id)
 
             if refreshed_job and refreshed_job[2] == "canceled":
@@ -644,6 +697,9 @@ def process_rollback_job(job_id: int):
                 restore_revision_id = None
                 rollback_through_bots = False
             elif len(claimed) == 6:
+                # These tuple shapes predate one or more item columns.  Accept
+                # them so rolling deployments and monkey-patched tests continue
+                # to exercise the same worker entry point.
                 (
                     item_id,
                     file_title,
@@ -719,6 +775,9 @@ def process_rollback_job(job_id: int):
                         job_id=claimed_job_id,
                     )
                 else:
+                    # Native rollback is atomic and avoids overwriting unrelated
+                    # edits.  Text restoration is reserved for the explicit
+                    # creator/through-bot compatibility paths above.
                     token = site.tokens["rollback"]
 
                     site.simple_request(
@@ -778,7 +837,8 @@ def process_rollback_job(job_id: int):
                     site, bot_user, batch_id, edit_count=count
                 )
 
-        # AFTER the loop finishes
+        # Re-read item rows instead of trusting Redis increments: a sibling
+        # worker may have completed claims for this job concurrently.
         final_status, counts = _derive_job_status_from_items(job_id)
         completed_count = counts.get("completed", 0)
         failed_count = counts.get("failed", 0)
@@ -812,6 +872,8 @@ def process_rollback_job(job_id: int):
         )
 
     except Exception as exc:
+        # A task-level failure must leave no rows stuck in running.  Persist the
+        # terminal DB state before updating best-effort progress projections.
         error_text = _format_exception(exc)
         with get_conn() as conn:
             with conn.cursor() as cursor:

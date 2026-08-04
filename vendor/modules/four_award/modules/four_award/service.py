@@ -1,3 +1,17 @@
+"""Orchestrate one Four Award run from configuration through publication.
+
+The service mirrors framework runtime config into modules that imported defaults
+directly, parses nominations, suppresses articles already represented in records,
+runs staged review, and routes each classification to its allowed side effects.
+All ordinary writes pass through ``WikiClient.save_text``: live mode publishes,
+while dry-run mode records diffs.  Optional dry-run report publication is a
+separate, explicit userspace-only write.
+
+Historical payload text changes the nomination source only; evidence reads and
+proposed target edits still use the configured wiki adapter.  Replay installs an
+in-memory adapter before invoking this entrypoint.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -14,11 +28,13 @@ from .models import FourAwardRecord, NominationResult, VerificationStage
 
 
 def _approved_records(results: List[NominationResult]) -> List[FourAwardRecord]:
-    """Flatten approved nomination results into one record per credited user."""
+    """Clone verified milestone data into one record per unique credited user."""
     records: List[FourAwardRecord] = []
     for result in results:
         if not result.record:
             continue
+        # Reviewer builds one milestone template; user splitting/deduplication was
+        # already performed by the parser before this fan-out.
         for user in result.nomination.users:
             records.append(
                 FourAwardRecord(
@@ -35,7 +51,12 @@ def _approved_records(results: List[NominationResult]) -> List[FourAwardRecord]:
 
 
 def _duplicate_article_titles(nominations) -> set[str]:
-    """Return nomination articles that already appear in the records table."""
+    """Return exact normalized article claims already present for any user.
+
+    This run-level guard is intentionally broader than the reviewer's user-aware
+    duplicate check: an article receives one Four Award event even if a later
+    nomination lists a different set of credited users.
+    """
     if reviewer.IGNORE_EXISTING_RECORDS:
         return set()
 
@@ -48,13 +69,13 @@ def _duplicate_article_titles(nominations) -> set[str]:
 
 
 def _should_mark_article_history_no(result: NominationResult) -> bool:
-    """Return whether a failed review should write four=no to article history."""
+    """Avoid writing ``four=no`` when no valid/current article can be marked."""
     skip_codes = {"duplicate_record", "missing_article", "missing_article_page"}
     return not any(issue.code in skip_codes for issue in result.issues)
 
 
 def _config_bool(value: Any, default: bool) -> bool:
-    """Parse framework runtime config booleans with the module default as fallback."""
+    """Parse common config boolean forms, retaining the supplied default if unknown."""
     if value is None:
         return default
     if isinstance(value, bool):
@@ -74,7 +95,9 @@ def _apply_runtime_config(ctx: Any | None) -> None:
     """Apply framework-provided runtime config to module globals.
 
     Several submodules import config values directly, so updates are mirrored to
-    those modules before a run starts.
+    those modules before a run starts.  This mutates process globals and is
+    intended to run at the start of each framework job, not concurrently with a
+    differently configured Four Award run.
     """
     global ENABLED, MAX_NOMINATIONS_PER_RUN
 
@@ -99,6 +122,8 @@ def _apply_runtime_config(ctx: Any | None) -> None:
         or MAX_NOMINATIONS_PER_RUN
     )
 
+    # Keep the canonical config module and the direct-import snapshots used by
+    # parser/actions/reviewer/records/replies in agreement for this run.
     config.WIKI_CODE = wiki_code
     config.WIKI_FAMILY = wiki_family
     if wiki_api_url:
@@ -155,6 +180,8 @@ def _apply_runtime_config(ctx: Any | None) -> None:
         util.AWARD_DATE_OVERRIDE = config.AWARD_DATE_OVERRIDE
     if get("dry_run_report_page") is not None:
         config.DRY_RUN_REPORT_PAGE = str(get("dry_run_report_page") or "").strip()
+    # Edit summaries carry configurable module/BRFA identity independently of
+    # the versioned HTTP User-Agent used for API requests.
     config.EDIT_SUMMARY_SUFFIX = str(
         get("edit_summary_suffix", config.DEFAULT_EDIT_SUMMARY_SUFFIX) or ""
     ).strip()
@@ -173,8 +200,16 @@ def _apply_runtime_config(ctx: Any | None) -> None:
 
 
 def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None = None):
-    """Run one Four Award review pass and return a JSON-serializable report."""
+    """Run one bounded review pass and return a JSON-serializable audit report.
+
+    ``payload.four_page_text`` (or legacy ``page_text``) supplies historical
+    nomination text without changing evidence/target pages.  A payload-level
+    ``ignore_existing_records`` override is temporary and restored after normal
+    review/early-return paths.
+    """
     _apply_runtime_config(ctx)
+    # Diff proposals belong to one invocation; never leak previews from a prior
+    # scheduled or manually triggered run.
     wiki.reset_dry_run_edits()
     payload = payload or {}
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -188,6 +223,7 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
             "started_at": started_at,
         }
 
+    # The old ``page_text`` key remains accepted for historical callers.
     source_page_text = payload.get("four_page_text") or payload.get("page_text")
     previous_ignore_existing_records = reviewer.IGNORE_EXISTING_RECORDS
     if payload.get("ignore_existing_records") is not None:
@@ -209,6 +245,8 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
             "started_at": started_at,
         }
 
+    # Filter existing article claims before the per-nomination cap.  This avoids
+    # spending the run budget repeatedly reviewing records that already exist.
     duplicate_articles = _duplicate_article_titles(nominations)
     duplicate_count = sum(
         1 for nomination in nominations if nomination.article in duplicate_articles
@@ -217,6 +255,8 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
         nomination.article in duplicate_articles for nomination in nominations
     ):
         reviewer.IGNORE_EXISTING_RECORDS = previous_ignore_existing_records
+        # A duplicate-only source is a successful no-op, not an empty source: keep
+        # source count and claim details in the audit payload.
         return {
             "status": "ok",
             "run_kind": "duplicate_noop",
@@ -244,7 +284,8 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
             result = review_nomination(nom)
 
             if result.status == "approved":
-                # Approved nominations are safe to remove, record, mark, and notify.
+                # Approved nominations are safe to remove, mark, and notify now;
+                # record rows are batched after all reviews below.
                 approved.append(result)
                 remove_nomination(nom)
                 set_article_history_four(nom.article, "yes")
@@ -269,6 +310,8 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
     approved_records = _approved_records(approved)
     records_table_preview = None
     if approved_records:
+        # Preview and save use the same renderer.  In dry-run mode sync_records_table
+        # records the page diff instead of publishing it.
         records_table_preview = records.preview_records_table(approved_records)
         sync_records_table(approved_records)
 
@@ -281,6 +324,8 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
         and config.DRY_RUN_REPORT_PAGE
         and dry_run_edits
     ):
+        # This is the sole intentional dry-run write.  The wiki layer separately
+        # enforces that the destination is in User: namespace.
         report_result = wiki.publish_dry_run_report(config.DRY_RUN_REPORT_PAGE, report_text)
         report_page = {
             "title": report_result.title,
@@ -312,7 +357,7 @@ def run_four_award_sync(ctx: Any | None = None, payload: dict[str, Any] | None =
 
 
 def _stage_payload(stage: VerificationStage) -> dict[str, object]:
-    """Serialize a verification stage for API responses and dry-run reports."""
+    """Serialize a verification stage without dropping its evidence provenance."""
     return {
         "key": stage.key,
         "label": stage.label,
@@ -328,7 +373,7 @@ def _stage_payload(stage: VerificationStage) -> dict[str, object]:
 
 
 def _review_payloads(results: list[NominationResult]) -> list[dict[str, object]]:
-    """Serialize review results for the run payload."""
+    """Serialize decisions, issues, and ordered evidence stages for the run API."""
     payloads: list[dict[str, object]] = []
     for result in results:
         payloads.append(
@@ -347,7 +392,7 @@ def _review_payloads(results: list[NominationResult]) -> list[dict[str, object]]
 
 
 def _result_rows(label: str, results: list[NominationResult]) -> list[str]:
-    """Render review results as wikitable rows."""
+    """Render compact decision rows for a dry-run report wikitable."""
     rows = []
     for result in results:
         issue_text = "; ".join(issue.reason for issue in result.issues) or ""
@@ -362,7 +407,7 @@ def _result_rows(label: str, results: list[NominationResult]) -> list[str]:
 
 
 def _table_cell(value: object) -> str:
-    """Escape a value for use in simple wikitables."""
+    """Escape pipes/newlines that would otherwise alter simple wikitable cells."""
     return str(value or "").replace("|", "{{!}}").replace("\n", "<br>")
 
 
@@ -372,7 +417,7 @@ def _dry_run_report_wikitext(
     failed: list[NominationResult],
     manual: list[NominationResult],
 ) -> str:
-    """Build the userspace dry-run report with review and diff previews."""
+    """Build a userspace report containing decisions, evidence, and diff previews."""
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     lines = [
         "== Four Award dry-run report ==",
@@ -436,7 +481,7 @@ def _dry_run_report_wikitext(
 
 
 def _verification_detail_rows(results: list[NominationResult]) -> list[str]:
-    """Render detailed stage evidence rows for the dry-run report."""
+    """Render every stage's users, window, pages, details, and explanation."""
     rows: list[str] = []
     for result in results:
         article = result.nomination.article

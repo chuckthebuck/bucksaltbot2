@@ -8,6 +8,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 usage() {
+	# Print the one-off schema/bootstrap invocation accepted by buildservice jobs.
 	cat <<'EOF'
 Usage: bash scripts/init_toolsdb.sh [--jobs-output PATH]
 
@@ -41,6 +42,8 @@ done
 export NOTDEV="${NOTDEV:-1}"
 export ENABLE_MODULE_LOADING="${ENABLE_MODULE_LOADING:-1}"
 
+# Run schema/manifest bootstrap inside the built Python environment, optionally
+# emitting the generated cron fragment for a subsequent reviewed merge.
 python - "$jobs_output" <<'PY'
 from __future__ import annotations
 

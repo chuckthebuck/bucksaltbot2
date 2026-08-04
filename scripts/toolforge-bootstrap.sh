@@ -12,6 +12,7 @@ APPLY=0
 CONFIGURE_ENV=0
 
 usage() {
+	# Describe the dry-run-first bootstrap and its independently gated mutations.
 	cat <<'EOF'
 Usage: bash scripts/toolforge-bootstrap.sh [options]
 
@@ -55,6 +56,7 @@ done
 }
 
 run() {
+	# Echo every command before executing so first-deploy logs remain auditable.
 	printf '+ '
 	printf '%q ' "$@"
 	printf '\n'
@@ -64,6 +66,7 @@ run() {
 }
 
 require_cmd() {
+	# Validate prerequisites before any optional Toolforge mutation begins.
 	command -v "$1" >/dev/null 2>&1 || {
 		echo "Missing required command: $1" >&2
 		exit 127

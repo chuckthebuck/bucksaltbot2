@@ -4,6 +4,9 @@ import tsPlugin from "@typescript-eslint/eslint-plugin";
 import vue from "eslint-plugin-vue";
 import vueParser from "vue-eslint-parser";
 
+// Generated bundles are intentionally excluded.  Authored Vue single-file
+// components are parsed by vue-eslint-parser, which delegates script blocks to
+// the TypeScript parser.
 export default [
   {
     ignores: ["static/**", "node_modules/**", "dist/**"],
@@ -36,6 +39,8 @@ export default [
       "@typescript-eslint": tsPlugin,
     },
     rules: {
+      // Runtime props and API payloads are validated at their trust boundaries;
+      // this legacy UI still uses flexible records while those schemas evolve.
       "no-undef": "off",
       "no-unused-vars": "off",
       "@typescript-eslint/no-explicit-any": "off",

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Inspect or repair the local canary's Python, Docker, Redis, and MariaDB setup.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
