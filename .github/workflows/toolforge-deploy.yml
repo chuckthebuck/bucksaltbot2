@@ -38,7 +38,7 @@ jobs:
         with:
           host: login.toolforge.org
           username: ${{ secrets.TOOLFORGE_USERNAME }}
-          key: ${{ secrets.TOOLFORGE_DEPLOY_PRIVATE_KEY }}
+          key: ${{ secrets.TOOLFORGE_PRIVATE_KEY }}
           request_pty: true
           envs: DEPLOY_BRANCH,BUILDPACK_CHANNEL
           script: |
