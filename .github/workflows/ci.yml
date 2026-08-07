@@ -28,10 +28,10 @@ jobs:
           pip install ruff pip-audit
 
       - name: Ruff auto-fix preview
-        run: ruff check --select E4,E7,E9,F --diff .
+        run: ruff check --select E4,E7,E9,F --exclude "vendor/modules/*/build" --diff .
 
       - name: Ruff lint
-        run: ruff check --select E4,E7,E9,F .
+        run: ruff check --select E4,E7,E9,F --exclude "vendor/modules/*/build" .
 
       - name: Framework self-test
         run: ENABLE_MODULE_LOADING=0 python -m framework_selftest
