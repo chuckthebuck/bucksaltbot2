@@ -1,13 +1,3 @@
-"""Replay historical Four Award cases against an isolated in-memory wiki.
-
-Fixtures can embed page text for deterministic offline tests or name historical
-revision ids that are fetched with the module's versioned User-Agent.  The replay
-wiki captures proposed edits, exposes fixture-supplied revision evidence, and can
-compare final page text with expected revisions.  Installation intentionally
-patches module-level wiki references, so replay is designed for a dedicated test
-or CLI process rather than concurrent live work.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -28,7 +18,6 @@ from .models import PageCreation
 @dataclass
 class ReplayEdit:
     """Captured save operation from a replay run."""
-
     title: str
     before: str
     after: str
@@ -38,15 +27,13 @@ class ReplayEdit:
 @dataclass
 class ReplayPage:
     """Replay page fixture with current and optional expected final text."""
-
     before: str
     expected: str | None = None
 
 
 @dataclass
 class ReplayWiki:
-    """In-memory subset of :class:`WikiClient` backed by fixture evidence."""
-
+    """In-memory WikiClient substitute used by replay fixtures."""
     pages: dict[str, ReplayPage]
     existing: set[str] = field(default_factory=set)
     creation: dict[str, PageCreation] = field(default_factory=dict)
@@ -55,7 +42,7 @@ class ReplayWiki:
     edits: list[ReplayEdit] = field(default_factory=list)
 
     def get_text(self, title: str) -> str:
-        """Return the page's current replay text or empty text when absent."""
+        """Return fixture text, defaulting missing pages to empty text."""
         if title not in self.pages:
             return ""
         return self.pages[title].before
@@ -77,15 +64,13 @@ class ReplayWiki:
         return self.latest_revision_dates.get(title) or self.first_revision_date(title)
 
     def revision_users(self, title: str, start: date | None = None, end: date | None = None, limit: int = 500) -> set[str]:
-        """Return fixture revision users; replay evidence is already prefiltered."""
+        """Return fixture revision users; date windows are ignored in replay."""
         del start, end, limit
         return set(self.users_by_title.get(title, set()))
 
     def save_text(self, title: str, text: str, summary: str) -> wiki.SaveResult:
-        """Record changed text exactly once and update the in-memory current page."""
+        """Record a replay edit and update the in-memory page text."""
         before = self.get_text(title)
-        # Matching writes are no-ops, mirroring WikiClient.save_text and keeping
-        # the replay edit list focused on externally visible changes.
         if before != text:
             self.pages.setdefault(title, ReplayPage(before=""))
             self.pages[title].before = text
@@ -99,7 +84,7 @@ class ReplayFailure(AssertionError):
 
 
 def fetch_revision_text(revid: int) -> str:
-    """Fetch one historical main-slot revision for a revision-backed fixture."""
+    """Fetch live revision text for fixtures that reference revision ids."""
     params = {
         "action": "query",
         "prop": "revisions",
@@ -109,8 +94,6 @@ def fetch_revision_text(revid: int) -> str:
         "format": "json",
         "formatversion": "2",
     }
-    # Historical fixture fetches are real Wikimedia API traffic even though the
-    # replayed bot run is in memory, so retain the module's versioned identity.
     response = requests.get(WIKI_API_URL, params=params, headers={"User-Agent": HTTP_USER_AGENT}, timeout=30)
     response.raise_for_status()
     data = response.json()
@@ -123,7 +106,7 @@ def fetch_revision_text(revid: int) -> str:
 
 
 def _page_from_case(raw: dict[str, Any]) -> ReplayPage:
-    """Build a replay page, preferring inline text over revision-id fetches."""
+    """Build a ReplayPage from inline text or live revision ids."""
     before = raw.get("before_text")
     expected = raw.get("expected_text")
     if before is None and raw.get("before_revid"):
@@ -156,15 +139,13 @@ def _parse_revision_dates(raw: dict[str, Any]) -> dict[str, date]:
 
 
 def load_case(path: str | Path) -> dict[str, Any]:
-    """Load a UTF-8 replay case JSON file without mutating its values."""
+    """Load a replay case JSON file."""
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def build_replay_wiki(case: dict[str, Any]) -> ReplayWiki:
-    """Build an in-memory wiki and normalize fixture evidence containers."""
+    """Build the in-memory wiki from replay case data."""
     pages = {title: _page_from_case(raw) for title, raw in case.get("pages", {}).items()}
-    # Any page with supplied text is considered to exist; ``existing_pages`` adds
-    # evidence-only titles whose text does not need to be present in the fixture.
     existing = set(case.get("existing_pages", [])) | set(pages)
     users_by_title = {
         title: set(users)
@@ -180,11 +161,7 @@ def build_replay_wiki(case: dict[str, Any]) -> ReplayWiki:
 
 
 def install_replay_wiki(client: ReplayWiki) -> None:
-    """Redirect every directly imported wiki accessor to one replay client.
-
-    Several modules bind ``get_wiki`` at import time, so replacing only
-    ``wiki._client`` would leave some call sites attached to the live adapter.
-    """
+    """Patch Four Award modules so the run uses the replay wiki."""
     wiki._client = client
     parser.get_wiki = lambda: client
     reviewer.get_wiki = lambda: client
@@ -194,7 +171,7 @@ def install_replay_wiki(client: ReplayWiki) -> None:
 
 
 def apply_replay_settings(case: dict[str, Any]) -> None:
-    """Apply the small supported set of fixture-local module-global overrides."""
+    """Apply fixture-local config switches before running the service."""
     settings = case.get("settings", {})
     if "allow_automated_approval" in settings:
         reviewer.ALLOW_AUTOMATED_APPROVAL = bool(settings["allow_automated_approval"])
@@ -207,7 +184,7 @@ def apply_replay_settings(case: dict[str, Any]) -> None:
 
 
 def _filtered_pages(case: dict[str, Any], client: ReplayWiki) -> Iterable[str]:
-    """Return explicit comparison pages or every page with expected text."""
+    """Return pages whose final text should be compared."""
     titles = case.get("compare_pages")
     if titles:
         return titles
@@ -228,12 +205,7 @@ def _diff(expected: str, actual: str, title: str) -> str:
 
 
 def run_replay_case(case: dict[str, Any]) -> dict[str, Any]:
-    """Run one historical case and enforce its result/page expectations.
-
-    ``expected_result`` is a partial mapping: only named result fields are
-    compared.  Page expectations remain exact text comparisons and produce a
-    unified diff to make historical behavior changes reviewable.
-    """
+    """Run a replay fixture and assert configured result/page expectations."""
     client = build_replay_wiki(case)
     install_replay_wiki(client)
     apply_replay_settings(case)
@@ -250,7 +222,6 @@ def run_replay_case(case: dict[str, Any]) -> dict[str, Any]:
         page = client.pages.get(title)
         if page is None or page.expected is None:
             raise ReplayFailure(f"No expected text is configured for {title}")
-        # ``before`` is ReplayPage's mutable current text after captured saves.
         actual = page.before
         if actual != page.expected:
             diffs[title] = _diff(page.expected, actual, title)
@@ -266,7 +237,7 @@ def run_replay_case(case: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> int:
-    """Run one or more fixture paths, printing compact edit/result summaries."""
+    """CLI entrypoint for running one or more replay fixtures."""
     arg_parser = argparse.ArgumentParser(description="Replay Four Award bot behavior against old before/after revisions.")
     arg_parser.add_argument("case", nargs="+", help="Replay case JSON file")
     args = arg_parser.parse_args()

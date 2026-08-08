@@ -1,10 +1,9 @@
 name = "chuck_file_changer"
-repo = "https://github.com/chuckthebuck/Chuckthefilechange"
+repo = "https://github.com/chuckthebuck/chuck-file-changer"
 entry_point = "chuck_file_changer.service:run_file_change"
-blueprint_entry_point = "chuck_file_changer.blueprint:blueprint"
 ui = true
 redis_namespace = "chuck_file_changer"
-title = "File Changer"
+title = "Chuck the File Changer"
 oauth_consumer_mode = "default"
 # Commons-scoped module. Runtime edits target commons.wikimedia.org only.
 # Override CHUCK_FILE_CHANGER_USER_AGENT if deployment needs a different
@@ -32,6 +31,5 @@ bundled = true
 name = "file-change"
 handler = "chuck_file_changer.service:run_file_change"
 concurrency_policy = "forbid"
-required_right = "apply_changes"
 timeout_seconds = 900
 enabled = true

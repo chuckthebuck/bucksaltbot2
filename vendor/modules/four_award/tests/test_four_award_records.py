@@ -1,5 +1,3 @@
-"""Tests for parsed records, exact claim checks, and lossless table rendering."""
-
 from __future__ import annotations
 
 from modules.four_award.models import FourAwardRecord
@@ -13,7 +11,6 @@ from modules.four_award.records import (
 
 
 def test_records_table_uses_sql_model_to_sort_and_recalculate_ordinals():
-    """Machine rows sort deterministically and repeat-user ordinals are rebuilt."""
     table = """{| class="wikitable sortable"
 ! User
 ! Article
@@ -62,7 +59,6 @@ def test_records_table_uses_sql_model_to_sort_and_recalculate_ordinals():
 
 
 def test_records_table_preserves_unparsed_rows_when_rerendering():
-    """Manual/unknown rows survive a parse-render cycle unchanged."""
     table = """{| class="wikitable"
 ! User
 ! Article
@@ -92,7 +88,6 @@ def test_records_table_preserves_unparsed_rows_when_rerendering():
 
 
 def test_records_table_duplicate_check_uses_parsed_rows_not_raw_substrings():
-    """User/article claim matching is exact after parsing and normalization."""
     table = """{| class="wikitable"
 ! User
 ! Article
@@ -106,7 +101,6 @@ def test_records_table_duplicate_check_uses_parsed_rows_not_raw_substrings():
 
 
 def test_records_table_article_duplicate_check_ignores_user():
-    """The service-level article claim check is intentionally user-independent."""
     table = """{| class="wikitable"
 ! User
 ! Article

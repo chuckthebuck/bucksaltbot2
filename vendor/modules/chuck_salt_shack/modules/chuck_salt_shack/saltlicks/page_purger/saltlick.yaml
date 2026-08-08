@@ -1,7 +1,5 @@
-# A Saltlick contract is both UI metadata and a bounded execution contract.
-# It is normalized during discovery and validated again at run boundaries.
-# The entrypoint below is trusted image content: public API responses remove it,
-# and a browser request can select only this directory's stable Saltlick ID.
+# A Saltlick contract is UI metadata plus a bounded execution contract. The
+# script path stays in the image and is never accepted from a browser request.
 contract: 1
 display_name: Page purger
 description: Preview and perform cache purges through the framework action catalog.
@@ -17,9 +15,6 @@ inputs:
       code: commons
       family: commons
 
-  # Page values contain namespace/title pairs. The script joins the selected
-  # wiki onto each action target so the framework can resolve the right site.
-  # The hard item cap and namespace allowlist bound both the UI and API.
   targets:
     type: pages
     label: Page titles
@@ -36,16 +31,13 @@ inputs:
     label: Force link update
     default: true
 
-  # This can be considerably more expensive on large dependency graphs, so it
-  # is an explicit opt-in even though the ordinary link update defaults on.
   recursive_link_update:
     type: boolean
     label: Recursive link update
     default: false
 
 outputs:
-  # Outputs describe the plan for people and are validated independently of
-  # the executable action envelopes before the run is persisted or rendered.
+  # Outputs are validated before the framework persists or renders them.
   planned_count:
     type: number
     label: Planned purges
@@ -55,8 +47,6 @@ outputs:
     label: Target pages
 
 actions:
-  # This is an allowlist, not a request to execute. Preview renders the emitted
-  # envelopes; apply regenerates them and the framework executes only after the
-  # reviewed plan digest matches.
+  # Only framework-owned action types listed here may leave this Saltlick.
   allowed:
     - mediawiki.page.purge

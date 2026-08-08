@@ -1,10 +1,4 @@
-"""Execute compiled Saltlicks and the retained legacy recipe workflow.
-
-The worker is the final enforcement point.  It revalidates queued payloads,
-derives preview/apply mode from the framework job name, and delegates actions
-to the framework catalog.  Compiled-child runs additionally load only
-registry-owned code and verify reviewed action-plan digests.
-"""
+"""Chuck the Salt Shack handler and child Saltlick execution engine."""
 
 from __future__ import annotations
 
@@ -31,9 +25,6 @@ from .spec import WorkflowSpec, recipe_with_invocation
 from .transforms import apply_transforms
 
 
-# Legacy recipe previews include diffs in persisted results.  Separate per-page
-# and aggregate budgets keep one large edit or a long run from overwhelming the
-# database and report UI.
 MAX_DIFF_CHARS_PER_PAGE = 20_000
 MAX_DIFF_CHARS_PER_RUN = 250_000
 
@@ -46,7 +37,7 @@ def _log(ctx: Any | None, message: str) -> None:
 
 
 def _check_cancelled(ctx: Any | None) -> None:
-    """Honor framework cancellation between bounded units of legacy work."""
+    """Honor framework cancellation between bounded units of work."""
     if ctx is not None and hasattr(ctx, "check_cancelled"):
         ctx.check_cancelled()
 
@@ -77,7 +68,7 @@ def _render_summary(summary: str, *, title: str) -> str:
 
 
 def _make_diff(title: str, before: str, after: str, remaining: int) -> str:
-    """Create a per-page unified diff within both report-size budgets."""
+    """Create a per-page unified diff within the run's remaining budget."""
     if remaining <= 0:
         return ""
     diff = "".join(
@@ -118,14 +109,7 @@ def execute_workflow(
     pages: Iterable[Any] | None = None,
     sleep: Any = time.sleep,
 ) -> dict[str, Any]:
-    """Execute one validated legacy workflow and return a bounded report.
-
-    ``pages`` and ``sleep`` are injectable for deterministic tests; production
-    resolves the recipe's bounded Pywikibot generator and uses real throttling.
-    The caller, not the recipe, owns the ``dry_run`` decision.
-    """
-    # Re-normalize dictionary callers here so direct CLI, compatibility API,
-    # generated module, and tests all share exactly the same validation path.
+    """Execute one validated workflow and return a bounded run report."""
     workflow = spec if isinstance(spec, WorkflowSpec) else WorkflowSpec.from_dict(spec)
     page_iter = pages if pages is not None else resolve_pages(site, workflow.source)
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -139,8 +123,6 @@ def execute_workflow(
         f"Saltlick {'previewing' if dry_run else 'applying'} {workflow.name}",
     )
     for page in page_iter:
-        # Cancellation and max-edits checks happen before touching the next
-        # page, making each page the bounded unit of legacy workflow work.
         _check_cancelled(ctx)
         if changed >= workflow.limits.max_edits:
             break
@@ -158,8 +140,6 @@ def execute_workflow(
                 old_text = ""
             else:
                 old_text = str(page.text)
-            # Byte limits, rather than Python character counts, track the size
-            # that will actually travel through MediaWiki and persistence.
             if len(old_text.encode("utf-8")) > workflow.limits.max_page_bytes:
                 item.update(status="skipped", reason="page_too_large")
                 skipped += 1
@@ -196,8 +176,6 @@ def execute_workflow(
             summary = _render_summary(workflow.save.summary, title=title)
             status = "proposed"
             if not dry_run:
-                # A live summary is checked after token expansion so a template
-                # that renders empty cannot create an unattributed edit.
                 if not summary:
                     raise ValueError("live edits require a non-empty edit summary")
                 page.text = new_text
@@ -226,8 +204,6 @@ def execute_workflow(
                 }
             )
         except Exception as exc:  # one bad page should not erase a useful run report
-            # Page failures become report rows.  ``stop_on_error`` controls only
-            # whether the bounded iterator continues; prior results are kept.
             errors += 1
             item.update(status="error", error=str(exc))
             if workflow.limits.stop_on_error:
@@ -256,7 +232,7 @@ def execute_workflow(
 
 
 def _config_bool(ctx: Any | None, key: str, default: bool = False) -> bool:
-    """Read a boolean module setting while tolerating stored string values."""
+    """Read a boolean module setting from the framework run context."""
     config = getattr(ctx, "config", None)
     value = config.get(key, default) if hasattr(config, "get") else default
     if isinstance(value, str):
@@ -268,11 +244,7 @@ def _run_legacy_workflow(
     ctx: Any | None = None,
     payload: dict[str, Any] | None = None,
 ):
-    """Run the pre-registry recipe format retained for compatibility.
-
-    The legacy surface is still bounded by ``WorkflowSpec`` and its explicit
-    invocation overlay.  It never accepts a handler path or Python source.
-    """
+    """Run the pre-Salt-Shack recipe format for compatibility."""
     data = payload or {}
     unknown = sorted(set(data) - {"recipe", "inputs", "arguments", "confirm_live"})
     if unknown:
@@ -284,13 +256,10 @@ def _run_legacy_workflow(
             arguments=data.get("arguments"),
         )
     )
-    # The trusted queue job determines liveness.  A payload cannot turn a
-    # preview handler live by setting its own confirmation flag.
     job_name = str(getattr(ctx, "job_name", "preview") or "preview")
     apply_job = job_name == "apply"
     if apply_job and data.get("confirm_live") is not True:
         raise ValueError("live Saltlick runs require confirm_live=true")
-    # Module safe mode can downgrade an apply job, never upgrade a preview.
     forced_dry_run = _config_bool(ctx, "dry_run", False)
     dry_run = not apply_job or forced_dry_run
     site = data.get("_site")
@@ -308,12 +277,7 @@ def _plan_token(
     arguments: list[str],
     actions: list[dict[str, Any]],
 ) -> str:
-    """Bind a previewed action plan to its exact normalized invocation.
-
-    Outputs are intentionally excluded because the token gates executable
-    intent, not presentation.  Canonical JSON makes dictionary insertion order
-    irrelevant while preserving action-list order.
-    """
+    """Bind a previewed action plan to its exact normalized invocation."""
     payload = {
         "saltlick_id": saltlick_id,
         "inputs": inputs,
@@ -333,12 +297,7 @@ def execute_saltlick(
     ctx: Any | None,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Validate, dispatch, and report one immutable child Saltlick.
-
-    Validation occurs here even if the blueprint already checked the request:
-    queued data is a new trust boundary, and callers may invoke this handler
-    without HTTP.  No request field can select a script or callable.
-    """
+    """Validate, dispatch, and report one immutable Saltlick."""
     allowed_payload = {
         "saltlick_id",
         "inputs",
@@ -350,23 +309,13 @@ def execute_saltlick(
     if unknown:
         raise ValueError(f"unsupported run argument(s): {', '.join(unknown)}")
 
-    # Only the normalized ID crosses from payload to discovery.  The resolved
-    # definition supplies the directory, entrypoint, contract, and source hash.
     saltlick_id = str(payload.get("saltlick_id") or "").strip()
     definition = get_saltlick(saltlick_id)
     if definition is None:
         raise ValueError(f"unknown Saltlick: {saltlick_id}")
-    from .safety import saltlick_is_enabled
-
-    # Recheck an emergency stop in the worker so a run queued just before an
-    # operator stops the Saltlick cannot begin executing afterward.
-    if not saltlick_is_enabled(definition.id):
-        raise RuntimeError(f"Saltlick is emergency-stopped: {definition.id}")
     inputs = validate_inputs(definition.contract, payload.get("inputs"))
     arguments = validate_arguments(payload.get("arguments"))
 
-    # As with legacy workflows, the framework-selected job owns live/dry mode.
-    # ``confirm_live`` is an additional acknowledgement, not an authority bit.
     job_name = str(getattr(ctx, "job_name", "preview") or "preview")
     apply_job = job_name == "apply"
     if apply_job and payload.get("confirm_live") is not True:
@@ -380,8 +329,6 @@ def execute_saltlick(
         inputs=inputs,
         arguments=arguments,
     )
-    # Normalize the low-boilerplate ``None`` return, then close the result
-    # envelope before any script-provided value is saved or acted upon.
     if raw_result is None:
         raw_result = {}
     if not isinstance(raw_result, dict):
@@ -392,8 +339,6 @@ def execute_saltlick(
             "Saltlick returned unsupported field(s): "
             + ", ".join(unknown_result)
         )
-    # Outputs and actions use independent contract sections.  A valid display
-    # value can never compensate for an undeclared executable action.
     outputs = validate_outputs(
         definition.contract,
         raw_result.get("outputs"),
@@ -402,8 +347,6 @@ def execute_saltlick(
         definition.contract,
         raw_result.get("actions"),
     )
-    # Regenerate on every run.  Apply never executes a cached preview payload;
-    # it must reproduce the action list from the current script and inputs.
     plan_token = _plan_token(
         saltlick_id=definition.id,
         inputs=inputs,
@@ -411,8 +354,6 @@ def execute_saltlick(
         actions=actions,
     )
     if apply_job and not forced_dry_run:
-        # Digest comparison happens before handing actions to the framework.
-        # A mismatch is fail-closed and requires an operator to preview again.
         supplied_token = str(payload.get("preview_token") or "")
         if not supplied_token:
             raise ValueError("live Saltlick runs require a preview_token")
@@ -422,8 +363,6 @@ def execute_saltlick(
             )
 
     if ctx is None or not hasattr(ctx, "execute_actions"):
-        # Local/tooling calls may still produce useful previews.  They can never
-        # perform a live action without the framework-owned execution context.
         if actions and not dry_run:
             raise RuntimeError(
                 "live Saltlick actions require a framework run context"
@@ -444,8 +383,6 @@ def execute_saltlick(
             ],
         }
     else:
-        # The framework rechecks the declared type set and owns site login,
-        # batching, operation-specific parameters, progress, and mutation.
         action_result = ctx.execute_actions(
             actions,
             dry_run=dry_run,
@@ -471,11 +408,7 @@ def execute_saltlick(
 
 
 def run_saltlick(ctx: Any | None = None, payload: dict[str, Any] | None = None):
-    """Route queued work to the immutable registry or legacy recipe engine.
-
-    Presence of the explicit legacy ``recipe`` key is the only compatibility
-    discriminator; all normal child runs must provide a ``saltlick_id``.
-    """
+    """Run a Salt Shack child Saltlick through Chuckbot's isolated runner."""
     data = payload or {}
     if "recipe" in data:
         return _run_legacy_workflow(ctx, data)
