@@ -45,10 +45,9 @@ toolforge build start "$REPO_URL" --ref "$BRANCH" "${build_args[@]}"
 echo "Restarting webservice..."
 toolforge webservice buildservice restart
 
-echo "flushing jobs"
-toolforge jobs flush
-
 echo "Reloading jobs..."
+# `load` flushes/recreates jobs whose definitions differ. Calling `flush`
+# first adds a second asynchronous delete operation and can race the reload.
 toolforge jobs load jobs.yaml
 
 echo "Current jobs:"

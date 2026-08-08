@@ -33,6 +33,9 @@ ENABLE_MODULE_LOADING=0 run_python -m framework_selftest
 info "Canary: checking vendored module autoversioning"
 python3 scripts/check-module-autoversioning.py
 
+info "Canary: checking generated module requirements"
+python3 scripts/update-module-requirements.py --check
+
 info "Canary: checking generated Salt Shack registry"
 PYTHONPATH=vendor/modules/chuck_salt_shack/modules \
 	run_python -m chuck_salt_shack.build --check

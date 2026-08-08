@@ -77,8 +77,10 @@ repo in editable mode while you are working, then refresh the vendored snapshot
 only when you are ready to make a deployable framework commit.
 
 Python modules live under `vendor/modules/<module_name>/`, are installed by
-local paths in `requirements-modules.txt`, and are registered only when their
-module name appears in `enabled-modules.txt`:
+generated local paths in `requirements-modules.txt`, and are registered only
+when their module name appears in `enabled-modules.txt`. Run
+`npm run modules:requirements` after changing the enabled external-module set;
+the vendored-module refresh command runs it automatically:
 
 ```txt
 # requirements-modules.txt

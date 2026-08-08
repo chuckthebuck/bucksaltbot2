@@ -66,5 +66,6 @@ update_module \
 	"${CHUCK_SALT_SHACK_REMOTE:-https://github.com/chuckthebuck/chuck-the-salt-shack.git}" \
 	"${CHUCK_SALT_SHACK_BRANCH:-main}"
 
+python3 scripts/update-module-requirements.py
 npm install
 npm run modules:frontend
