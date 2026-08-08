@@ -1,10 +1,3 @@
-"""Normalize Quarry, JSON, delimited, and manual target-list formats.
-
-All parsers converge on immutable ``FileChangeTarget`` records and one stable
-de-duplication rule. Quarry URL conversion accepts only the canonical service
-host so request input cannot directly select an arbitrary fetch destination.
-"""
-
 from __future__ import annotations
 
 import csv
@@ -16,8 +9,6 @@ from urllib.parse import urlparse
 
 from .models import FileChangeTarget
 
-# Column aliases cover Quarry schemas and common exported CSV headings without
-# requiring callers to rename data before pasting it.
 TITLE_COLUMNS = (
     "title",
     "page_title",
@@ -32,11 +23,6 @@ SUMMARY_COLUMNS = ("summary", "comment", "rev_comment", "comment_text", "reason"
 
 
 def quarry_result_url(value: str) -> str | None:
-    """Resolve supported Quarry query/run references to a JSON result URL.
-
-    Absolute URLs are accepted only for ``quarry.wmcloud.org`` with a known
-    path shape. Bare numeric values mean query IDs; run IDs require ``run:``.
-    """
     raw = (value or "").strip()
     if not raw:
         return None
@@ -65,13 +51,10 @@ def quarry_result_url(value: str) -> str | None:
 
 
 def parse_targets_text(text: str) -> list[FileChangeTarget]:
-    """Detect and parse JSON, CSV/TSV, or line-oriented manual targets."""
     raw = (text or "").strip()
     if not raw:
         return []
 
-    # Prefer JSON because Quarry exports and explicit API payloads are
-    # unambiguous. Only fall back to delimiter/manual heuristics on syntax error.
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -89,7 +72,6 @@ def parse_targets_text(text: str) -> list[FileChangeTarget]:
 
 
 def parse_quarry_json(payload: dict[str, Any]) -> list[FileChangeTarget]:
-    """Combine Quarry's parallel header/row arrays into target records."""
     headers = payload.get("headers")
     rows = payload.get("rows")
     if not isinstance(headers, list) or not isinstance(rows, list):
@@ -105,7 +87,6 @@ def parse_quarry_json(payload: dict[str, Any]) -> list[FileChangeTarget]:
 
 
 def parse_delimited_targets(text: str) -> list[FileChangeTarget]:
-    """Parse header-bearing CSV or TSV using a bounded dialect sample."""
     sample = text[:2048]
     dialect = csv.Sniffer().sniff(sample, delimiters=",\t")
     reader = csv.DictReader(io.StringIO(text), dialect=dialect)
@@ -113,7 +94,6 @@ def parse_delimited_targets(text: str) -> list[FileChangeTarget]:
 
 
 def parse_manual_targets(text: str) -> list[FileChangeTarget]:
-    """Parse ``title|user|summary`` lines and preserve first-seen order."""
     targets: list[FileChangeTarget] = []
     for line in text.splitlines():
         stripped = line.strip()
@@ -131,7 +111,6 @@ def parse_manual_targets(text: str) -> list[FileChangeTarget]:
 
 
 def targets_from_records(records: list[Any]) -> list[FileChangeTarget]:
-    """Map heterogeneous dictionaries through recognized column aliases."""
     targets: list[FileChangeTarget] = []
     for record in records:
         if not isinstance(record, dict):
@@ -150,11 +129,6 @@ def targets_from_records(records: list[Any]) -> list[FileChangeTarget]:
 
 
 def dedupe_targets(targets: list[FileChangeTarget]) -> list[FileChangeTarget]:
-    """Keep the first target for each case-insensitive normalized title.
-
-    Underscores and spaces share an identity key, matching MediaWiki title
-    equivalence. First-seen metadata wins so source ordering remains stable.
-    """
     seen: set[str] = set()
     unique: list[FileChangeTarget] = []
     for target in targets:
@@ -167,7 +141,6 @@ def dedupe_targets(targets: list[FileChangeTarget]) -> list[FileChangeTarget]:
 
 
 def normalize_file_title(title: str) -> str:
-    """Trim a title, normalize underscores, and add ``File:`` when absent."""
     cleaned = str(title or "").strip().replace("_", " ")
     if not cleaned:
         return ""
@@ -177,7 +150,6 @@ def normalize_file_title(title: str) -> str:
 
 
 def _first_text(record: dict[str, Any], names: tuple[str, ...]) -> str:
-    """Return the first nonblank value from case-insensitive alias names."""
     lookup = {str(key).lower(): value for key, value in record.items()}
     for name in names:
         value = lookup.get(name.lower())

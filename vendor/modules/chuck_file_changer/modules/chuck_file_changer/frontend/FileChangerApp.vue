@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
-// These result interfaces mirror the durable job API. The browser renders
-// plans and progress but never receives a Pywikibot object or write primitive.
 type Mode = "replace" | "prepend" | "append";
 
 interface PlanItem {
@@ -34,16 +32,22 @@ interface QueuedRun {
   result?: RunResult | null;
 }
 
-// Framework-injected props provide page-shell capabilities such as manage.
-// Missing props are valid during standalone frontend development.
+interface RunHistoryEntry {
+  id: number;
+  status: string;
+  dry_run: boolean;
+  total_items: number;
+  requested_by: string;
+  created_at?: string | null;
+  error?: string | null;
+}
+
 const props = JSON.parse(
   document.getElementById("chuck-file-changer-props")?.textContent || "{}"
 );
 
 type SourceMode = "manual" | "quarry" | "user" | "category" | "page" | "search";
 
-// Form state retains independent values for every source/operation mode. Only
-// the fields selected by ``sourceMode`` and ``mode`` are serialized per run.
 const sourceMode = ref<SourceMode>("manual");
 const targetsText = ref("");
 const quarry = ref("");
@@ -64,11 +68,9 @@ const runIds = ref<number[]>([]);
 const error = ref("");
 const busy = ref(false);
 const canApplyRight = ref(false);
+const runHistory = ref<RunHistoryEntry[]>([]);
 
 const canApply = computed(() =>
-  // This controls the button only. Shell ``can_manage`` includes framework
-  // maintainers, while the custom API checks configured module rights directly;
-  // /api/auth and the apply response remain authoritative and may return 403.
   Boolean(canApplyRight.value || props?.can_manage)
 );
 const sourceCount = computed(() =>
@@ -97,8 +99,6 @@ const operationLabel = computed(() => {
 });
 
 onMounted(async () => {
-  // Fetch current rights instead of trusting potentially stale shell props.
-  // Failure degrades to preview-only UI and never enables a write affordance.
   try {
     const response = await fetch("/chuck_file_changer/api/auth", {
       cache: "no-store",
@@ -108,11 +108,14 @@ onMounted(async () => {
   } catch {
     canApplyRight.value = false;
   }
+  try {
+    await loadRunHistory();
+  } catch {
+    runHistory.value = [];
+  }
 });
 
 function payload(apply: boolean) {
-  // Send one canonical payload for both endpoints. Inactive source fields are
-  // blanked so stale form values cannot compete in server-side precedence.
   return {
     source_text: sourceMode.value === "manual" ? targetsText.value : "",
     quarry: sourceMode.value === "quarry" ? quarry.value : "",
@@ -135,9 +138,6 @@ function payload(apply: boolean) {
 }
 
 async function run(apply: boolean) {
-  // A new request invalidates the displayed result and all prior chunk state.
-  // Preview and apply are independent submissions; server authorization and
-  // dry-run flags—not prior client state—determine whether writes are possible.
   busy.value = true;
   error.value = "";
   result.value = null;
@@ -158,14 +158,14 @@ async function run(apply: boolean) {
     if (!response.ok) {
       throw new Error(data?.detail || `HTTP ${response.status}`);
     }
-    // The queue returns compatibility singular IDs plus the complete chunk ID
-    // list. Poll every finite ID and use the first only for compact status text.
     runIds.value = Array.isArray(data?.run_ids)
       ? data.run_ids.map((id: unknown) => Number(id)).filter((id: number) => Number.isFinite(id))
       : [Number(data?.run_id)].filter((id: number) => Number.isFinite(id));
     runId.value = runIds.value[0] || null;
     runStatus.value = String(data?.status || "queued");
+    await loadRunHistory();
     await pollRuns(runIds.value);
+    await loadRunHistory();
   } catch (exc) {
     error.value = exc instanceof Error ? exc.message : "Request failed";
   } finally {
@@ -174,8 +174,6 @@ async function run(apply: boolean) {
 }
 
 function mergeResults(results: RunResult[]): RunResult {
-  // Chunk ordering follows the original queue ID order. Counts are additive;
-  // dry-run remains true only when every chunk reports itself as dry.
   return {
     dry_run: results.every((item) => item.dry_run),
     target_count: results.reduce((sum, item) => sum + Number(item.target_count || 0), 0),
@@ -189,8 +187,6 @@ function mergeResults(results: RunResult[]): RunResult {
 }
 
 async function pollRuns(ids: number[]) {
-  // Completed chunks are memoized so later polling rounds query only work that
-  // is still active. Any failed/canceled chunk fails the aggregate UI result.
   const completed = new Map<number, RunResult>();
   for (let attempt = 0; attempt < 240; attempt += 1) {
     for (const id of ids) {
@@ -217,8 +213,6 @@ async function pollRuns(ids: number[]) {
 }
 
 async function fetchRun(id: number): Promise<QueuedRun> {
-  // Job state changes rapidly and is ownership-protected server-side; bypass
-  // HTTP caches on every poll.
   const response = await fetch(`/chuck_file_changer/api/jobs/${encodeURIComponent(id)}`, {
     cache: "no-store",
   });
@@ -229,15 +223,22 @@ async function fetchRun(id: number): Promise<QueuedRun> {
   return data;
 }
 
+async function loadRunHistory() {
+  const response = await fetch("/chuck_file_changer/api/jobs?limit=25", {
+    cache: "no-store",
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
+  runHistory.value = Array.isArray(data?.jobs) ? data.jobs : [];
+}
+
 </script>
 
 <template>
   <main class="cfc">
-    <!-- The status pill is an affordance, not authorization. Apply is always
-         rechecked by the authenticated server route. -->
     <section class="cfc-header">
       <div>
-        <h1>File Changer</h1>
+        <h1>Chuck the File Changer</h1>
         <p>{{ operationLabel }} · Commons file pages · queued module run</p>
       </div>
       <div class="cfc-status-pill" :class="{ live: canApply }">
@@ -246,8 +247,6 @@ async function fetchRun(id: number): Promise<QueuedRun> {
     </section>
 
     <section class="cfc-grid">
-      <!-- Source and action choices are kept separate so the same normalized
-           target batch can be previewed with any supported text operation. -->
       <div class="cfc-panel">
         <header>
           <h2>Source</h2>
@@ -355,8 +354,6 @@ async function fetchRun(id: number): Promise<QueuedRun> {
         <p v-else>Ready</p>
       </div>
       <div class="cfc-actions">
-        <!-- Preview and apply submit fresh payloads; the UI does not execute or
-             replay wikitext mutations locally. -->
         <button :disabled="busy" @click="run(false)">Preview</button>
         <button class="primary" :disabled="busy || !canApply" @click="run(true)">Apply</button>
       </div>
@@ -364,9 +361,27 @@ async function fetchRun(id: number): Promise<QueuedRun> {
 
     <p v-if="error" class="cfc-error">{{ error }}</p>
 
+    <section class="cfc-history">
+      <header>
+        <h2>Run history</h2>
+        <button @click="loadRunHistory">Refresh</button>
+      </header>
+      <p v-if="!runHistory.length">No queued runs recorded yet.</p>
+      <div v-else class="cfc-history-table" role="table" aria-label="File change run history">
+        <div class="cfc-history-row cfc-history-heading" role="row">
+          <span>Run</span><span>Status</span><span>Mode</span><span>Targets</span><span>Created</span>
+        </div>
+        <div v-for="entry in runHistory" :key="entry.id" class="cfc-history-row" role="row">
+          <span>#{{ entry.id }}</span>
+          <span :class="{ 'cfc-error': entry.status === 'failed' }">{{ entry.status }}</span>
+          <span>{{ entry.dry_run ? "preview" : "apply" }}</span>
+          <span>{{ entry.total_items }}</span>
+          <span :title="entry.error || ''">{{ entry.created_at || "—" }}</span>
+        </div>
+      </div>
+    </section>
+
     <section v-if="result" class="cfc-results">
-      <!-- Diffs are rendered as text in <pre>; no returned wikitext is injected
-           as HTML into the module page. -->
       <div class="cfc-summary">
         <span>{{ result.target_count }} targets</span>
         <span>{{ result.changed_count }} changed</span>

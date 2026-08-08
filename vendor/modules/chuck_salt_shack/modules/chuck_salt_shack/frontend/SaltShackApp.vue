@@ -20,8 +20,6 @@ import {
 import logoUrl from "../assets/salt-shack-logo.svg";
 
 // These interfaces mirror the public, execution-detail-free API contract.
-// In particular, SaltlickContract intentionally has no entrypoint/script path;
-// the worker resolves those from the image-owned registry.
 interface NamespacePolicy {
   selectable: boolean;
   allowed: number[];
@@ -67,13 +65,6 @@ interface AuthState {
   can_preview?: boolean;
   can_apply?: boolean;
   can_manage?: boolean;
-  can_estop?: boolean;
-  saltlicks?: Record<string, {
-    can_preview: boolean;
-    can_apply: boolean;
-    can_estop: boolean;
-    enabled: boolean;
-  }>;
 }
 
 interface FieldState {
@@ -198,8 +189,6 @@ const WIKI_FALLBACKS: WikiOption[] = [
 
 // Catalog, form, and run state are kept in the module bundle. The framework
 // still owns authentication, permissions, job persistence, and cancellation.
-// Client capability flags are presentation hints only: routes reauthorize every
-// request, and the worker independently revalidates queued payloads.
 const auth = ref<AuthState>({});
 const saltlicks = ref<SaltlickContract[]>([]);
 const selectedId = ref("");
@@ -229,47 +218,26 @@ const selectedContract = computed(
   () => saltlicks.value.find((item) => item.id === selectedId.value) ?? null,
 );
 const inputEntries = computed(() =>
-  Object.entries(selectedContract.value?.inputs ?? {}).sort(
-    ([leftName, left], [rightName, right]) => {
-      // The project picker establishes the context for every linked lookup.
-      // Always place it first, even when a hand-authored YAML contract does not.
-      const leftPriority = left.type === "wiki" ? 0 : 1;
-      const rightPriority = right.type === "wiki" ? 0 : 1;
-      return leftPriority - rightPriority || leftName.localeCompare(rightName);
-    },
-  ),
+  Object.entries(selectedContract.value?.inputs ?? {}),
 );
 const outputEntries = computed(() =>
   Object.entries(selectedContract.value?.outputs ?? {}),
 );
 const previewCanApply = computed(
   () =>
-    canApplySelected.value &&
+    Boolean(auth.value.can_apply) &&
     Boolean(result.value?.dry_run) &&
     Boolean(result.value?.plan_token) &&
     (result.value?.actions?.length ?? 0) > 0,
 );
-const selectedCapabilities = computed(
-  () => auth.value.saltlicks?.[selectedId.value],
-);
-const canPreviewSelected = computed(
-  () => Boolean(auth.value.can_preview || selectedCapabilities.value?.can_preview),
-);
-const canApplySelected = computed(
-  () => Boolean(auth.value.can_apply || selectedCapabilities.value?.can_apply),
-);
 
 function clone<T>(value: T): T {
-  // Contract values are JSON shapes by definition. A JSON round trip prevents
-  // a cached draft from sharing nested objects with the active form state.
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
 // Contract form lifecycle. Drafts are cached per Saltlick so switching between
 // nested catalog entries does not discard maintainer input.
 function defaultNamespace(spec: InputContract): number | null {
-  // Normalized contracts normally provide this inference already. Retaining it
-  // client-side also supports hand-built preview fixtures and older catalogs.
   if (spec.namespace?.default !== null && spec.namespace?.default !== undefined) {
     return spec.namespace.default;
   }
@@ -297,21 +265,12 @@ function wikiKey(value: { code?: unknown; family?: unknown }): string {
 }
 
 function initialField(spec: InputContract): FieldState {
-  // Codex controls use different selected/text/chip models. Convert each
-  // contract default once so later serialization can be type-specific.
   const defaultValue = spec.default !== undefined ? clone(spec.default) : undefined;
   if (spec.type === "wiki") {
-    const wiki = (defaultValue as Record<string, unknown> | undefined) ?? {
-      code: "commons",
-      family: "commons",
-    };
-    const option = WIKI_FALLBACKS.find(
-      (candidate) => wikiKey(candidate) === wikiKey(wiki),
-    );
+    const wiki = defaultValue ?? { code: "commons", family: "commons" };
     return makeFieldState({
       selected: wikiKey(wiki),
       value: wiki,
-      text: option?.label ?? `${wiki.code}:${wiki.family}`,
     });
   }
   if (spec.type === "page") {
@@ -366,8 +325,6 @@ function initializeFields(contract: SaltlickContract) {
 }
 
 function selectSaltlick(id: string) {
-  // Save the outgoing draft before changing IDs. Run state is never cached: a
-  // result and plan digest belong only to the invocation that produced them.
   if (selectedId.value) {
     draftCache.set(selectedId.value, clone(fields.value));
     argumentCache.set(selectedId.value, argumentsText.value);
@@ -472,8 +429,6 @@ async function loadWikiCatalog(): Promise<void> {
         }
       }
     }
-    // Seeded fallbacks and live site-matrix rows can overlap. The live row wins
-    // by stable family:code identity and the final list is label-sorted.
     const unique = new Map<string, WikiOption>();
     for (const option of options) unique.set(wikiKey(option), option);
     wikiCatalog.value = [...unique.values()].sort((left, right) =>
@@ -514,8 +469,6 @@ function setWikiLookupItems(name: string, query = ""): void {
 }
 
 function onWikiLookupInput(name: string, value: string | number): void {
-  // Wiki filtering is synchronous after catalog bootstrap. The counter mirrors
-  // page-lookup bookkeeping but does not currently guard a network response.
   const requestId = (wikiLookupRequestIds.get(name) ?? 0) + 1;
   wikiLookupRequestIds.set(name, requestId);
   fields.value[name].text = String(value ?? "");
@@ -540,8 +493,6 @@ async function loadNamespacesForWiki(
   wiki: { code: string; family: string },
 ): Promise<void> {
   const key = wikiKey(wiki);
-  // Cache each completed wiki lookup because multiple page fields commonly use
-  // the same namespace labels for the lifetime of this page.
   if (namespaceCatalog.value[key]) return;
   try {
     const params = new URLSearchParams({
@@ -642,8 +593,6 @@ function namespaceLabel(spec: InputContract, namespace: number | null): string {
 }
 
 function clearPageLookup(name: string): void {
-  // A selected title is meaningful only with the wiki/namespace used to find
-  // it. Clear both single- and multi-select representations when either moves.
   fields.value[name].selected = Array.isArray(fields.value[name].selected)
     ? []
     : null;
@@ -703,8 +652,6 @@ async function onPageLookupInput(
 ): Promise<void> {
   const query = String(value ?? "").trim();
   fields.value[name].text = query;
-  // Fetches may resolve out of order while someone types. Only the newest
-  // request ID may replace a field's menu, preventing stale-wiki/title results.
   const requestId = (pageLookupRequestIds.get(name) ?? 0) + 1;
   pageLookupRequestIds.set(name, requestId);
   if (!query) {
@@ -770,8 +717,6 @@ function inputType(spec: InputContract) {
 }
 
 function parsePageTitle(raw: string, fallbackNamespace: number | null) {
-  // Codex lookup values normally omit the namespace prefix because namespace is
-  // a separate typed value. Pasted common prefixed titles remain convenient.
   const title = raw.trim();
   const separator = title.indexOf(":");
   if (separator > 0) {
@@ -791,8 +736,6 @@ function parsePageTitle(raw: string, fallbackNamespace: number | null) {
 }
 
 function buildInputs() {
-  // Serialize only semantic contract values, discarding Codex-only menu text,
-  // chips, and lookup bookkeeping before crossing the API boundary.
   const contract = selectedContract.value;
   if (!contract) return {};
   const inputs: Record<string, unknown> = {};
@@ -823,8 +766,6 @@ function buildInputs() {
 }
 
 function buildArguments() {
-  // Arguments are opaque compatibility strings. Salt Shack never tokenizes a
-  // shell command or executes these lines itself.
   return argumentsText.value
     .split(/\r?\n/)
     .map((argument) => argument.trim())
@@ -832,8 +773,6 @@ function buildArguments() {
 }
 
 async function requestJson(path: string, init?: RequestInit) {
-  // Disabling browser caching matters for rapidly changing run state and
-  // emergency-stop capability responses.
   const response = await fetch(path, {
     cache: "no-store",
     ...init,
@@ -869,8 +808,6 @@ onMounted(async () => {
 });
 
 watch(nestedTab, async (tab) => {
-  // History is loaded on demand so ordinary catalog/form use does not query the
-  // shared module run table for every child during bootstrap.
   if (tab === "history" && selectedId.value) await loadHistory();
 });
 
@@ -898,14 +835,9 @@ async function startRun(mode: "preview" | "apply") {
       arguments: buildArguments(),
     };
     if (mode === "apply") {
-      // The UI sends the digest from the displayed preview. The server/worker
-      // regenerate the plan from current inputs and reject action drift caused
-      // by intervening form, script, or data changes before live execution.
       payload.confirm_live = true;
       payload.preview_token = result.value?.plan_token ?? "";
     } else {
-      // Remove the previous review before requesting a new one so its Apply
-      // affordance cannot remain visible while another preview is pending.
       result.value = null;
     }
     const body = await requestJson(
@@ -929,8 +861,6 @@ async function startRun(mode: "preview" | "apply") {
 }
 
 async function pollRun(id: number) {
-  // Poll for at most six minutes. The underlying job may continue according to
-  // its framework timeout; this bound only prevents an endless browser loop.
   for (let attempt = 0; attempt < 360; attempt += 1) {
     const body = await requestJson(`/api/v1/modules/chuck_salt_shack/runs/${id}`);
     runStatus.value = String(body.status || "unknown");
@@ -961,8 +891,6 @@ function pageLabel(value: any): string {
 }
 
 function wikiUrl(value: any): string {
-  // Result page objects may carry their own wiki. Falling back to Commons keeps
-  // legacy/simple outputs linkable but does not affect execution targets.
   const wiki = value?.wiki ?? {};
   const family = String(wiki.family ?? "commons");
   const code = String(wiki.code ?? "commons");
@@ -976,8 +904,6 @@ function wikiUrl(value: any): string {
 }
 
 function displayValue(value: unknown, type: string): string {
-  // All result values were server-validated. Rendering remains text-only; JSON
-  // output is serialized rather than injected as markup.
   if (type === "page") return pageLabel(value);
   if (type === "boolean") return value ? "Yes" : "No";
   if (typeof value === "object") return JSON.stringify(value, null, 2);
@@ -1062,8 +988,6 @@ function formatDate(value?: string) {
 
         <cdx-tabs v-model:active="nestedTab" framed>
           <cdx-tab name="run" label="Run">
-            <!-- The form is generated solely from public contract semantics;
-                 contracts cannot inject components, layout, or raw markup. -->
             <form class="ss-run-form" @submit.prevent="startRun('preview')">
               <div class="ss-field-grid">
                 <template v-for="[name, spec] in inputEntries" :key="name">
@@ -1203,9 +1127,9 @@ function formatDate(value?: string) {
               </div>
 
               <cdx-accordion separation="outline" class="ss-arguments">
-                <template #title>Advanced compatibility arguments</template>
+                <template #title>Advanced Pywikibot arguments</template>
                 <template #description>
-                  Optional raw strings for Saltlicks that consume them; one per line.
+                  Optional compatibility escape hatch; enter one argument per line.
                 </template>
                 <cdx-text-area
                   v-model="argumentsText"
@@ -1219,7 +1143,7 @@ function formatDate(value?: string) {
                   type="submit"
                   action="progressive"
                   weight="primary"
-                  :disabled="busy || !canPreviewSelected"
+                  :disabled="busy || !auth.can_preview"
                 >
                   {{ busy && runStatus ? `Run ${runStatus}…` : "Run dry preview" }}
                 </cdx-button>
@@ -1301,8 +1225,6 @@ function formatDate(value?: string) {
               </section>
 
               <section v-if="result.action_result.items.length" class="ss-output">
-                <!-- This table displays framework-normalized envelopes. The
-                     browser never executes action parameters itself. -->
                 <h3>Action plan</h3>
                 <div class="ss-table-wrap">
                   <table class="cdx-table__table">

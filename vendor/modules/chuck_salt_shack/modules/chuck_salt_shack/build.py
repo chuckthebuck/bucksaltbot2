@@ -1,4 +1,4 @@
-"""Compile or check the deterministic Saltlick image-audit registry."""
+"""Compile and validate Salt Shack's immutable Saltlick registry."""
 
 from __future__ import annotations
 
@@ -14,12 +14,7 @@ from .registry import (
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Generate the audit artifact or fail CI when it differs from source.
-
-    Runtime discovery does not read this file as mutable configuration; check
-    mode exists to prove that reviewed source and the committed audit snapshot
-    describe the same image.
-    """
+    """Generate the deterministic registry or verify that it is current."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root",

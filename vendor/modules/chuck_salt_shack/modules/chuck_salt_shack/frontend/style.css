@@ -1,7 +1,6 @@
 @import "@wikimedia/codex/dist/codex.style.css";
 
-/* Framework-module surface and identity header. All selectors stay below the
-   module namespace so this bundle cannot restyle the surrounding app shell. */
+/* Framework-module surface and identity header. */
 .salt-shack {
   max-width: 1240px;
   margin: 0 auto;
@@ -164,8 +163,7 @@
   border-radius: 2px;
 }
 
-/* Generated form controls and preview/apply actions. The grid may contain any
-   contract field ordering, so width rules attach to semantic field classes. */
+/* Generated form controls and preview/apply actions. */
 .ss-lookup-help {
   margin: 6px 0 0;
   color: var(--color-subtle, #54595d);
@@ -187,8 +185,7 @@
   padding-top: 20px;
 }
 
-/* Structured output, action-plan, and contract inspection. Overflow belongs
-   to the local table/code regions rather than the framework page viewport. */
+/* Structured output, action-plan, and contract inspection. */
 .ss-results > header {
   margin-bottom: 18px;
 }

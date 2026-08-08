@@ -1,105 +1,123 @@
 # Four Award Helper Module
 
-4Award is a scheduled Buckbot module that conservatively reviews nominations on
-English Wikipedia's `Wikipedia:Four Award` page. This repository-shaped
-snapshot is a self-contained package for the
-[Buckbot Framework](https://github.com/chuckthebuck/bucksaltbot2).
+Cron-backed Buckbot module for conservatively reviewing and processing [[Wikipedia:Four Award]] nominations on English Wikipedia.
 
-The framework loads its `chuck_buckbot.modules` entry point, serves its UI at
-`/modules/four_award/ui`, and currently schedules `four-award-sync` every 15
-minutes through Toolforge.
+This repository is a self-contained module package for the [Buckbot Framework](https://github.com/chuckthebuck/bucksaltbot2/tree/main/5).
 
-Supported production execution goes through the manifest handler and
-`module_runner`. An older unprefixed Blueprint is still compatibility-mounted at
-`GET /four_award/api/v1/four_award/cron/run`; it is unauthenticated, synchronous,
-and bypasses framework run tracking and runtime-config injection. Do not use or
-expose that endpoint as a scheduler. It should be removed once compatibility is
-no longer required.
+## Module Structure
 
-## Behavior
+- `pyproject.toml` — Package metadata with Buckbot entry point
+- `modules/four_award/module.toml` — Module manifest (name, cron jobs, UI, docs)
+- `modules/four_award/service.py` — Cron job handler entry points
+- `modules/four_award/frontend/` — Vue app source
+- `modules/four_award/static/` — Built Vue app (committed to git)
+- `modules/four_award/docs/four_award.md` — User-facing documentation
 
-- Parse the records table into a local SQL-backed model.
-- Rebuild records in canonical username/date order with one wikitable entry per
-  line.
-- Use parsed records for duplicate checks.
-- Verify creation, DYK, GA, and FA evidence from relevant revisions.
-- Use hidden reply markers to avoid duplicate nomination replies.
-- Return ambiguous judgments as `manual_review_needed`; automated approval
-  requires clear evidence and an explicit opt-in.
-- Include proposed edits and a full records-table preview in dry-run output.
+The framework loads this module by entry point at startup and serves the UI at `/modules/four_award/ui`.
 
-## Safety and configuration
+## Safety model
 
-Framework runtime module config is applied at the start of a managed run and
-overrides the package's `FOUR_AWARD_*` environment defaults. Prefer the module
-config UI for operational flags.
+The module has per-action switches plus one emergency stop. To force a non-writing run, set:
 
-Keep `dry_run` true for rollout. Live behavior is separated into replies,
-records, nomination removal, talk notices, and article-history switches. Enable
-them one at a time in that order only after reviewing dry-run output.
-`allow_automated_approval` defaults false and should remain an independent
-decision.
-
-For standalone/compatibility runs, the equivalent environment defaults include:
-
-```text
+```bash
 FOUR_AWARD_DRY_RUN=1
+```
+
+Live action flags:
+
+```bash
+FOUR_AWARD_DRY_RUN=0
 FOUR_AWARD_ENABLE_REPLIES=1
 FOUR_AWARD_ENABLE_RECORDS=1
 FOUR_AWARD_ENABLE_REMOVAL=1
 FOUR_AWARD_ENABLE_TALK_NOTICES=1
 FOUR_AWARD_ENABLE_ARTICLE_HISTORY=1
-FOUR_AWARD_ALLOW_AUTOMATED_APPROVAL=0
 ```
 
-The default User-Agent includes the module version. Set
-`FOUR_AWARD_HTTP_USER_AGENT` only to replace the full module identity; it is
-intentionally separate from `BUCKBOT_HTTP_USER_AGENT`.
+HTTP identity:
 
-## Development and tests
+The default User-Agent includes the module release version from package
+metadata. Set `FOUR_AWARD_HTTP_USER_AGENT` only when a deployment needs to
+replace the full identity string.
 
-Install a standalone checkout editable into the framework environment for
-Python development. The module can still build its packaged static artifact
-from its own root:
+This is intentionally separate from `BUCKBOT_HTTP_USER_AGENT`, so the framework
+and each module can identify their own Wikimedia API traffic independently.
+
+Recommended rollout:
+
+1. Run dry-run only.
+2. Enable nomination replies while keeping records/removal disabled.
+3. Enable records after verifying table rebuilds.
+4. Enable nomination removal, talk notices, and article-history updates last.
+
+## Behavior
+
+* Records table rows are parsed into a local SQL-backed model before rendering.
+* Records table rows are rebuilt in canonical order: username A-Z, then award date/time.
+* Each wikitable entry is emitted as a single line.
+* Dry-run output includes a full records-table preview when approved records
+  would be added.
+* Duplicate nomination checks use the parsed records table rather than a raw
+  substring search.
+* The bot replies to nominations with hidden markers to avoid duplicate replies.
+* Ambiguous judgment calls become `manual_review_needed`; the bot only approves with clear evidence and only fails on objective problems.
+* Creation is checked against the article's first MediaWiki revision plus early article edits.
+* DYK, GA, and FA credit is checked against process-page revisions/signatures and article edits during the relevant milestone windows.
+* Automated approval is disabled unless `FOUR_AWARD_ALLOW_AUTOMATED_APPROVAL=1`.
+
+## Development
+
+### Building the Frontend
 
 ```bash
 npm install
 npm run build
 ```
 
-The current framework manifest uses `bundled = true`, however, so the deployed
-UI is compiled by the root Vite build from the path in
-`module-frontend-packages.json` (currently the vendored source). An editable
-Python install or sibling static build does not redirect that import; refresh
-the snapshot or use a temporary sibling-source registry path for local-only UI
-iteration.
+The built app is written to `modules/four_award/static/` and committed to git. The Buckbot Framework reads it from there.
 
-Run the complete module-owned Python suite rather than a stale selected-file or
-pylint command:
+### Testing and Linting
 
+In this repo:
 ```bash
-PYTHONPATH=.:modules python3 -m pytest -q tests
+PYTHONPATH=. python -m py_compile modules/four_award/*.py
 ```
 
-Replay fixtures compare in-memory proposed edits with known after-revisions and
-never save to Wikipedia:
-
+Linting, type checking, and full module tests run in the framework repo context:
 ```bash
-PYTHONPATH=. python3 -m modules.four_award.replay \
-  tests/fixtures/four_award_replay_case.example.json
+# In bucksaltbot2/5/
+python3 -m pylint modules.four_award
+npm run lint
+python3 -m pytest tests/test_module_registry.py
 ```
 
-When preparing a framework deploy, refresh the committed snapshots from a clean
-framework checkout with `npm run modules:update`. The current updater reads
-4Award from `framework-dev` unless `FOUR_AWARD_REMOTE` or
-`FOUR_AWARD_BRANCH` is deliberately overridden.
+Focused module tests from this repository:
 
-If a small integration change was developed in the vendored framework copy
-first, preview the module-only backport:
+```bash
+PYTHONPATH=. python3 -m pytest -q tests/test_four_award_records.py tests/test_four_award_replay.py
+```
+
+### Developing Inside the Framework
+
+The framework vendors this repo under `vendor/modules/four_award`. If you make a
+small 4Award change there while working on framework integration, preview the
+subtree split before pushing it back to the module repo:
 
 ```bash
 bash scripts/backport-four-award-subtree.sh --dry-run
 ```
 
-The helper uses a checked subtree split and refuses known framework paths. It is
-an outbound backport mechanism, not the normal inbound snapshot update.
+The matching VS Code task is `4Award: Preview vendored subtree backport`.
+Use `4Award: Push vendored subtree to module repo` only after the dry-run shows
+module files only. The script refuses splits that contain framework paths such
+as `router/`, `Deployment-docs/`, `vendor/`, or `requirements.txt`.
+
+## Historic replay tests
+
+Replay cases compare the bot's in-memory edits against known after-revisions, without saving to Wikipedia:
+
+```bash
+PYTHONPATH=. python -m modules.four_award.replay tests/fixtures/four_award_replay_case.example.json
+```
+
+Use `before_revid` and `expected_revid` for each page touched by an old review diff. Add `page_creation` and `revision_users` evidence so the reviewer can reproduce the old approval/failure decision deterministically.

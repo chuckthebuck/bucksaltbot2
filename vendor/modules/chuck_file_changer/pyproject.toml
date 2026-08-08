@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chuck-file-changer"
-version = "0.1.1"
+version = "0.1.6"
 description = "Chuck the File Changer module for Chuck the Buckbot Framework"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,7 +23,6 @@ chuck_file_changer = "modules/chuck_file_changer"
 
 [tool.setuptools.package-data]
 chuck_file_changer = [
-  "module.toml",
   "static/*.js",
   "static/*.css",
   "docs/*.md",

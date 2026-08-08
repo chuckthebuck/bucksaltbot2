@@ -15,7 +15,9 @@ export default defineConfig({
       cssFileName: "style",
     },
     outDir: "modules/chuck_file_changer/static",
-    emptyOutDir: true,
+    // Static assets are packaged with the module.  Keep unrelated packaged
+    // files instead of removing them whenever the Vue bundle is rebuilt.
+    emptyOutDir: false,
     cssCodeSplit: false,
   },
 });

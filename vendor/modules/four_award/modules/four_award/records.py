@@ -1,13 +1,3 @@
-"""Parse, query, render, preview, and publish the Four Awards records table.
-
-Record identity checks operate on parsed, normalized cells rather than raw
-substring matches.  Rendering uses an in-memory SQLite model for deterministic
-ordering and per-user ordinals, while retaining table headers, unfamiliar manual
-rows, the trailing row marker, and final-newline behavior.  Deduplication is a
-review/service responsibility; rendering faithfully combines the records it is
-given.
-"""
-
 from __future__ import annotations
 
 import sqlite3
@@ -24,7 +14,6 @@ from .wiki import get_wiki
 @dataclass(frozen=True)
 class RecordsTableModel:
     """Parsed records table while preserving unrecognized rows and formatting."""
-
     header: str
     records: list[FourAwardRecord]
     raw_rows: list[str]
@@ -33,7 +22,7 @@ class RecordsTableModel:
 
 
 def _record_row(record: FourAwardRecord, ordinal: int) -> str:
-    """Render one sorted record, adding a display ordinal after the first award."""
+    """Render a sorted Four Award record row."""
     display = record.display_user or record.user
     suffix = f" ({ordinal})" if ordinal > 1 else ""
     return (
@@ -45,10 +34,9 @@ def _record_row(record: FourAwardRecord, ordinal: int) -> str:
 
 
 def _four_awards_table(text: str) -> tuple[int, int] | None:
-    """Return the character span of the Four Awards wikitable on a page."""
+    """Return the byte span of the Four Awards wikitable on the records page."""
     heading = re.search(r"^==\s*Four Awards\s*==\s*$", text, re.M | re.I)
     start_search = heading.end() if heading else 0
-    # When the heading is present, ignore unrelated tables earlier on the page.
     table_start = text.find("{|", start_search)
     if table_start < 0:
         return None
@@ -59,15 +47,13 @@ def _four_awards_table(text: str) -> tuple[int, int] | None:
 
 
 def _split_table_rows(table: str) -> tuple[str, list[str], bool, bool]:
-    """Split a wikitable into header/row chunks plus closing-format metadata."""
+    """Split a wikitable into header, row chunks, and formatting flags."""
     had_final_newline = table.endswith("\n")
     table_body = table.rstrip()
     if not table_body.endswith("|}"):
         return table, [], False, had_final_newline
 
     table_body = table_body[:-2].rstrip()
-    # Some hand-edited tables keep a final empty row marker before ``|}``; retain
-    # that stylistic detail without treating it as an award record.
     trailing_row_marker = bool(re.search(r"(?:^|\n)\|-\s*$", table_body))
     if trailing_row_marker:
         table_body = re.sub(r"(?:^|\n)\|-\s*$", "", table_body).rstrip()
@@ -79,7 +65,7 @@ def _split_table_rows(table: str) -> tuple[str, list[str], bool, bool]:
 
 
 def _row_cells(row: str) -> list[str]:
-    """Extract cells from supported inline or one-cell-per-line wiki rows."""
+    """Extract cells from simple one-line or line-per-cell wikitable rows."""
     lines = row.strip().splitlines()
     if lines and re.fullmatch(r"\|-\s*", lines[0]):
         lines = lines[1:]
@@ -96,7 +82,7 @@ def _row_cells(row: str) -> list[str]:
 
 
 def _link_target(value: str, namespace: str | None = None) -> tuple[str, str]:
-    """Return a link target/display pair, falling back to cleaned plain text."""
+    """Return target and display text from a wiki link cell."""
     if namespace:
         pattern = rf"\[\[\s*{re.escape(namespace)}:([^|\]#]+)(?:#[^|\]]*)?(?:\|([^\]]+))?\]\]"
     else:
@@ -107,14 +93,12 @@ def _link_target(value: str, namespace: str | None = None) -> tuple[str, str]:
         return cleaned, cleaned
     target = clean_wiki_value(match.group(1))
     display = clean_wiki_value(match.group(2) or target)
-    # Existing tables encode repeat-award ordinals in display text.  They are
-    # presentation data and will be recalculated from sorted records on render.
     display = re.sub(r"\s*\(\d+\)\s*$", "", display).strip()
     return target, display
 
 
 def _record_from_row(row: str) -> FourAwardRecord | None:
-    """Parse a supported row, returning ``None`` for losslessly preserved rows."""
+    """Parse a table row into a record, preserving bad rows elsewhere."""
     cells = _row_cells(row)
     if len(cells) < 2:
         return None
@@ -137,7 +121,7 @@ def _record_from_row(row: str) -> FourAwardRecord | None:
 
 
 def parse_records_table(table: str) -> RecordsTableModel:
-    """Parse recognized records while separating rows that must remain untouched."""
+    """Parse a Four Awards wikitable into records plus raw unknown rows."""
     header, rows, trailing_row_marker, had_final_newline = _split_table_rows(table)
     records: list[FourAwardRecord] = []
     raw_rows: list[str] = []
@@ -157,11 +141,7 @@ def parse_records_table(table: str) -> RecordsTableModel:
 
 
 def table_contains_record(table: str, article: str, users: Iterable[str]) -> bool:
-    """Check for an exact normalized article-and-any-credited-user claim.
-
-    Parsing first avoids false positives such as ``Example`` matching
-    ``Exampleton`` or an article title matching a longer linked title.
-    """
+    """Return whether a table already records an article for any credited user."""
     model = parse_records_table(table)
     wanted_article = normalize_title(article).casefold()
     wanted_users = {normalize_user(user) for user in users if normalize_user(user)}
@@ -175,11 +155,7 @@ def table_contains_record(table: str, article: str, users: Iterable[str]) -> boo
 
 
 def table_contains_article(table: str, article: str) -> bool:
-    """Check for an exact normalized article claim regardless of credited user.
-
-    The service uses this broader check to suppress duplicate nomination work;
-    the reviewer uses :func:`table_contains_record` for user-aware evidence.
-    """
+    """Return whether a table already records an article for any user."""
     model = parse_records_table(table)
     wanted_article = normalize_title(article).casefold()
     if not wanted_article:
@@ -209,7 +185,7 @@ def page_text_contains_article(page_text: str, article: str) -> bool:
 
 
 def _records_conn(records: Iterable[FourAwardRecord]) -> sqlite3.Connection:
-    """Load valid normalized records into an in-memory deterministic sort model."""
+    """Load records into SQLite so sorting stays explicit and deterministic."""
     conn = sqlite3.connect(":memory:")
     conn.execute(
         """
@@ -227,8 +203,6 @@ def _records_conn(records: Iterable[FourAwardRecord]) -> sqlite3.Connection:
         )
         """
     )
-    # The autoincrement id is a stable final tie-breaker when all visible sort
-    # fields are equal; no state survives after rendering closes the connection.
     conn.executemany(
         """
         INSERT INTO four_award_records
@@ -256,7 +230,7 @@ def _records_conn(records: Iterable[FourAwardRecord]) -> sqlite3.Connection:
 
 
 def _sorted_records(conn: sqlite3.Connection) -> list[FourAwardRecord]:
-    """Return records sorted by normalized user, date, article, then insertion."""
+    """Return records sorted by user, award date, article, and insertion order."""
     rows = conn.execute(
         """
         SELECT user, display_user, article, award_date, creation_date,
@@ -281,12 +255,7 @@ def _sorted_records(conn: sqlite3.Connection) -> list[FourAwardRecord]:
 
 
 def render_records_table(model: RecordsTableModel, records: Iterable[FourAwardRecord]) -> str:
-    """Render supplied records while retaining unparsed rows and table formatting.
-
-    Unparsed/manual rows remain before machine-rendered records.  Repeat-award
-    ordinals are recalculated per normalized user after sorting.  This function
-    does not deduplicate records; callers must decide which claims are admissible.
-    """
+    """Render a records table while preserving header and unknown existing rows."""
     conn = _records_conn(records)
     try:
         lines = [model.header.rstrip()]
@@ -294,8 +263,6 @@ def render_records_table(model: RecordsTableModel, records: Iterable[FourAwardRe
         if raw_rows:
             lines.extend(raw_rows)
 
-        # Count after sorting so each user's displayed ordinals are contiguous and
-        # deterministic even when newly supplied records arrived out of order.
         counts: dict[str, int] = {}
         for record in _sorted_records(conn):
             key = normalize_user(record.user)
@@ -314,14 +281,14 @@ def render_records_table(model: RecordsTableModel, records: Iterable[FourAwardRe
 
 
 def _insert_rows(table: str, records: list[FourAwardRecord]) -> str:
-    """Combine parsed existing/new records and return a newline-terminated table."""
+    """Insert records into an existing table and keep final-newline behavior sane."""
     model = parse_records_table(table)
     output = render_records_table(model, [*model.records, *records])
     return output if output.endswith("\n") else output + "\n"
 
 
 def render_records_page_text(page_text: str, records: Iterable[FourAwardRecord]) -> str:
-    """Replace only the Four Awards table with a rendering containing new rows."""
+    """Return records page text with new Four Award records inserted."""
     span = _four_awards_table(page_text)
     if not span:
         raise RuntimeError("Could not find the Four Awards records table")
@@ -331,7 +298,7 @@ def render_records_page_text(page_text: str, records: Iterable[FourAwardRecord])
 
 
 def preview_records_table(records: Iterable[FourAwardRecord]) -> dict[str, object] | None:
-    """Return the proposed full records-page wikitext without saving it."""
+    """Return a dry-run preview of the records page update."""
     records = [record for record in records if record]
     if not records or not ENABLE_RECORDS:
         return None
@@ -344,11 +311,7 @@ def preview_records_table(records: Iterable[FourAwardRecord]) -> dict[str, objec
 
 
 def sync_records_table(records: Iterable[FourAwardRecord]) -> int:
-    """Submit a records-page update and return the number of proposed rows.
-
-    ``WikiClient.save_text`` publishes in live mode and records a diff in dry-run
-    mode.  The count therefore describes rows processed, not confirmed live edits.
-    """
+    """Persist new Four Award records to the configured records page."""
     records = [record for record in records if record]
     if not records or not ENABLE_RECORDS:
         return 0

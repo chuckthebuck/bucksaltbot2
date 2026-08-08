@@ -1,5 +1,3 @@
-"""End-to-end replay tests for historical review, evidence, and edit behavior."""
-
 from __future__ import annotations
 
 import pytest
@@ -9,7 +7,6 @@ from modules.four_award.replay import ReplayFailure, run_replay_case
 
 
 def test_replay_matches_expected_successful_review():
-    """A complete evidence case approves and produces every expected page edit."""
     four_before = """== Current nominations ==
 === Example article ===
 {{Four Award Nomination
@@ -107,7 +104,6 @@ def test_replay_matches_expected_successful_review():
 
 
 def _successful_review_case() -> dict:
-    """Build the reusable complete-evidence replay fixture used by focused tests."""
     four_text = """== Current nominations ==
 === Example article ===
 {{Four Award Nomination
@@ -158,7 +154,6 @@ def _successful_review_case() -> dict:
 
 
 def test_manual_review_report_explains_automated_approval_gate():
-    """A disabled approval gate remains visible after all evidence stages pass."""
     case = _successful_review_case()
     case["settings"] = {"allow_automated_approval": False}
     case["expected_result"] = {"approved": 0, "failed": 0, "manual": 1}
@@ -178,7 +173,6 @@ def test_manual_review_report_explains_automated_approval_gate():
 
 
 def test_historical_payload_page_text_is_used_instead_of_live_four_award_page():
-    """Supplied historical nomination text overrides the adapter's source page."""
     case = _successful_review_case()
     historical_text = case["pages"]["Wikipedia:Four Award"]["before_text"]
     case["settings"] = {"allow_automated_approval": True}
@@ -192,7 +186,6 @@ def test_historical_payload_page_text_is_used_instead_of_live_four_award_page():
 
 
 def test_historical_payload_can_ignore_current_records_table():
-    """Historical review can explicitly skip a record created after the source."""
     case = _successful_review_case()
     historical_text = case["pages"]["Wikipedia:Four Award"]["before_text"]
     case["settings"] = {"allow_automated_approval": True}
@@ -220,7 +213,6 @@ def test_historical_payload_can_ignore_current_records_table():
 
 
 def test_live_run_noops_when_all_nomination_articles_are_already_recorded():
-    """An article-wide existing claim makes a duplicate-only run edit nothing."""
     case = _successful_review_case()
     case["settings"] = {"allow_automated_approval": True}
     case["pages"]["Wikipedia:Four Award/Records"]["before_text"] = (
@@ -246,7 +238,6 @@ def test_live_run_noops_when_all_nomination_articles_are_already_recorded():
 
 
 def test_placeholder_user_is_not_treated_as_real_user():
-    """Template instructional text yields manual review, not a credited identity."""
     case = _successful_review_case()
     case["settings"] = {"allow_automated_approval": True}
     case["pages"]["Wikipedia:Four Award"]["before_text"] = """== Current nominations ==
@@ -274,7 +265,6 @@ def test_placeholder_user_is_not_treated_as_real_user():
 
 
 def test_edit_summary_formatter_includes_configured_brfa_task(monkeypatch):
-    """Live/dry-run summaries carry both module attribution and BRFA metadata."""
     from four_award import config, wiki
 
     monkeypatch.setattr(
@@ -296,7 +286,6 @@ def test_edit_summary_formatter_includes_configured_brfa_task(monkeypatch):
 
 
 def test_one_line_article_history_params_are_split_cleanly():
-    """Nested content does not leak across compact Article history parameters."""
     case = _successful_review_case()
     case["settings"] = {"allow_automated_approval": True}
     case["pages"]["Talk:Example article"]["before_text"] = (
@@ -323,7 +312,6 @@ def test_one_line_article_history_params_are_split_cleanly():
 
 
 def test_manual_nomination_links_work_without_article_history_template():
-    """Historical free-form links can supply milestones without Article history."""
     four_text = """== Current nominations ==
 ===={{user|Crisco 1492}}====
 Article: '''[[Murder of Wang Lianying]] ([[Talk:Murder of Wang Lianying|talk]], [{{fullurl:Murder of Wang Lianying|action=history}} history])'''
@@ -397,7 +385,6 @@ Article: '''[[Murder of Wang Lianying]] ([[Talk:Murder of Wang Lianying|talk]], 
 
 
 def test_replay_failure_shows_diff():
-    """Exact page mismatches raise a replay failure containing a unified diff."""
     case = {
         "pages": {
             "Wikipedia:Four Award": {
@@ -414,7 +401,6 @@ def test_replay_failure_shows_diff():
 
 
 def test_historic_great_mecca_feast_replay_fixture_loads():
-    """The checked-in revision-backed historical fixture remains loadable."""
     from modules.four_award.replay import load_case
 
     case = load_case("tests/fixtures/four_award_replay_1345035310_great_mecca_feast.json")
