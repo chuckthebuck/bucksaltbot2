@@ -46,8 +46,5 @@
     "stop_on_error": true,
     "max_page_bytes": 2000000
   },
-  "metadata": {
-    "example_scope": "legacy_recipe_compatibility",
-    "note": "This recipe is for the direct CLI and compatibility API, not saltlick.yaml."
-  }
+  "metadata": {}
 }

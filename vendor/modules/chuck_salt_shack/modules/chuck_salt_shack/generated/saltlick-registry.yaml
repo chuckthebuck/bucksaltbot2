@@ -60,12 +60,8 @@ saltlicks:
   actions:
     allowed:
     - mediawiki.page.purge
-  source_digest: 364beef9ef9448d56ff030ed45b5e0b75ceab4dff3242c73d458076ffad3205b
+  source_digest: 0da40c5bf629de70c04cdc7653a6b91fbec6e23f23577bf53bcb620e3df87cd4
   generated: false
-  rights:
-    preview: saltlick_page_purger_preview
-    apply: saltlick_page_purger_apply
-    estop: saltlick_page_purger_estop
 - contract: 1
   id: transclusion_report
   display_name: Transclusion report
@@ -86,8 +82,9 @@ saltlicks:
       description: The template whose transclusions should be listed.
       required: true
       namespace:
-        selectable: true
-        allowed: []
+        selectable: false
+        allowed:
+        - 10
         default: 10
       wiki_input: wiki
     namespace:
@@ -137,9 +134,5 @@ saltlicks:
           optional: false
   actions:
     allowed: []
-  source_digest: 67f3e3e85bade6a84c22845875e584dd719cf86ebaf77a977603c7cb3a33ced8
+  source_digest: cce22260c28bc92ca1e22f6fdf9906be2fa6f68e34a027993bfbc9a379638ace
   generated: false
-  rights:
-    preview: saltlick_transclusion_report_preview
-    apply: saltlick_transclusion_report_apply
-    estop: saltlick_transclusion_report_estop

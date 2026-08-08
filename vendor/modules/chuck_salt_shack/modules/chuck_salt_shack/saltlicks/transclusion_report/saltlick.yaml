@@ -1,14 +1,11 @@
 # This read-only Saltlick demonstrates a typed report with no write actions.
-# The installed YAML is the public input/output authority; the entrypoint is
-# retained only in the private image registry and never returned to browsers.
 contract: 1
 display_name: Transclusion report
 description: Find pages transcluding a template and return a structured report.
 entrypoint: script.py:run
 
 inputs:
-  # Start with English Wikipedia; both the template and result namespaces are
-  # selectable because templates may be transcluded from local project spaces.
+  # The template namespace is fixed, while the result namespace is selectable.
   wiki:
     type: wiki
     label: Wiki
@@ -23,11 +20,10 @@ inputs:
     description: The template whose transclusions should be listed.
     required: true
     namespace:
-      selectable: true
+      selectable: false
+      allowed: [10]
       default: 10
 
-  # This namespace applies to the result pages, not to the template above.
-  # Keeping it as a namespace input makes it follow the same selected wiki.
   namespace:
     type: namespace
     label: Result namespace
@@ -47,8 +43,7 @@ inputs:
     default: false
 
 outputs:
-  # Table columns are a schema as well as rendering hints. Every returned row
-  # must contain these fields with these types before it reaches run history.
+  # Table columns let the shared renderer build a useful result table.
   count:
     type: number
     label: Matching pages
@@ -68,6 +63,5 @@ outputs:
         label: Redirect
 
 actions:
-  # An empty allowlist is enforced even if the script is later changed to emit
-  # an action accidentally: validation rejects the result before dispatch.
+  # An empty allowlist makes this Saltlick read-only by contract.
   allowed: []

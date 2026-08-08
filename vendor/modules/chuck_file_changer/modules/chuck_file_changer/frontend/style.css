@@ -1,5 +1,3 @@
-/* Keep all authored styles below the module namespace so the bundled sheet
-   cannot alter the surrounding framework shell. */
 .cfc {
   display: flex;
   flex-direction: column;
@@ -60,7 +58,6 @@
   color: #096450;
 }
 
-/* Source-mode controls and the two-column source/action workspace. */
 .cfc-segmented {
   display: inline-flex;
   flex-wrap: wrap;
@@ -157,7 +154,6 @@
   background: #f8f9fa;
 }
 
-/* Live-source options collapse independently of the main workspace. */
 .cfc-source-form {
   display: flex;
   flex-direction: column;
@@ -197,8 +193,46 @@
   color: #54595d;
 }
 
+.cfc-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cfc-history header,
+.cfc-history-row {
+  display: grid;
+  grid-template-columns: 72px 1fr 80px 80px minmax(150px, 1.5fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.cfc-history header {
+  display: flex;
+  justify-content: space-between;
+}
+
+.cfc-history-table {
+  overflow-x: auto;
+  border: 1px solid #c8ccd1;
+}
+
+.cfc-history-row {
+  min-width: 580px;
+  padding: 8px;
+  border-top: 1px solid #eaecf0;
+}
+
+.cfc-history-row:first-child {
+  border-top: 0;
+}
+
+.cfc-history-heading {
+  background: #f8f9fa;
+  font-weight: 600;
+}
+
 @media (max-width: 760px) {
-  /* Preserve readable controls and diffs inside the framework viewport. */
   .cfc-grid {
     grid-template-columns: 1fr;
   }

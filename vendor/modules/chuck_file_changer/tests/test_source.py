@@ -40,9 +40,27 @@ def test_resolve_user_uploads_uses_logevents(monkeypatch):
     assert targets[0].title == "File:One.jpg"
     assert targets[0].user == "Alice"
     assert calls[0]["list"] == "logevents"
-    assert calls[0]["leaction"] == "upload/upload"
+    assert calls[0]["letype"] == "upload"
     assert calls[0]["ledir"] == "newer"
     assert "source_mode=user" in source_url
+
+
+def test_resolve_user_uploads_accepts_user_page_title_and_overwrites(monkeypatch):
+    calls = []
+
+    def fake_get(url, *, params, headers, timeout):
+        calls.append(params)
+        return Response(
+            {"query": {"logevents": [{"action": "overwrite", "title": "File:One.jpg"}]}}
+        )
+
+    monkeypatch.setattr(source.requests, "get", fake_get)
+    targets, _source_url = source.resolve_vfc_source(
+        {"source_mode": "user", "source_target": "User:Alice"}
+    )
+
+    assert targets[0].user == "Alice"
+    assert calls[0]["leuser"] == "Alice"
 
 
 def test_resolve_category_members(monkeypatch):

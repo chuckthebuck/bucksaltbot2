@@ -1,10 +1,3 @@
-"""Authenticated browser API for previewing and queueing file-page changes.
-
-Routes authorize access before parsing work, force preview requests into dry
-mode, require an explicit module right for apply requests, and expose only
-owned durable job records unless the caller has the module ``manage`` right.
-"""
-
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request, session
@@ -17,17 +10,11 @@ JOB_NAME = "file-change"
 
 
 def _username() -> str | None:
-    """Return the normalized framework-session username, if authenticated."""
     username = session.get("username")
     return str(username).strip() if username else None
 
 
 def _has_access(username: str) -> bool:
-    """Allow framework module access or any broad File Changer capability.
-
-    Compatibility with explicit module-access rows and module-right grants is
-    kept here so users with a narrowly delegated right can still load the UI.
-    """
     try:
         from app import is_maintainer
         from router.module_registry import user_has_module_access
@@ -40,8 +27,6 @@ def _has_access(username: str) -> bool:
             return True
     except Exception:
         pass
-    # The access check is deliberately broader than apply authorization; route-
-    # specific checks below decide which actions an admitted user may perform.
     return any(
         _has_right(username, right)
         for right in ("manage", "run_jobs", "edit_config", "apply_changes")
@@ -49,11 +34,6 @@ def _has_access(username: str) -> bool:
 
 
 def _has_right(username: str, right: str) -> bool:
-    """Query configured module grants and fail closed on backend errors.
-
-    ``user_has_module_right`` honors a configured global ``manage_modules``
-    grant, but it does not add the framework's fixed maintainer hierarchy.
-    """
     try:
         from router.authz import user_has_module_right
 
@@ -63,7 +43,6 @@ def _has_right(username: str, right: str) -> bool:
 
 
 def _require_access():
-    """Return the username or a reusable 401/403 Flask response."""
     username = _username()
     if not username:
         return None, (jsonify({"detail": "Not authenticated"}), 401)
@@ -73,16 +52,10 @@ def _require_access():
 
 
 def _can_apply(username: str) -> bool:
-    """Require configured apply/manage authority for potentially live work."""
     return _has_right(username, "apply_changes") or _has_right(username, "manage")
 
 
 def _enqueue_file_change_batch(payload: dict, *, username: str) -> dict:
-    """Persist a target batch, then dispatch one task per durable chunk.
-
-    Database rows are created before Celery receives IDs, so workers never rely
-    on a browser-held target list and every dispatched chunk is inspectable.
-    """
     from module_tasks import process_chuck_file_change_job
 
     from .queue import enqueue_file_change_batch
@@ -95,11 +68,6 @@ def _enqueue_file_change_batch(payload: dict, *, username: str) -> dict:
 
 @blueprint.get("/api/auth")
 def auth_api():
-    """Return UI capability hints for the authenticated module user.
-
-    These flags control frontend affordances only; apply and job-read routes
-    repeat their authorization checks server-side.
-    """
     username, denied = _require_access()
     if denied:
         return denied
@@ -118,7 +86,6 @@ def auth_api():
 
 @blueprint.post("/api/targets/parse")
 def parse_targets_api():
-    """Normalize pasted JSON/CSV/TSV/manual target text without queueing work."""
     _, denied = _require_access()
     if denied:
         return denied
@@ -133,7 +100,6 @@ def parse_targets_api():
 
 @blueprint.post("/api/quarry/url")
 def quarry_url_api():
-    """Convert an allowlisted Quarry identifier or URL to its JSON result URL."""
     _, denied = _require_access()
     if denied:
         return denied
@@ -147,11 +113,6 @@ def quarry_url_api():
 
 @blueprint.post("/api/preview")
 def preview_api():
-    """Force dry-run semantics and queue the parsed target batch.
-
-    Browser-supplied ``apply`` and ``dry_run`` values are overwritten so this
-    route cannot be promoted to a live run by request data.
-    """
     username, denied = _require_access()
     if denied:
         return denied
@@ -168,14 +129,6 @@ def preview_api():
 
 @blueprint.post("/api/apply")
 def apply_api():
-    """Authorize apply intent and queue a batch for worker-side safety checks.
-
-    Setting ``apply`` expresses live intent; the service's module/payload
-    ``dry_run`` setting may still downgrade execution to a preview. This custom
-    queue does not run through ``module_runner``, so the framework's
-    ``CHUCKBOT_LOCAL_SAFE_MODE`` override is not injected here; local operators
-    must use preview only.
-    """
     username, denied = _require_access()
     if denied:
         return denied
@@ -193,7 +146,6 @@ def apply_api():
 
 @blueprint.get("/api/jobs/<int:run_id>")
 def job_status_api(run_id: int):
-    """Return an owned durable job, or any module job to a manager."""
     username, denied = _require_access()
     if denied:
         return denied
@@ -203,8 +155,22 @@ def job_status_api(run_id: int):
     run = get_file_change_job(run_id)
     if run is None:
         return jsonify({"detail": "Run not found"}), 404
-    # Ownership is checked after resolving the module-local row. Managers need
-    # cross-user visibility for operations; ordinary users see only their jobs.
     if run.get("triggered_by") and run.get("triggered_by") != username and not _has_right(username or "", "manage"):
         return jsonify({"detail": "Forbidden"}), 403
     return jsonify(run)
+
+
+@blueprint.get("/api/jobs")
+def jobs_api():
+    username, denied = _require_access()
+    if denied:
+        return denied
+
+    from .queue import list_file_change_jobs
+
+    try:
+        limit = int(request.args.get("limit", 50))
+    except (TypeError, ValueError):
+        limit = 50
+    requested_by = None if _has_right(username or "", "manage") else username
+    return jsonify({"jobs": list_file_change_jobs(requested_by=requested_by, limit=limit)})

@@ -1,9 +1,4 @@
-"""Apply bounded text transformations for the legacy recipe engine.
-
-Every ``TransformSpec`` has already passed structural validation.  Runtime
-checks here focus on expansion size, ordered composition, and data-dependent
-regex/template results.
-"""
+"""Saltlick text transformation engine."""
 
 from __future__ import annotations
 
@@ -13,8 +8,6 @@ from .expressions import evaluate_expression
 from .spec import TransformSpec
 
 
-# Keep this aligned with the expression engine's result ceiling so changing
-# transform type cannot bypass the legacy workflow's memory bound.
 MAX_TRANSFORM_RESULT_LENGTH = 2_000_000
 _FLAG_VALUES = {
     "i": re.IGNORECASE,
@@ -33,11 +26,7 @@ def _flags(text: str) -> int:
 
 
 def _tokens(value: str, *, old_text: str, title: str, namespace: int) -> str:
-    """Expand only the documented tokens after predicting the result size.
-
-    Plain ``str.replace`` is intentional: this is a fixed token language, not
-    a general-purpose template engine with attribute or function access.
-    """
+    """Expand the small template-token set with a size prediction."""
     predicted = len(value)
     replacements = {
         "{{text}}": old_text,
@@ -70,7 +59,7 @@ def _literal_replace(text: str, transform: TransformSpec) -> str:
 
 
 def _regex_replace(text: str, transform: TransformSpec) -> str:
-    """Apply regex replacement with backreference-aware size prediction."""
+    """Apply a regex replacement without exceeding the result bound."""
     compiled = re.compile(transform.pattern, _flags(transform.flags))
     predicted = len(text)
     matched = 0
@@ -91,7 +80,7 @@ def apply_transform(
     title: str,
     namespace: int,
 ) -> str:
-    """Dispatch one validated transformation without dynamic method lookup."""
+    """Apply one validated transformation."""
     if transform.type == "literal_replace":
         return _literal_replace(text, transform)
     if transform.type == "regex_replace":
@@ -121,11 +110,9 @@ def apply_transforms(
     title: str,
     namespace: int,
 ) -> str:
-    """Apply a workflow's immutable transformation chain in authored order."""
+    """Apply a workflow's transformation chain in order."""
     result = text
     for transform in transforms:
-        # Recheck after every step because several individually safe transforms
-        # may still compound into an oversized intermediate result.
         result = apply_transform(
             result,
             transform,

@@ -1,78 +1,73 @@
 # Chuck the File Changer
 
-Chuck the File Changer is the Commons-scoped Buckbot module for reviewed,
-non-visual file-page text changes. It turns explicit target batches, Quarry
-results, or VisualFileChange-style source discovery into durable preview/apply
-jobs.
+Chuck the File Changer is a Chuck the Buckbot Framework module for large-scale,
+non-visual file page text changes. It is inspired by VisualFileChange workflows,
+but it works from explicit batches and Quarry result sets instead of a visual
+selection interface.
 
 Current capabilities:
 
-- Parse manual text, JSON, CSV, and TSV target lists.
-- Accept Quarry query/run IDs or URLs and normalize common title columns.
-- Discover uploader uploads, category files, page/gallery images, and file
-  search results through the Commons API.
-- Plan exact replace, regex replace, prepend, and append operations.
-- Render `%FULLPAGENAME%`, `%FULLPAGENAMEE%`, `%PAGENAME%`, and
-  `%SUMMARY_HINT%` in edit summaries.
-- Force preview requests to dry-run and authorize apply requests separately.
-- Queue work in module-owned job/item tables and expose Redis progress.
+- Import file titles from manual text, Quarry JSON, CSV, TSV, or VFC-style
+  source discovery.
+- Normalize common Quarry columns such as `img_name`, `page_title`, `file_title`,
+  `actor_name`, and `user`.
+- Resolve VisualFileChange-style source modes through the Commons API:
+  uploader uploads, category files, page/gallery images, and file search.
+- Preview exact page-text changes before saving.
+- Apply exact find/replace, prepend, or append changes with Pywikibot.
+- Render edit-summary variables such as `%FULLPAGENAME%`, `%FULLPAGENAMEE%`,
+  `%PAGENAME%`, and `%SUMMARY_HINT%`.
+- Enforce module authz for preview and live apply endpoints.
+- Submit work through module-owned job and item tables with shared Celery
+  workers and Redis progress snapshots.
+- Scope all wiki edits to Wikimedia Commons with a module-specific user-agent.
 
-The framework currently enables and installs the committed snapshot under
-`vendor/modules/chuck_file_changer`. For day-to-day standalone development,
-clone the source repository separately and install that checkout editable into
-the framework virtualenv. Refresh the deploy snapshot only after review:
+The module is intentionally standalone. Install it into a framework checkout in
+editable mode while developing:
 
 ```bash
-npm run modules:update
+python -m pip install -e vendor/modules/chuck_file_changer
 ```
 
-## Authorization and routes
+Then enable `chuck_file_changer` in the framework when you are ready to wire it
+into a deploy.
 
-The manifest declares `manage`, `run_jobs`, `edit_config`, and
-`apply_changes`; the framework generates `view` and `estop`.
+## Authz
 
-- Preview/source endpoints require authenticated module access.
-- Apply requires configured `module:chuck_file_changer:apply_changes`,
-  `module:chuck_file_changer:manage`, or the global `manage_modules` override.
-  Framework maintainer status alone is not folded into this custom route check.
-- Job status is visible to its requester; configured module/global managers can
-  inspect other users' File Changer jobs. The generic shell's `can_manage` hint
-  can therefore be broader than the custom API's answer for a maintainer.
+`module.toml` declares `manage`, `run_jobs`, `edit_config`, and `apply_changes`.
+The framework also generates `view` and `estop`.
 
-The current compatibility Blueprint is mounted at
-`/chuck_file_changer/api/...`, including `auth`, `targets/parse`, `quarry/url`,
-`preview`, `apply`, and `jobs/<id>`. It has not moved to the generic
-`/api/v1/modules` namespace.
+Grant `module:chuck_file_changer:view` for UI access and
+`module:chuck_file_changer:apply_changes` for live edits. Preview endpoints
+require module access; applying changes requires `apply_changes` or `manage`.
 
-## Queue and safety model
+## Worker
 
-Preview and apply submissions are independent jobs; apply does not reuse a
-browser-held preview result. The preview route overwrites request flags to stay
-read-only. The custom queue receives no framework runtime context, so only the
-request payload's `dry_run=true` can downgrade an apply submission; ToolsDB
-runtime config and `CHUCKBOT_LOCAL_SAFE_MODE` are not injected.
+The module UI queues preview and apply runs through `chuck_file_change_jobs`
+and `chuck_file_change_job_items`. Large target sets are split into chunks, each
+chunk gets its own job row, and Celery runs `buckbot.process_chuck_file_change_job`
+for every queued chunk. Redis stores best-effort progress snapshots under
+`chuck_file_changer:job:<id>`.
 
-Targets are split into module-owned `chuck_file_change_jobs` and
-`chuck_file_change_job_items` rows. Keep `chunk_size` at or below 100. The API
-currently clamps requests as high as 500, but the queue worker invokes the
-service without a framework context and therefore processes only the first 100
-items before marking that chunk complete; larger values leave remaining item
-rows queued. Celery runs one task per durable chunk, and Redis keeps best-effort
-snapshots under `chuck_file_changer:job:<id>`.
+## VFC Parity
 
-This queue is separate from framework `module_job_runs`. Generic module
-E-STOP/disable neither cancels File Changer's queued/running rows nor blocks new
-preview/apply submissions through its already-mounted Blueprint. Remove access
-and follow the incident procedure—which may require stopping web/shared-worker
-processes and restarting without the module—until an explicit native stop
-integration exists.
+The UI follows the loaded VisualFileChange source workflow for target discovery:
+manual lists, Quarry lists, uploader uploads, category files, page/gallery
+images, and file search all become explicit queued file-page targets before any
+edit runs.
 
-## Scope and User-Agent
+The module deliberately does not execute arbitrary user-provided Pywikibot code
+from the browser. Special workflows, such as redirecting undermaintained species
+galleries to categories, should be added as reviewed module actions or
+registered backend functions so they can share authz, dry-run previews, edit
+summaries, job rows, Redis progress, and Celery retry behavior.
 
-Wiki work is fixed to `commons.wikimedia.org`; jobs cannot select another wiki.
-The default User-Agent includes the module release version. Set
-`CHUCK_FILE_CHANGER_USER_AGENT` only to replace the full deployment identity.
+## Commons Scope And User-Agent
 
-The module intentionally does not execute arbitrary browser-provided Python.
-New special workflows should be reviewed backend operations so they retain
-authorization, dry-run behavior, durable jobs, progress, and bounded inputs.
+The module is scoped to `commons.wikimedia.org`; the wiki client uses
+`pywikibot.Site("commons", "commons")` and does not accept per-job wiki
+overrides.
+
+The default User-Agent includes the module release version from package
+metadata. Set `CHUCK_FILE_CHANGER_USER_AGENT` to override the full identity
+string for a deployment.

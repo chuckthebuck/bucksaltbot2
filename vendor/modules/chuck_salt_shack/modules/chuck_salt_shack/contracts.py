@@ -1,10 +1,4 @@
-"""Normalize and enforce Salt Shack's versioned declarative contracts.
-
-Contracts cross two trust boundaries: authors supply YAML at image build time,
-and browsers/scripts supply values at run time.  This module converts authored
-metadata into one canonical schema, validates browser inputs before dispatch,
-and validates script outputs and actions before persistence or execution.
-"""
+"""Salt Shack's versioned Saltlick input, output, and action contracts."""
 
 from __future__ import annotations
 
@@ -15,8 +9,6 @@ import re
 from typing import Any
 
 
-# These global caps are defense-in-depth for API clients that bypass the Codex
-# form.  A contract may choose a smaller bound but never a larger one.
 CONTRACT_VERSION = 1
 MAX_ARGUMENTS = 100
 MAX_PAGE_VALUES = 500
@@ -51,7 +43,7 @@ _ACTION_TYPE = re.compile(r"[a-z][a-z0-9_.-]{2,127}")
 
 
 def _mapping(value: Any, *, field_name: str) -> dict[str, Any]:
-    """Require and shallow-copy a mapping at an untrusted object boundary."""
+    """Require and copy a mapping so callers cannot mutate contract input."""
     if not isinstance(value, dict):
         raise ValueError(f"{field_name} must be an object")
     return dict(value)
@@ -63,11 +55,7 @@ def _label_from_name(name: str) -> str:
 
 
 def _identifier(value: Any, *, field_name: str) -> str:
-    """Normalize and validate an API-safe lowercase identifier.
-
-    Hyphens normalize to underscores so directory IDs, form field names, and
-    generated authorization-right suffixes all use one stable spelling.
-    """
+    """Normalize and validate an API-safe lowercase identifier."""
     text = str(value or "").strip().lower().replace("-", "_")
     if not _IDENTIFIER.fullmatch(text):
         raise ValueError(
@@ -117,12 +105,7 @@ def _number(
 
 
 def _normalize_namespace_policy(raw: Any, *, field_name: str) -> dict[str, Any]:
-    """Normalize fixed or selectable namespace rules for page inputs.
-
-    ``allowed=[]`` means any numeric namespace within the global bound; it does
-    not mean no namespaces.  A single allowed namespace supplies the implicit
-    default for a non-selectable field.
-    """
+    """Normalize fixed or selectable namespace rules for page inputs."""
     data = {} if raw in (None, "") else _mapping(raw, field_name=field_name)
     selectable = bool(data.get("selectable", False))
     allowed_raw = data.get("allowed", [])
@@ -167,7 +150,7 @@ def _normalize_namespace_policy(raw: Any, *, field_name: str) -> dict[str, Any]:
 
 
 def _normalize_choices(raw: Any, *, field_name: str) -> list[dict[str, Any]]:
-    """Normalize labeled choice values and reject duplicate JSON identities."""
+    """Normalize labeled choice values and reject duplicate options."""
     if not isinstance(raw, list) or not raw:
         raise ValueError(f"{field_name} must be a non-empty list")
     choices: list[dict[str, Any]] = []
@@ -190,12 +173,7 @@ def _normalize_choices(raw: Any, *, field_name: str) -> list[dict[str, Any]]:
 
 
 def normalize_contract(raw: Any, *, saltlick_id: str) -> dict[str, Any]:
-    """Compile authored YAML into the canonical runtime contract.
-
-    Unknown presentation fields are intentionally discarded: Salt Shack owns
-    layout, while contracts own semantic labels, types, bounds, and action
-    capabilities.  Runtime validators consume only this returned shape.
-    """
+    """Return one canonical contract suitable for code generation and APIs."""
     data = _mapping(raw, field_name=f"{saltlick_id} contract")
     version = int(data.get("contract", data.get("version", CONTRACT_VERSION)))
     if version != CONTRACT_VERSION:
@@ -226,8 +204,6 @@ def normalize_contract(raw: Any, *, saltlick_id: str) -> dict[str, Any]:
             f"{normalized_id}.entrypoint must look like script.py:run"
         )
 
-    # Normalize inputs first because page-like fields may later resolve a
-    # ``wiki_input`` link against the complete input map.
     raw_inputs = data.get("inputs", {})
     if raw_inputs in (None, ""):
         raw_inputs = {}
@@ -256,8 +232,6 @@ def normalize_contract(raw: Any, *, saltlick_id: str) -> dict[str, Any]:
             ),
             "required": bool(spec.get("required", False)),
         }
-        # Authored defaults are copied now and type-checked only when a run uses
-        # them, through the same path as browser-supplied values.
         if "default" in spec:
             normalized["default"] = deepcopy(spec["default"])
         if input_type == "choice":
@@ -303,9 +277,6 @@ def normalize_contract(raw: Any, *, saltlick_id: str) -> dict[str, Any]:
             )
         inputs[name] = normalized
 
-    # A single wiki input is unambiguous and can be linked automatically.
-    # Multi-wiki contracts must declare every dependency explicitly so lookups
-    # and normalization cannot silently target the wrong project.
     wiki_inputs = [
         name for name, spec in inputs.items() if spec["type"] == "wiki"
     ]
@@ -323,8 +294,6 @@ def normalize_contract(raw: Any, *, saltlick_id: str) -> dict[str, Any]:
                 f"{normalized_id}.inputs.{name}.wiki_input must name a wiki input"
             )
 
-    # Output declarations are schemas, not merely renderer hints: missing
-    # required fields and undeclared fields are rejected after script return.
     outputs_data = data.get("outputs", {})
     if outputs_data in (None, ""):
         outputs_data = {}
@@ -354,8 +323,6 @@ def normalize_contract(raw: Any, *, saltlick_id: str) -> dict[str, Any]:
             "optional": bool(spec.get("optional", False)),
         }
         if output_type == "table":
-            # Tables are bounded at validation time and each row is validated
-            # against this closed column map before it reaches run history.
             columns_raw = _mapping(
                 spec.get("columns"),
                 field_name=f"{normalized_id}.outputs.{name}.columns",
@@ -400,8 +367,6 @@ def normalize_contract(raw: Any, *, saltlick_id: str) -> dict[str, Any]:
             normalized_output["columns"] = columns
         outputs[name] = normalized_output
 
-    # The contract records capability names only.  The framework action catalog
-    # independently decides which declared types it actually implements.
     actions_data = data.get("actions", {})
     if actions_data in (None, ""):
         actions_data = {}
@@ -434,11 +399,7 @@ def normalize_contract(raw: Any, *, saltlick_id: str) -> dict[str, Any]:
 
 
 def default_contract(saltlick_id: str) -> dict[str, Any]:
-    """Build the minimal typed surface for a Saltlick without YAML.
-
-    The optional JSON result allows tiny scripts to return structured data,
-    while the empty action allowlist keeps zero-config children read-only.
-    """
+    """Build a useful raw-arguments contract for a zero-config Saltlick."""
     return normalize_contract(
         {
             "contract": CONTRACT_VERSION,
@@ -468,11 +429,7 @@ def default_contract(saltlick_id: str) -> dict[str, Any]:
 
 
 def public_contract(contract: dict[str, Any]) -> dict[str, Any]:
-    """Remove the image-internal entrypoint before crossing into the browser.
-
-    Returning a deep copy prevents response decoration from mutating the
-    definition that the worker later trusts for dispatch.
-    """
+    """Remove image-internal entrypoint details from an API contract."""
     data = deepcopy(contract)
     data.pop("entrypoint", None)
     return data
@@ -505,12 +462,7 @@ def _normalize_page(
     field_name: str,
     namespace_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Normalize one page value and enforce its namespace policy.
-
-    The selected wiki usually lives in a separate linked input, so it is not
-    injected here.  If a caller supplies an embedded wiki (as action/output
-    targets do), it is validated and preserved.
-    """
+    """Normalize one page value and enforce its namespace policy."""
     data = _mapping(value, field_name=field_name)
     title = _bounded_text(
         data.get("title"),
@@ -645,12 +597,7 @@ def validate_inputs(
     contract: dict[str, Any],
     raw_inputs: Any,
 ) -> dict[str, Any]:
-    """Validate one closed input object and materialize authored defaults.
-
-    This repeats on the worker even when the HTTP blueprint already validated
-    the request, preventing queued payloads or non-HTTP callers from bypassing
-    the installed contract.
-    """
+    """Validate and normalize one run's input object."""
     data = {} if raw_inputs in (None, "") else _mapping(
         raw_inputs,
         field_name="inputs",
@@ -673,11 +620,7 @@ def validate_inputs(
 
 
 def validate_arguments(raw_arguments: Any) -> list[str]:
-    """Validate the optional raw-string compatibility escape hatch.
-
-    Salt Shack does not interpret these values or turn them into command-line
-    switches; an individual Saltlick must explicitly consume them.
-    """
+    """Validate the optional compatibility escape hatch."""
     if raw_arguments in (None, ""):
         return []
     if not isinstance(raw_arguments, list):
@@ -695,11 +638,7 @@ def validate_arguments(raw_arguments: Any) -> list[str]:
 
 
 def _json_safe(value: Any, *, field_name: str) -> Any:
-    """Round-trip output data into the representation persisted as JSON.
-
-    ``default=str`` deliberately reduces unfamiliar leaf objects to text; it
-    never preserves executable Python objects across the result boundary.
-    """
+    """Round-trip arbitrary output data through JSON-compatible values."""
     try:
         return json.loads(json.dumps(value, default=str))
     except (TypeError, ValueError) as exc:
@@ -763,7 +702,7 @@ def validate_outputs(
     contract: dict[str, Any],
     raw_outputs: Any,
 ) -> dict[str, Any]:
-    """Validate a Saltlick's complete structured result against its schema."""
+    """Validate a Saltlick's structured result against its output contract."""
     data = {} if raw_outputs in (None, "") else _mapping(
         raw_outputs,
         field_name="outputs",
@@ -789,11 +728,7 @@ def validate_actions(
     contract: dict[str, Any],
     raw_actions: Any,
 ) -> list[dict[str, Any]]:
-    """Validate action envelopes and enforce the Saltlick's closed allowlist.
-
-    This layer validates generic type/target/JSON structure.  Operation-specific
-    parameters and live mutation remain the framework action catalog's job.
-    """
+    """Validate declarative actions and enforce the contract allowlist."""
     if raw_actions in (None, ""):
         return []
     if not isinstance(raw_actions, list):
@@ -816,8 +751,6 @@ def validate_actions(
         params = action.get("params", {})
         if not isinstance(params, dict):
             raise ValueError(f"actions[{index}].params must be an object")
-        # Rebuild the envelope from known keys so a script cannot smuggle
-        # private executor directives alongside otherwise valid action data.
         normalized.append(
             {
                 "type": action_type,

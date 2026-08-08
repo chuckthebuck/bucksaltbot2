@@ -1,9 +1,4 @@
-"""Validate the retained version-1 legacy workflow recipe format.
-
-Compiled child Saltlicks use ``contracts.py`` instead.  These immutable specs
-remain for the direct CLI, compatibility HTTP endpoints, and generated
-standalone modules; all of those surfaces share the same bounds here.
-"""
+"""Validated Saltlick workflow specification."""
 
 from __future__ import annotations
 
@@ -15,7 +10,6 @@ from typing import Any
 from .expressions import parse_expression
 
 
-# Recipe complexity is bounded before page generation or transformation begins.
 SPEC_VERSION = 1
 MAX_SOURCE_PAGES = 500
 MAX_TRANSFORMS = 20
@@ -61,7 +55,7 @@ def _string(value: Any, *, field_name: str, limit: int = 20_000) -> str:
 
 
 def _bool(value: Any, *, default: bool = False) -> bool:
-    """Coerce common JSON/config boolean spellings without truthy surprises."""
+    """Coerce common configuration representations into a boolean."""
     if value is None:
         return default
     if isinstance(value, bool):
@@ -98,7 +92,7 @@ def _integer(
 
 
 def _namespaces(value: Any) -> tuple[int, ...]:
-    """Normalize and de-duplicate a comma-separated or list selection."""
+    """Normalize a comma-separated or list namespace selection."""
     if value in (None, ""):
         return ()
     raw_values = value if isinstance(value, (list, tuple)) else str(value).split(",")
@@ -118,7 +112,7 @@ def _namespaces(value: Any) -> tuple[int, ...]:
 
 @dataclass(frozen=True)
 class WikiSpec:
-    """Validated, immutable Pywikibot site coordinates."""
+    """Validated Pywikibot site coordinates."""
 
     code: str = "commons"
     family: str = "commons"
@@ -141,11 +135,7 @@ class WikiSpec:
 
 @dataclass(frozen=True)
 class SourceSpec:
-    """Bounded page-generator configuration for a legacy workflow recipe.
-
-    Only one source kind is active.  Fields unused by that kind remain in the
-    canonical shape so serialization and generated modules stay deterministic.
-    """
+    """Bounded page-generator configuration for a legacy workflow recipe."""
 
     type: str = "titles"
     titles: tuple[str, ...] = ()
@@ -157,7 +147,7 @@ class SourceSpec:
 
     @classmethod
     def from_dict(cls, raw: Any) -> "SourceSpec":
-        """Validate source-specific requirements and the global page limit."""
+        """Validate a source generator and its page limit."""
         if not isinstance(raw, dict):
             raise ValueError("source must be an object")
         source_type = _string(
@@ -179,8 +169,6 @@ class SourceSpec:
             titles_raw = titles_raw.splitlines()
         if not isinstance(titles_raw, list):
             raise ValueError("source.titles must be a list or newline-delimited text")
-        # Preserve first occurrence order while removing duplicate page titles;
-        # deterministic ordering matters for preview diffs and live replay.
         titles = tuple(
             dict.fromkeys(
                 title
@@ -209,7 +197,6 @@ class SourceSpec:
             type=source_type,
             titles=titles,
             target=target,
-            # A titles source cannot yield more than its de-duplicated input.
             limit=min(limit, len(titles)) if source_type == "titles" else limit,
             namespaces=namespaces,
             recursive=_integer(
@@ -225,7 +212,7 @@ class SourceSpec:
 
 @dataclass(frozen=True)
 class FilterSpec:
-    """Read-only filters applied before any legacy text transformation."""
+    """Read-only filters applied before workflow transformations."""
 
     title_regex: str = ""
     contains: str = ""
@@ -264,7 +251,7 @@ class FilterSpec:
 
 @dataclass(frozen=True)
 class TransformSpec:
-    """One validated, ordered text transformation in a legacy workflow."""
+    """One validated text transformation in a legacy workflow."""
 
     type: str
     find: str = ""
@@ -277,11 +264,7 @@ class TransformSpec:
 
     @classmethod
     def from_dict(cls, raw: Any, index: int) -> "TransformSpec":
-        """Validate a transform and preserve its human-facing list index.
-
-        Regex/expression syntax is compiled or parsed here so malformed recipes
-        fail before a page iterator is opened.
-        """
+        """Validate a transformation and report errors with its list index."""
         if not isinstance(raw, dict):
             raise ValueError(f"transform {index} must be an object")
         transform_type = _string(
@@ -352,7 +335,7 @@ class TransformSpec:
 
 @dataclass(frozen=True)
 class SaveSpec:
-    """Edit metadata and bounded pacing controls for legacy workflow saves."""
+    """Edit metadata and pacing controls for legacy workflow saves."""
 
     summary: str = "Saltlick workflow"
     minor: bool = False
@@ -401,11 +384,7 @@ class LimitSpec:
 
     @classmethod
     def from_dict(cls, raw: Any, *, source_limit: int) -> "LimitSpec":
-        """Validate execution limits relative to the selected source.
-
-        The default edit cap never exceeds the number of pages the source can
-        yield, while explicit values remain globally bounded.
-        """
+        """Validate execution limits relative to the selected source."""
         data = raw if isinstance(raw, dict) else {}
         return cls(
             max_edits=_integer(
@@ -428,7 +407,7 @@ class LimitSpec:
 
 @dataclass(frozen=True)
 class WorkflowSpec:
-    """Canonical, immutable legacy workflow recipe shared by all adapters."""
+    """Canonical, immutable legacy workflow recipe."""
 
     version: int
     name: str
@@ -442,7 +421,7 @@ class WorkflowSpec:
 
     @classmethod
     def from_dict(cls, raw: Any) -> "WorkflowSpec":
-        """Validate raw recipe data into a complete canonical specification."""
+        """Validate raw recipe data into a complete workflow specification."""
         if not isinstance(raw, dict):
             raise ValueError("workflow spec must be an object")
         version = _integer(
@@ -468,8 +447,6 @@ class WorkflowSpec:
             raise ValueError("workflow requires at least one transform")
         if len(transforms_raw) > MAX_TRANSFORMS:
             raise ValueError(f"workflow supports at most {MAX_TRANSFORMS} transforms")
-        # A tuple preserves authored order while preventing later mutation of
-        # the transformation chain between validation and execution.
         transforms = tuple(
             TransformSpec.from_dict(item, index)
             for index, item in enumerate(transforms_raw, start=1)
@@ -498,11 +475,10 @@ def recipe_with_invocation(
     inputs: Any = None,
     arguments: Any = None,
 ) -> dict[str, Any]:
-    """Apply a small, explicit invocation overlay to legacy recipe data.
+    """Apply a small, explicit invocation overlay to recipe data.
 
     Generated bots bake in the recipe and accept only these inputs/arguments at
-    their run endpoint. No handler path or Python source is accepted here, and
-    the original recipe is deep-copied so one run cannot mutate later runs.
+    their run endpoint. No handler path or Python source is accepted here.
     """
     if not isinstance(recipe, dict):
         raise ValueError("recipe must be an object")
@@ -544,8 +520,6 @@ def recipe_with_invocation(
         "throttle_seconds": "throttle_seconds",
     }
     limit_mapping = {"max_edits": "max_edits"}
-    # The explicit maps are the complete invocation API.  Keeping them local to
-    # each recipe section avoids arbitrary dotted-path configuration writes.
     for input_name, target_name in source_mapping.items():
         if input_name in argument_values:
             source[target_name] = argument_values[input_name]

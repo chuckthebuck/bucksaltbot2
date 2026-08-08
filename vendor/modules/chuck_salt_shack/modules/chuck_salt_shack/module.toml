@@ -1,5 +1,4 @@
-# Stable framework identity. "Saltlick" is reserved for child script folders;
-# every child still executes through this one reviewed module entry point.
+# Stable framework identity. "Saltlick" is reserved for child script folders.
 name = "chuck_salt_shack"
 repo = "https://github.com/chuckthebuck/chuck-the-salt-shack"
 entry_point = "chuck_salt_shack.service:run_saltlick"
@@ -12,7 +11,6 @@ rights = ["manage", "run_jobs", "apply_changes"]
 
 # The module ships a self-contained Codex bundle so it can remain forkable in a
 # separate repository while mounting inside the framework-owned page shell.
-# These are package resource names, not browser-controlled asset paths.
 [frontend]
 script = "chuck_salt_shack:static/chuck-salt-shack-app.js"
 styles = ["chuck_salt_shack:static/style.css"]
@@ -21,8 +19,7 @@ mount_id = "chuck-salt-shack-app"
 docs = "chuck_salt_shack:docs/chuck_salt_shack.md"
 bundled = false
 
-# Previews may run concurrently because the handler derives dry-run state from
-# this trusted job name; a request payload cannot promote a preview to apply.
+# Previews may run concurrently because they cannot write to a wiki.
 [[worker_jobs]]
 name = "preview"
 handler = "chuck_salt_shack.service:run_saltlick"
@@ -31,9 +28,6 @@ timeout_seconds = 900
 enabled = true
 
 # Apply jobs are serialized and require the explicit module-scoped write right.
-# Saltlick-specific apply grants are checked by the nested API before it queues
-# this shared job. The worker requires confirmation for all live work and, for
-# compiled-child actions, the exact digest returned by a preview.
 [[worker_jobs]]
 name = "apply"
 handler = "chuck_salt_shack.service:run_saltlick"

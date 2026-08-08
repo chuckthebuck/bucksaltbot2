@@ -14,11 +14,10 @@ Runs are stored in the module-owned `chuck_file_change_jobs` and
 job row per chunk, and the shared Celery worker executes
 `buckbot.process_chuck_file_change_job` for each queued row. Redis stores
 best-effort progress snapshots under `chuck_file_changer:job:<id>`.
-The default chunk size is 100. Keep explicit `chunk_size` values at or below
-100: although the queue endpoint currently accepts up to 500, its worker calls
-the service without a framework context, so the service processes only the
-first 100 targets and the job can otherwise finish with later item rows still
-queued.
+The module creates these tables automatically through the framework database
+connection before it reads or queues work. The UI's **Run history** section
+shows the most recent durable job rows (your own runs, or all runs for module
+managers), including failed runs and their status.
 
 ## Sources
 
@@ -35,7 +34,8 @@ The result must include a recognizable title column such as `img_name`,
 
 VFC-style sources are resolved through the Commons API before chunking:
 
-- `user`: uploader uploads from `list=logevents`.
+- `user`: uploader uploads from `list=logevents`, including re-uploads. Both
+  `ExampleUser` and `User:ExampleUser` are accepted.
 - `category`: file members from `list=categorymembers`.
 - `page`: images used on a page or gallery from `prop=images`.
 - `search`: file namespace search from `list=search`.
@@ -51,14 +51,7 @@ Custom edit summaries support `%FULLPAGENAME%`, `%FULLPAGENAMEE%`,
 `%PAGENAME%`, and `%SUMMARY_HINT%`.
 
 Always preview before applying. The apply endpoint requires
-configured `module:chuck_file_changer:apply_changes`,
-`module:chuck_file_changer:manage`, or the global `manage_modules` override.
-Framework maintainer status alone is not applied by this custom route.
-Preview and apply are separate submissions. The preview route always forces a
-dry run; apply expresses live intent. Because this custom queue receives no
-framework run context, only `dry_run=true` in the request payload can downgrade
-apply to preview; ToolsDB runtime config and `CHUCKBOT_LOCAL_SAFE_MODE` are not
-injected.
+`module:chuck_file_changer:apply_changes` or `module:chuck_file_changer:manage`.
 
 ## Authz
 
@@ -82,26 +75,11 @@ The custom module API enforces authz itself:
   dry run job to be queued.
 - `POST /chuck_file_changer/api/apply` requires
   `module:chuck_file_changer:apply_changes` or
-  `module:chuck_file_changer:manage` (with configured `manage_modules` accepted
-  as the global override) and queues a live apply job.
+  `module:chuck_file_changer:manage` and queues a live apply job.
 - `GET /chuck_file_changer/api/jobs/<run_id>` returns module job status,
   Redis progress, target item rows, and final results for this module.
-
-The generic module shell's `can_manage` prop includes framework maintainers,
-but this custom API evaluates configured module grants directly. A maintainer
-without one of the grants above can therefore see an apply affordance and still
-receive `403`; `/chuck_file_changer/api/auth` is the route-level authority.
-
-## Emergency-stop boundary
-
-File Changer's preview/apply API does not use framework `module_job_runs`.
-Generic module E-STOP disables the registry module and cancels generic runs,
-but it does not cancel rows in `chuck_file_change_jobs` or revoke already
-dispatched Celery tasks today. Its already-mounted Blueprint also does not check
-registry-enabled state, so it can accept new submissions until web restart.
-Remove access and follow the incident procedure—which may require stopping
-web/shared-worker processes and restarting without the module—until the module
-provides an explicit stop integration.
+- `GET /chuck_file_changer/api/jobs` returns durable run-history rows; regular
+  users see only their own rows and module managers see all rows.
 
 Example grant configuration:
 
