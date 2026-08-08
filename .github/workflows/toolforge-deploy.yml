@@ -34,7 +34,7 @@ jobs:
       BUILDPACK_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.buildpack_channel || 'latest' }}
     steps:
       - name: Deploy Buckbot on Toolforge
-        uses: appleboy/ssh-action@551964ebda1034f0b5449d74db25c42e371ca1f7
+        uses: appleboy/ssh-action@b838bc2f27cd449b957159452d432aff91697637
         with:
           host: login.toolforge.org
           username: ${{ secrets.TOOLFORGE_USERNAME }}
