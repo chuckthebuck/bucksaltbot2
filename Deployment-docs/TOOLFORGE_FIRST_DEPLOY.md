@@ -1,12 +1,15 @@
 # First Toolforge Deployment
 
-Use this guide once for a new Buckbot Toolforge tool account. The bootstrap
-script creates the deploy services and schema; it does not create the tool
-account, OAuth consumers, GitHub credentials, or a repository checkout.
+Use this guide once for a new Toolforge tool account. The bootstrap script
+creates the deploy services and schema; it does not create the tool account,
+OAuth consumers, GitHub credentials, or a repository checkout.
 
-The checked GitHub deploy workflow targets the `buckbot` tool and hardcodes the
-checkout `/data/project/buckbot`. A staging tool or fork must deliberately
-change the workflow target, checkout path, namespace, and repository secrets.
+The checked GitHub deploy workflow is an example for `buckbot`. If you are
+adopting the framework, first follow
+[RENAMING_AND_REPOSITORIES.md](RENAMING_AND_REPOSITORIES.md): create and push
+your framework deployment repository, then change the workflow target,
+checkout path, namespace, and repository secrets. Build Service can build only
+the repository you name; it does not infer your fork from a local checkout.
 
 ## Prerequisites
 
@@ -21,17 +24,19 @@ Git.
 ## Create the workflow checkout
 
 For the checked production workflow, the repository root must itself be
-`/data/project/buckbot`; cloning into a `buckbot-framework` child creates a
-checkout the workflow will never update.
+`/data/project/<tool-name>`; cloning into a child directory creates a checkout
+the workflow will never update. Replace every placeholder below with your own
+tool and framework deployment repository. The `buckbot` values are only the
+checked example.
 
 On a new tool account, initialize the existing tool home as the checkout:
 
 ```bash
 ssh login.toolforge.org
-become buckbot
-cd /data/project/buckbot
+become <tool-name>
+cd /data/project/<tool-name>
 git init
-git remote add origin https://github.com/chuckthebuck/bucksaltbot2.git
+git remote add origin https://github.com/<owner>/<framework-deployment-repo>.git
 git fetch origin main
 git checkout -B main origin/main
 git status --short
@@ -46,13 +51,15 @@ dirty checkout.
 The first command is a dry run:
 
 ```bash
-bash scripts/toolforge-bootstrap.sh --tool-name buckbot
+bash scripts/toolforge-bootstrap.sh --tool-name <tool-name> \
+  --repo-url https://github.com/<owner>/<framework-deployment-repo>.git
 ```
 
 After reviewing its exact operations:
 
 ```bash
-bash scripts/toolforge-bootstrap.sh --apply --configure-env --tool-name buckbot
+bash scripts/toolforge-bootstrap.sh --apply --configure-env --tool-name <tool-name> \
+  --repo-url https://github.com/<owner>/<framework-deployment-repo>.git
 ```
 
 `--configure-env` creates non-secret defaults and asks Toolforge to prompt for
@@ -65,7 +72,7 @@ generates module schedules, replaces only the marked block in `jobs.yaml`,
 starts the webservice, and loads all checked jobs.
 
 The generated-only YAML is also written to
-`$TOOL_DATA_DIR/buckbot-generated-jobs.yaml` for review. Repository
+`$TOOL_DATA_DIR/<tool-name>-generated-jobs.yaml` for review. Repository
 `jobs.yaml` remains the deployment authority.
 
 ## Configuration created by bootstrap
@@ -74,12 +81,12 @@ The script prompts for `SECRET_KEY`, both `USER_OAUTH_*` values, and the four
 Pywikibot `CONSUMER_*`/`ACCESS_*` values. For production it creates:
 
 ```text
-BOT_NAME=buckbot
+BOT_NAME=<tool-name>
 ENABLE_MODULE_LOADING=1
 NOTDEV=1
-BUCKBOT_REDIS_NAMESPACE=buckbot
-BUCKBOT_CELERY_QUEUE=buckbot.celery
-BUCKBOT_CELERY_WORKER_NAME=buckbot-celery
+BUCKBOT_REDIS_NAMESPACE=<tool-name>
+BUCKBOT_CELERY_QUEUE=<tool-name>.celery
+BUCKBOT_CELERY_WORKER_NAME=<tool-name>-celery
 ```
 
 See [ENVIRONMENT.md](ENVIRONMENT.md) for database precedence and Redis
@@ -102,9 +109,9 @@ wrapper fast-forwards the checkout and reloads the checked file.
 
 ## Verify and enable normal deployment
 
-Open `https://buckbot.toolforge.org/`, complete OAuth login, and verify
+Open `https://<tool-name>.toolforge.org/`, complete OAuth login, and verify
 `/modules`, module UIs, Rollback worker health, and `toolforge jobs list`.
-The default bootstrap init job is named `buckbot-bootstrap-init` for log lookup.
+The bootstrap init job is named `<tool-name>-bootstrap-init` for log lookup.
 
 Configure GitHub secrets `TOOLFORGE_USERNAME` and
 `TOOLFORGE_DEPLOY_PRIVATE_KEY` as described in the root README. Pushes to

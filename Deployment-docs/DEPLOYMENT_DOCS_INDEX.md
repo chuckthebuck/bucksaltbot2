@@ -19,6 +19,11 @@ Toolforge operations belong here.
 
 - [TOOLFORGE_FIRST_DEPLOY.md](TOOLFORGE_FIRST_DEPLOY.md) — one-time checkout,
   secrets, schema, webservice, and jobs bootstrap.
+- [RENAMING_AND_REPOSITORIES.md](RENAMING_AND_REPOSITORIES.md) — adopt the
+  framework under a new tool name, create the required deployment repository,
+  and point Build Service at it.
+- [OWNERSHIP.md](OWNERSHIP.md) — authoritative ownership boundaries for
+  framework code, modules, Build Service, schedules, and runtime state.
 - [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) — release gate and
   post-deploy checks.
 - [DEPLOYMENT_QUICK_REFERENCE.md](DEPLOYMENT_QUICK_REFERENCE.md) — compact
@@ -53,10 +58,11 @@ module or view its jobs. Current bundled module guides live in:
 ## Current deployment authority
 
 Normal production deployment is `.github/workflows/toolforge-deploy.yml`. It
-runs on pushes to `main` and can be dispatched manually. The workflow invokes
-`scripts/toolforge-deploy-new-version.sh` in `/data/project/buckbot`; that
+runs on pushes to `main` and can be dispatched manually. The checked example
+targets Buckbot, so an adopted deployment must first replace its tool account,
+checkout path, and repository URL as described in the renaming guide. The
 wrapper builds, restarts the webservice, flushes jobs, and loads the committed
-`jobs.yaml`.
+`jobs.yaml` from that deployment repository.
 
 Module schedule edits are two-step by design: update the registry state, then
 use `/jobs-yaml` to review and commit the generated block before deployment.

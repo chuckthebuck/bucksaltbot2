@@ -84,7 +84,7 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 IMAGE="tool-${TOOL_NAME}/tool-${TOOL_NAME}:latest"
-GENERATED_JOBS_PATH="${TOOL_DATA_DIR:-$REPO_ROOT}/buckbot-generated-jobs.yaml"
+GENERATED_JOBS_PATH="${TOOL_DATA_DIR:-$REPO_ROOT}/${TOOL_NAME}-generated-jobs.yaml"
 INIT_JOB_NAME="${TOOL_NAME}-bootstrap-init"
 
 echo "Tool:          $TOOL_NAME"

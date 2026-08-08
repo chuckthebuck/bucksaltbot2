@@ -108,7 +108,7 @@ an explicit database the framework retains its historical
 
 | Name | Purpose |
 | --- | --- |
-| `TOOL_DATA_DIR` | Persistent runtime data/log root; Toolforge Buckbot uses `/data/project/buckbot`. |
+| `TOOL_DATA_DIR` | Persistent runtime data/log root; a Toolforge deployment normally uses `/data/project/<tool-name>`. |
 | `PYWIKIBOT_DIR` | Pywikibot configuration directory. |
 | `TOOLFORGE` | Optional explicit Toolforge-detection marker. Normal tool-home and ToolsDB credentials also trigger detection. |
 | `PORT` | Gunicorn listen port assigned by Build Service; defaults to `8000` in the start script. |

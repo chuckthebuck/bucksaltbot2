@@ -36,10 +36,12 @@ that same committed bundle.
 5. Push the deploy commit to `main`. The Toolforge deploy GitHub workflow
    invokes `scripts/toolforge-deploy-new-version.sh`.
 
-The wrapper fast-forwards `/data/project/buckbot`, starts a Build Service build,
-restarts the webservice, flushes Toolforge jobs, and loads the committed
-`jobs.yaml`. It does not regenerate schedules or initialize a new database;
-those are first-deploy/bootstrap responsibilities.
+The wrapper fast-forwards `/data/project/<tool-name>`, starts a Build Service
+build from that checkout's `origin`, restarts the webservice, flushes Toolforge
+jobs, and loads the committed `jobs.yaml`. It does not regenerate schedules or
+initialize a new database; those are first-deploy/bootstrap responsibilities.
+See [OWNERSHIP.md](OWNERSHIP.md) for the boundary between the framework
+deployment repository and standalone module source repositories.
 
 ## Runtime boundaries
 

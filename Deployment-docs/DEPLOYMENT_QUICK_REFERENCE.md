@@ -52,27 +52,31 @@ flush/reload sequence.
 ## Production deploy
 
 Push the reviewed commit to `main`, or manually dispatch the **Toolforge
-deploy** GitHub workflow for a reviewed branch. That workflow runs
-`scripts/toolforge-deploy-new-version.sh` in `/data/project/buckbot` and owns
-the build, webservice restart, job flush, and jobs reload.
+deploy** GitHub workflow for a reviewed branch. It builds the repository that
+contains the workflow and runs the wrapper in `/data/project/<tool-name>`.
+The checked workflow still uses `buckbot`; adopters must rename its Toolforge
+account/path and image references as documented in
+[RENAMING_AND_REPOSITORIES.md](RENAMING_AND_REPOSITORIES.md).
 
 For an operator-run recovery deploy after becoming the tool account:
 
 ```bash
-cd /data/project/buckbot
-REPO_DIR=/data/project/buckbot BRANCH=main BUILDPACK_CHANNEL=latest \
+cd /data/project/<tool-name>
+REPO_DIR=/data/project/<tool-name> \
+REPO_URL=https://github.com/<owner>/<framework-deployment-repo>.git \
+BRANCH=main BUILDPACK_CHANNEL=latest \
   bash scripts/toolforge-deploy-new-version.sh
 ```
 
 ## Core production environment
 
 ```text
-BOT_NAME=buckbot
+BOT_NAME=<tool-name>
 ENABLE_MODULE_LOADING=1
 NOTDEV=1
-BUCKBOT_REDIS_NAMESPACE=buckbot
-BUCKBOT_CELERY_QUEUE=buckbot.celery
-BUCKBOT_CELERY_WORKER_NAME=buckbot-celery
+BUCKBOT_REDIS_NAMESPACE=<tool-name>
+BUCKBOT_CELERY_QUEUE=<tool-name>.celery
+BUCKBOT_CELERY_WORKER_NAME=<tool-name>-celery
 ```
 
 Secrets and OAuth credentials are managed with Toolforge envvars. See

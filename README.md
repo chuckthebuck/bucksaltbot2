@@ -19,6 +19,15 @@ For a brand-new Toolforge account, use the reviewed
 workflow authors should use the
 [Saltlick authoring guide](Deployment-docs/SALTLICK_AUTHORING_GUIDE.md).
 
+If you are adopting this framework for a different tool, read
+[renaming and repository setup](Deployment-docs/RENAMING_AND_REPOSITORIES.md)
+*before* deploying. A Build Service deployment builds the Git repository named
+by its deployment configuration; committing only to an upstream or module
+repository does not deploy your tool.
+
+For the authoritative boundary between framework, module, Toolforge, and
+runtime ownership, see the [ownership map](Deployment-docs/OWNERSHIP.md).
+
 ## What Lives Here
 
 - The Flask webservice, OAuth login, navigation, and shared APIs.
