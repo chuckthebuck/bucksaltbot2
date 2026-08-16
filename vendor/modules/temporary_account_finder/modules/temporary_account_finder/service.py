@@ -291,7 +291,7 @@ class WikiClient:
         self.headers = {
             "User-Agent": os.environ.get(
                 "TEMPORARY_ACCOUNT_FINDER_USER_AGENT",
-                "Chuckbot-TemporaryAccountFinder/0.1 (https://chuckbot.toolforge.org)",
+                "Chuckbot-TemporaryAccountFinder/0.1 (https://buckbot.toolforge.org)",
             )
         }
 
