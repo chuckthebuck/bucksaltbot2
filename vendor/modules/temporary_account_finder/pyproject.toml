@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chuckbot-temporary-account-finder"
+version = "0.1.0"
+description = "Find connected Wikimedia temporary accounts from Chuckbot"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "Flask>=3.1",
+  "requests>=2.33",
+  "requests-oauthlib>=2.0",
+]
+
+[project.urls]
+Repository = "https://github.com/chuckthebuck/chuck-temporary-account-finder"
+
+[tool.setuptools]
+packages = ["temporary_account_finder"]
+include-package-data = true
+
+[tool.setuptools.package-dir]
+temporary_account_finder = "modules/temporary_account_finder"
+
+[tool.setuptools.package-data]
+temporary_account_finder = [
+  "module.toml",
+  "static/*.js",
+  "static/*.css",
+  "frontend/*.css",
+  "frontend/*.ts",
+  "frontend/*.vue",
+  "docs/*.md",
+]
+
+[project.entry-points."chuck_buckbot.modules"]
+temporary_account_finder = "temporary_account_finder.manifest:module_manifest"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["modules"]

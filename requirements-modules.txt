@@ -7,3 +7,4 @@
 ./vendor/modules/four_award
 ./vendor/modules/chuck_file_changer
 ./vendor/modules/chuck_salt_shack
+./vendor/modules/temporary_account_finder

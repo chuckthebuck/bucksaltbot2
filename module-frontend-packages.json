@@ -9,6 +9,11 @@
       "name": "chuck_file_changer",
       "enabled": true,
       "import": "../vendor/modules/chuck_file_changer/modules/chuck_file_changer/frontend/entry.ts"
+    },
+    {
+      "name": "temporary_account_finder",
+      "enabled": true,
+      "import": "../vendor/modules/temporary_account_finder/modules/temporary_account_finder/frontend/entry.ts"
     }
   ]
 }

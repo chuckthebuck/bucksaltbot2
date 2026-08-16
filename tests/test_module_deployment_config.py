@@ -50,6 +50,7 @@ def test_vendored_entry_point_packages_ship_toml_manifest():
         "four_award",
         "chuck_file_changer",
         "chuck_salt_shack",
+        "temporary_account_finder",
     ):
         pyproject = tomllib.loads(
             (ROOT / "vendor" / "modules" / module_name / "pyproject.toml").read_text(

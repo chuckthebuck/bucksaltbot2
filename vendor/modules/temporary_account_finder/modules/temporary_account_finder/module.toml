@@ -1,0 +1,20 @@
+name = "temporary_account_finder"
+title = "Temporary Account Finder"
+repo = "https://github.com/chuckthebuck/chuck-temporary-account-finder"
+entry_point = "temporary_account_finder.service:find_connected_accounts"
+blueprint_entry_point = "temporary_account_finder.blueprint:blueprint"
+ui = true
+redis_namespace = "temporary_account_finder"
+oauth_consumer_mode = "default"
+# Framework access controls whether the UI is discoverable. The module API also
+# requires the caller's live checkuser-temporary-account right on the selected
+# wiki before it performs any lookup.
+rights = ["manage"]
+
+[frontend]
+script = "temporary_account_finder:static/temporary-account-finder-app.js"
+styles = ["temporary_account_finder:static/style.css"]
+props_id = "temporary-account-finder-props"
+mount_id = "temporary-account-finder-app"
+docs = "temporary_account_finder:docs/temporary_account_finder.md"
+bundled = true

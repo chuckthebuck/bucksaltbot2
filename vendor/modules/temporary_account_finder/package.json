@@ -1,0 +1,17 @@
+{
+  "name": "chuckbot-temporary-account-finder",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@wikimedia/codex": "^2.6.2",
+    "typescript": "^6.0.3",
+    "vite": "^8.2.0",
+    "vue": "^3.5.39"
+  }
+}
