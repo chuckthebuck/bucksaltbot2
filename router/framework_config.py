@@ -30,7 +30,7 @@ DOCS_URL = os.getenv(
 
 UNAUTHORIZED_MESSAGE = os.getenv(
     "UNAUTHORIZED_MESSAGE",
-    "This tool is restricted to Commons admins and maintainers.",
+    "This tool is restricted to approved Wikimedia users and maintainers.",
 )
 
 ALLOWED_GROUPS = {

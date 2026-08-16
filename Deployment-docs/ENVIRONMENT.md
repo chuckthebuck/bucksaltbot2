@@ -33,6 +33,11 @@ bash scripts/check-secrets.sh live
 `FALLBACK_SECRET_KEY` is a compatibility fallback read by the router. Configure
 `SECRET_KEY` instead.
 
+The user-login OAuth consumer must include the
+`checkuser-temporary-account` grant when Temporary Account Finder is enabled.
+After adding or approving that grant, existing users must sign out and authorize
+Chuckbot again so their stored OAuth authorization includes it.
+
 ## Deployment identity and login
 
 | Name | Default/behavior |

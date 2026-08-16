@@ -21,6 +21,8 @@ interface AccessResult {
   eligible: boolean;
   blocked: boolean;
   reveal_rights: string[];
+  on_wiki_reveal_rights: string[];
+  oauth_grant_missing: boolean;
 }
 
 interface SeedResult {
@@ -258,6 +260,13 @@ onMounted(checkAccess);
           <template v-if="access.blocked">
             Sitewide-blocked users cannot reveal temporary-account data on
             {{ access.wiki.host }}.
+          </template>
+          <template v-else-if="access.oauth_grant_missing">
+            {{ access.username }} has {{ access.on_wiki_reveal_rights.join(", ") }}
+            on {{ access.wiki.host }}, but Chuckbot's current OAuth authorization
+            does not include that grant. A consumer owner must add or approve the
+            checkuser-temporary-account grant if needed; then sign out and
+            authorize Chuckbot again.
           </template>
           <template v-else>
             {{ access.username }} does not currently have a temporary-account

@@ -30,12 +30,16 @@ class FakeTransport:
         self,
         *,
         rights=None,
+        assigned_rights=None,
         username="Example",
         blocked=False,
         connected=None,
         ips=None,
     ):
         self.rights = rights or ["checkuser-temporary-account"]
+        self.assigned_rights = (
+            list(self.rights) if assigned_rights is None else assigned_rights
+        )
         self.username = username
         self.blocked = blocked
         self.connected = connected or {}
@@ -50,6 +54,19 @@ class FakeTransport:
             if self.blocked:
                 userinfo.update({"blockid": 99, "blockedby": "Admin"})
             return FakeResponse({"query": {"userinfo": userinfo}})
+        if data.get("list") == "users":
+            return FakeResponse(
+                {
+                    "query": {
+                        "users": [
+                            {
+                                "name": self.username,
+                                "rights": self.assigned_rights,
+                            }
+                        ]
+                    }
+                }
+            )
         if data.get("meta") == "tokens":
             return FakeResponse({"query": {"tokens": {"csrftoken": "csrf-token+\\"}}})
         if "/connectedtemporaryaccounts/" in url:
@@ -137,6 +154,22 @@ def test_check_access_denies_sitewide_blocked_actor():
     )
     assert payload["eligible"] is False
     assert payload["blocked"] is True
+
+
+def test_check_access_distinguishes_missing_oauth_grant_from_missing_taiv():
+    payload = check_access(
+        "enwiki",
+        expected_username="Example",
+        access_token=ACCESS_TOKEN,
+        transport=FakeTransport(
+            rights=["read"],
+            assigned_rights=["read", "checkuser-temporary-account"],
+        ),
+    )
+    assert payload["eligible"] is False
+    assert payload["oauth_grant_missing"] is True
+    assert payload["reveal_rights"] == []
+    assert payload["on_wiki_reveal_rights"] == ["checkuser-temporary-account"]
 
 
 def test_search_unions_results_without_returning_ip_addresses():
@@ -230,6 +263,27 @@ def test_search_denies_missing_reveal_right_before_private_lookup():
         )
     assert exc_info.value.status_code == 403
     assert exc_info.value.code == "taiv_required"
+    assert not any(
+        "/connectedtemporaryaccounts/" in call[0] for call in transport.calls
+    )
+
+
+def test_search_reports_missing_oauth_consumer_grant():
+    transport = FakeTransport(
+        rights=["read"],
+        assigned_rights=["read", "checkuser-temporary-account"],
+    )
+    with pytest.raises(FinderError) as exc_info:
+        find_connected_accounts(
+            "commons",
+            "~2026-100",
+            expected_username="Example",
+            access_token=ACCESS_TOKEN,
+            transport=transport,
+        )
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.code == "oauth_grant_required"
+    assert "OAuth authorization" in exc_info.value.detail
     assert not any(
         "/connectedtemporaryaccounts/" in call[0] for call in transport.calls
     )

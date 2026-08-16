@@ -55,6 +55,48 @@ def test_auto_grants_accept_global_groups():
     assert "module:four_award:run_jobs" in grants
 
 
+def test_temporary_account_viewer_roles_grant_only_finder_view_admission():
+    from router import authz
+
+    config = authz._runtime_authz_defaults()
+    expected_roles = {
+        "global:global-temporary-account-viewer",
+        "project:commons:temporary-account-viewer",
+        "project:enwiki:temporary-account-viewer",
+        "project:meta:temporary-account-viewer",
+    }
+
+    assert expected_roles <= set(config["ROLE_GRANTS_JSON"])
+    for role in expected_roles:
+        assert config["ROLE_GRANTS_JSON"][role] == [
+            "module:temporary_account_finder:view"
+        ]
+
+    with patch(
+        "router.authz._auto_grant_role_enabled",
+        side_effect=lambda _username, role: (
+            role == "project:commons:temporary-account-viewer"
+        ),
+    ):
+        grants = authz._expand_all_grants(config, "Example")
+
+    assert grants == {"module:temporary_account_finder:view"}
+
+
+def test_persisted_role_map_cannot_erase_temporary_account_viewer_admission():
+    from router import authz
+
+    with patch(
+        "router.authz._load_runtime_authz_overrides",
+        return_value={"ROLE_GRANTS_JSON": {}},
+    ):
+        config = authz._effective_runtime_authz_config()
+
+    assert config["ROLE_GRANTS_JSON"][
+        "project:commons:temporary-account-viewer"
+    ] == ["module:temporary_account_finder:view"]
+
+
 def test_module_specific_manage_does_not_grant_other_modules():
     from router import authz
 

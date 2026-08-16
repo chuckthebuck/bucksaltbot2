@@ -2573,6 +2573,31 @@ def test_is_authorized_returns_true_for_basic_runtime_grant():
         assert router.is_authorized("TestUser") is True
 
 
+def test_is_authorized_accepts_commons_temporary_account_viewer_for_finder_only():
+    """The TAIV role admits the user without granting module management."""
+    import router
+
+    cfg = router._runtime_authz_defaults()
+
+    with (
+        patch("router._effective_runtime_authz_config", return_value=cfg),
+        patch("router.is_maintainer", return_value=False),
+        patch(
+            "router.authz._auto_grant_role_enabled",
+            side_effect=lambda _username, role: (
+                role == "project:commons:temporary-account-viewer"
+            ),
+        ),
+    ):
+        assert router.is_authorized("TemporaryViewer") is True
+        assert router.user_has_module_right(
+            "TemporaryViewer", "temporary_account_finder", "view"
+        )
+        assert not router.user_has_module_right(
+            "TemporaryViewer", "temporary_account_finder", "manage"
+        )
+
+
 def test_is_authorized_runtime_grant_normalizes_username_first_letter():
     """Runtime grant username matching follows MediaWiki first-letter normalization."""
     import router

@@ -192,6 +192,26 @@ _USER_IMPLICIT_FLAGS = (
 
 _AUTO_GRANT_ROLE_KEYS = set(_USER_IMPLICIT_FLAGS)
 
+# These Wikimedia roles are intrinsic admission sources for the vendored
+# Temporary Account Finder. They grant only the ability to enter that module;
+# every lookup still checks the OAuth user's effective reveal right and block
+# state on the selected wiki. Keeping these atoms mandatory also prevents an
+# older persisted ROLE_GRANTS_JSON row from accidentally removing TAIV access.
+_REQUIRED_ROLE_GRANTS = {
+    "global:global-temporary-account-viewer": {
+        "module:temporary_account_finder:view"
+    },
+    "project:commons:temporary-account-viewer": {
+        "module:temporary_account_finder:view"
+    },
+    "project:enwiki:temporary-account-viewer": {
+        "module:temporary_account_finder:view"
+    },
+    "project:meta:temporary-account-viewer": {
+        "module:temporary_account_finder:view"
+    },
+}
+
 # These keys are read for migration only.  New writes use the JSON policy maps.
 _USER_SET_CONFIG_KEYS = {
     "EXTRA_AUTHORIZED_USERS",
@@ -831,6 +851,21 @@ def _parse_role_grants_env(raw_value: str) -> dict:
         app.logger.warning("Invalid ROLE_GRANTS_JSON env var; ignoring: %s", exc)
         return {}
 
+
+def _merge_required_role_grants(role_grants: dict | None) -> dict:
+    """Add non-privileged module admission required by installed policy.
+
+    The returned mapping is a copy. Configured atoms remain additive, while the
+    built-in mappings cannot be erased by a stale whole-map runtime override.
+    """
+    merged = {
+        str(role): sorted({str(atom) for atom in atoms})
+        for role, atoms in (role_grants or {}).items()
+    }
+    for role, required_atoms in _REQUIRED_ROLE_GRANTS.items():
+        merged[role] = sorted({*merged.get(role, []), *required_atoms})
+    return merged
+
 def _parse_nonnegative_int(value, fallback: int) -> int:
     """Parse non-negative stored configuration or return a known-safe default."""
     try:
@@ -913,6 +948,7 @@ def _runtime_authz_defaults() -> dict:
     )
     role_grants.update(legacy_auto_grants)
     role_grants.update(_parse_role_grants_env(os.getenv("ROLE_GRANTS_JSON", "")))
+    role_grants = _merge_required_role_grants(role_grants)
 
     return {
         "RATE_LIMIT_JOBS_PER_HOUR": int(_rate_limit),
@@ -1053,6 +1089,9 @@ def _effective_runtime_authz_config() -> dict:
     """Return the current policy with persisted values winning over env defaults."""
     cfg = _runtime_authz_defaults()
     cfg.update(_load_runtime_authz_overrides())
+    cfg["ROLE_GRANTS_JSON"] = _merge_required_role_grants(
+        cfg.get("ROLE_GRANTS_JSON")
+    )
     return cfg
 
 

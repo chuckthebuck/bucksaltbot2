@@ -31,11 +31,18 @@ The OAuth consumer used by Chuckbot must include the
 `checkuser-temporary-account` OAuth grant. After that grant is added, users may
 need to sign out and authorize Chuckbot again. The user's own on-wiki right and,
 where applicable, Temporary Account IP Reveal preference must also be active.
+If the user holds the on-wiki right but the consumer grant is absent, the access
+panel reports the consumer configuration problem separately instead of saying
+that the user lacks TAIV.
 
 ## Module access
 
 The framework's `module:temporary_account_finder:view` grant controls whether the
 UI appears in Chuckbot. Give that module grant only to intended investigators.
+Members of the local `temporary-account-viewer` groups on Meta-Wiki, Commons,
+and English Wikipedia, and members of the
+`global-temporary-account-viewer` global group, receive this module-view grant
+automatically. This automatic mapping grants no access to other Chuckbot tools.
 This discoverability grant is not trusted as TAIV authorization: every access
 check and every search is separately checked against the selected wiki. The
 framework's maintainer override also does not satisfy this wiki check. Maintainers

@@ -361,7 +361,7 @@ class WikiClient:
         return payload
 
     def user_access(self) -> dict[str, Any]:
-        """Return the OAuth actor and whether its current local rights allow TA reveal."""
+        """Return the OAuth actor and diagnose both user and consumer access."""
         payload = self._post(
             self.wiki.api_url,
             data={
@@ -381,6 +381,15 @@ class WikiClient:
             )
         rights = {str(right) for right in userinfo.get("rights", [])}
         reveal_rights = sorted(rights & REVEAL_RIGHTS)
+        on_wiki_reveal_rights = reveal_rights
+        # OAuth grants limit which of the user's rights an application may use.
+        # Querying the public rights listing only when the effective OAuth view
+        # lacks TAIV lets us distinguish a user permission problem from a
+        # consumer that was registered without the corresponding grant.
+        if not reveal_rights:
+            on_wiki_reveal_rights = sorted(
+                self.user_rights(str(userinfo.get("name") or "")) & REVEAL_RIGHTS
+            )
         blocked = any(
             key in userinfo for key in ("blockid", "blockedby", "blockedbyid")
         )
@@ -389,7 +398,35 @@ class WikiClient:
             "eligible": bool(reveal_rights) and not blocked,
             "blocked": blocked,
             "reveal_rights": reveal_rights,
+            "on_wiki_reveal_rights": on_wiki_reveal_rights,
+            "oauth_grant_missing": bool(on_wiki_reveal_rights) and not reveal_rights,
         }
+
+    def user_rights(self, username: str) -> set[str]:
+        """Return one named user's public on-wiki rights without OAuth filtering."""
+        payload = self._post(
+            self.wiki.api_url,
+            data={
+                "action": "query",
+                "list": "users",
+                "ususers": username,
+                "usprop": "rights",
+                "format": "json",
+                "formatversion": "2",
+            },
+        )
+        users = payload.get("query", {}).get("users", [])
+        if (
+            not isinstance(users, list)
+            or len(users) != 1
+            or not isinstance(users[0], dict)
+            or users[0].get("missing") is not None
+            or not isinstance(users[0].get("rights"), list)
+        ):
+            raise UpstreamError(
+                f"{self.wiki.host} returned an invalid user-rights response."
+            )
+        return {str(right) for right in users[0]["rights"]}
 
     def csrf_token(self) -> str:
         """Fetch the selected wiki's session-bound token for private REST calls."""
@@ -536,9 +573,19 @@ def find_connected_accounts(
         )
     if not access["eligible"]:
         reason = "This account does not have temporary-account IP reveal access on the selected wiki."
+        code = "taiv_required"
         if access["blocked"]:
             reason = "Sitewide-blocked users cannot reveal temporary-account data on this wiki."
-        raise FinderError(reason, 403, code="taiv_required")
+        elif access["oauth_grant_missing"]:
+            reason = (
+                "Your account has temporary-account reveal access on this wiki, "
+                "but Chuckbot's current OAuth authorization does not include "
+                "the checkuser-temporary-account grant. Add or approve the "
+                "grant on the consumer if needed, then sign out and authorize "
+                "Chuckbot again."
+            )
+            code = "oauth_grant_required"
+        raise FinderError(reason, 403, code=code)
 
     csrf_token = client.csrf_token()
     results_by_seed: dict[str, dict[str, Any]] = {}
