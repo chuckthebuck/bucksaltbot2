@@ -63,6 +63,25 @@ def test_resolve_user_uploads_accepts_user_page_title_and_overwrites(monkeypatch
     assert calls[0]["leuser"] == "Alice"
 
 
+def test_suggest_source_targets_uses_mode_specific_commons_lookups(monkeypatch):
+    calls = []
+
+    def fake_get(url, *, params, headers, timeout):
+        calls.append(params)
+        if params["list"] == "allusers":
+            return Response({"query": {"allusers": [{"name": "Alice"}]}})
+        if params["list"] == "allcategories":
+            return Response({"query": {"allcategories": [{"*": "Images by Alice"}]}})
+        return Response({"query": {"prefixsearch": [{"title": "Commons:Alice gallery"}]}})
+
+    monkeypatch.setattr(source.requests, "get", fake_get)
+
+    assert source.suggest_source_targets("user", "Al") == ["Alice"]
+    assert source.suggest_source_targets("category", "Images") == ["Category:Images by Alice"]
+    assert source.suggest_source_targets("page", "Ali") == ["Commons:Alice gallery"]
+    assert [call["list"] for call in calls] == ["allusers", "allcategories", "prefixsearch"]
+
+
 def test_resolve_category_members(monkeypatch):
     def fake_get(url, *, params, headers, timeout):
         assert params["list"] == "categorymembers"

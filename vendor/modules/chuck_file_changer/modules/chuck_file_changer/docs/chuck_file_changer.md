@@ -15,7 +15,7 @@ job row per chunk, and the shared Celery worker executes
 `buckbot.process_chuck_file_change_job` for each queued row. Redis stores
 best-effort progress snapshots under `chuck_file_changer:job:<id>`.
 The module creates these tables automatically through the framework database
-connection before it reads or queues work. The UI's **Run history** section
+connection before it reads or queues work. The UI's **Job table** section
 shows the most recent durable job rows (your own runs, or all runs for module
 managers), including failed runs and their status.
 
@@ -39,6 +39,10 @@ VFC-style sources are resolved through the Commons API before chunking:
 - `category`: file members from `list=categorymembers`.
 - `page`: images used on a page or gallery from `prop=images`.
 - `search`: file namespace search from `list=search`.
+
+Uploader, category, and page/gallery fields offer Commons-backed completions as
+you type. User suggestions query `allusers`, category suggestions query
+`allcategories`, and page/gallery suggestions query `prefixsearch`.
 
 ## Operations
 
@@ -80,6 +84,8 @@ The custom module API enforces authz itself:
   Redis progress, target item rows, and final results for this module.
 - `GET /chuck_file_changer/api/jobs` returns durable run-history rows; regular
   users see only their own rows and module managers see all rows.
+- `GET /chuck_file_changer/api/source-suggestions` returns context-sensitive
+  Commons completions for uploader, category, and page/gallery fields.
 
 Example grant configuration:
 
