@@ -34,6 +34,7 @@ interface QueuedRun {
 
 interface RunHistoryEntry {
   id: number;
+  batch_id: number;
   status: string;
   dry_run: boolean;
   total_items: number;
@@ -69,6 +70,8 @@ const error = ref("");
 const busy = ref(false);
 const canApplyRight = ref(false);
 const runHistory = ref<RunHistoryEntry[]>([]);
+const sourceSuggestions = ref<string[]>([]);
+let suggestionTimer: number | undefined;
 
 const canApply = computed(() =>
   Boolean(canApplyRight.value || props?.can_manage)
@@ -103,7 +106,7 @@ onMounted(async () => {
     const response = await fetch("/chuck_file_changer/api/auth", {
       cache: "no-store",
     });
-    const data = await response.json();
+    const data = await responseJson(response, "Authentication");
     canApplyRight.value = Boolean(data?.can_apply);
   } catch {
     canApplyRight.value = false;
@@ -216,7 +219,7 @@ async function fetchRun(id: number): Promise<QueuedRun> {
   const response = await fetch(`/chuck_file_changer/api/jobs/${encodeURIComponent(id)}`, {
     cache: "no-store",
   });
-  const data = (await response.json()) as QueuedRun;
+  const data = (await responseJson(response, "Run status")) as QueuedRun;
   if (!response.ok) {
     throw new Error((data as any)?.detail || `HTTP ${response.status}`);
   }
@@ -227,9 +230,51 @@ async function loadRunHistory() {
   const response = await fetch("/chuck_file_changer/api/jobs?limit=25", {
     cache: "no-store",
   });
-  const data = await response.json();
+  const data = await responseJson(response, "Run history");
   if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
   runHistory.value = Array.isArray(data?.jobs) ? data.jobs : [];
+}
+
+async function responseJson(response: Response, requestName: string): Promise<any> {
+  const body = await response.text();
+  try {
+    return JSON.parse(body);
+  } catch {
+    const contentType = response.headers.get("content-type") || "unknown content type";
+    throw new Error(
+      `${requestName} returned HTML/non-JSON (${response.status}, ${contentType}). ` +
+      "The module API route is unavailable or redirected; refresh the deployed module and restart the web service."
+    );
+  }
+}
+
+function onSourceTargetInput() {
+  window.clearTimeout(suggestionTimer);
+  sourceSuggestions.value = [];
+  if (!["user", "category", "page"].includes(sourceMode.value) || sourceTarget.value.trim().length < 2) return;
+  suggestionTimer = window.setTimeout(async () => {
+    try {
+      const params = new URLSearchParams({ mode: sourceMode.value, query: sourceTarget.value, limit: "10" });
+      const response = await fetch(`/chuck_file_changer/api/source-suggestions?${params}`, { cache: "no-store" });
+      const data = await responseJson(response, "Source suggestions");
+      sourceSuggestions.value = response.ok && Array.isArray(data?.suggestions) ? data.suggestions : [];
+    } catch {
+      sourceSuggestions.value = [];
+    }
+  }, 250);
+}
+
+async function viewRun(entry: RunHistoryEntry) {
+  error.value = "";
+  try {
+    const data = await fetchRun(entry.id);
+    runId.value = entry.id;
+    runIds.value = [entry.id];
+    runStatus.value = data.status;
+    result.value = data.result || null;
+  } catch (exc) {
+    error.value = exc instanceof Error ? exc.message : "Could not load run";
+  }
 }
 
 </script>
@@ -284,7 +329,12 @@ async function loadRunHistory() {
             <input
               v-model="sourceTarget"
               :placeholder="sourceTargetPlaceholder"
+              :list="['user', 'category', 'page'].includes(sourceMode) ? 'cfc-source-suggestions' : undefined"
+              @input="onSourceTargetInput"
             />
+            <datalist id="cfc-source-suggestions">
+              <option v-for="suggestion in sourceSuggestions" :key="suggestion" :value="suggestion" />
+            </datalist>
           </label>
           <div class="cfc-source-options">
             <label>
@@ -363,20 +413,22 @@ async function loadRunHistory() {
 
     <section class="cfc-history">
       <header>
-        <h2>Run history</h2>
+        <h2>Job table</h2>
         <button @click="loadRunHistory">Refresh</button>
       </header>
-      <p v-if="!runHistory.length">No queued runs recorded yet.</p>
+      <p v-if="!runHistory.length">No queued jobs recorded yet.</p>
       <div v-else class="cfc-history-table" role="table" aria-label="File change run history">
         <div class="cfc-history-row cfc-history-heading" role="row">
-          <span>Run</span><span>Status</span><span>Mode</span><span>Targets</span><span>Created</span>
+          <span>Run</span><span>Status</span><span>Mode</span><span>Targets</span><span>Requested by</span><span>Created</span><span></span>
         </div>
         <div v-for="entry in runHistory" :key="entry.id" class="cfc-history-row" role="row">
-          <span>#{{ entry.id }}</span>
+          <span>#{{ entry.id }} / {{ entry.batch_id }}</span>
           <span :class="{ 'cfc-error': entry.status === 'failed' }">{{ entry.status }}</span>
           <span>{{ entry.dry_run ? "preview" : "apply" }}</span>
           <span>{{ entry.total_items }}</span>
+          <span>{{ entry.requested_by }}</span>
           <span :title="entry.error || ''">{{ entry.created_at || "—" }}</span>
+          <button @click="viewRun(entry)">View</button>
         </div>
       </div>
     </section>
