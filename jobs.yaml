@@ -26,10 +26,19 @@
 # scripts/update_generated_jobs_yaml.py preserves the framework jobs above.
 # BEGIN GENERATED MODULE JOBS
 - name: four-award-four-award-sync
-  command: bash -c 'export NOTDEV=1; export ENABLE_MODULE_LOADING=1; timeout 610 python3 -m module_runner --module four_award --job four-award-sync --trigger schedule'
+  command: bash -c 'export NOTDEV=1; timeout 610 python3 -m module_runner --module four_award --job four-award-sync --trigger schedule'
+  schedule: "0 0 * * *"
   image: tool-buckbot/tool-buckbot:latest
-  schedule: "*/15 * * * *"
   cpu: 0.1
   mem: 256Mi
   mount: all
+
+- name: self-delete-self-delete-sync
+  command: bash -c 'export NOTDEV=1; timeout 610 python3 -m module_runner --module self_delete --job self-delete-sync --trigger schedule'
+  schedule: "*/15 * * * *"
+  image: tool-buckbot/tool-buckbot:latest
+  cpu: 0.1
+  mem: 256Mi
+  mount: all
+
 # END GENERATED MODULE JOBS
