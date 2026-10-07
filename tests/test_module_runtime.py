@@ -76,6 +76,29 @@ def test_register_enabled_modules_honors_blueprint_owned_api_prefix():
     )
 
 
+def test_load_enabled_modules_ignores_stale_registry_rows_outside_allowlist():
+    import router.module_runtime as runtime
+
+    current = _make_record("self_delete")
+    stale = _make_record("template_module")
+
+    with (
+        patch(
+            "router.module_registry.list_module_definitions",
+            return_value=[stale, current],
+        ),
+        patch(
+            "router.module_registry.load_enabled_module_names",
+            return_value={"self_delete"},
+        ),
+        patch("router.module_runtime.load_module", return_value=MagicMock()) as load,
+    ):
+        loaded = runtime.load_enabled_modules()
+
+    assert len(loaded) == 1
+    load.assert_called_once_with(current)
+
+
 def test_load_module_uses_explicit_blueprint_entry_point():
     import router.module_registry as registry
     import router.module_runtime as runtime

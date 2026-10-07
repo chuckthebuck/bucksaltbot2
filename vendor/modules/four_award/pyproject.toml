@@ -23,6 +23,7 @@ chuck_the_4awardhelper = "modules/four_award"
 
 [tool.setuptools.package-data]
 chuck_the_4awardhelper = [
+  "module.toml",
   "static/*.js",
   "static/*.css",
   "docs/*.md",

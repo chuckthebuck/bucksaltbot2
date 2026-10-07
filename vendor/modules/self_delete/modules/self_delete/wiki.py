@@ -113,14 +113,14 @@ class CommonsGateway:
             data = self._submit(
                 action="query",
                 titles=title,
-                prop="info|revisions|imageinfo|globalusage|imageusage",
+                prop="info|revisions|imageinfo|globalusage|fileusage",
                 rvprop="ids|timestamp|user|content",
                 rvslots="main",
                 rvlimit="max",
                 iiprop="timestamp|user",
                 iilimit="max",
                 gulimit="max",
-                iulimit="max",
+                fulimit="max",
                 formatversion=2,
                 **continuation,
             )
@@ -129,7 +129,7 @@ class CommonsGateway:
             if merged is None:
                 merged = dict(page)
             else:
-                for key in ("revisions", "imageinfo", "globalusage", "imageusage"):
+                for key in ("revisions", "imageinfo", "globalusage", "fileusage"):
                     merged.setdefault(key, []).extend(page.get(key, []))
             continuation = data.get("continue") or {}
             if not continuation:
@@ -272,7 +272,7 @@ class CommonsGateway:
                 uploaded=uploaded,
             )
 
-        local_usage = page.get("imageusage") or []
+        local_usage = page.get("fileusage") or []
         global_usage = page.get("globalusage") or []
         checks["local_usage_count"] = len(local_usage)
         checks["global_usage_count"] = len(global_usage)

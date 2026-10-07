@@ -23,6 +23,7 @@ chuck_file_changer = "modules/chuck_file_changer"
 
 [tool.setuptools.package-data]
 chuck_file_changer = [
+  "module.toml",
   "static/*.js",
   "static/*.css",
   "docs/*.md",

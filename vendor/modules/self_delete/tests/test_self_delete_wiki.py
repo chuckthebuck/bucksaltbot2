@@ -51,7 +51,7 @@ def page(*, request_user="Alice", uploader="Alice", age_days=1, usage=False):
             },
         ],
         "imageinfo": [{"timestamp": upload_time.isoformat(), "user": uploader}],
-        "imageusage": [{"title": "Used"}] if usage else [],
+        "fileusage": [{"title": "Used"}] if usage else [],
         "globalusage": [],
     }
 
@@ -133,6 +133,18 @@ def test_used_file_is_rejected():
 
     assert result.eligible is False
     assert result.reason_code == "in_use"
+
+
+def test_snapshot_uses_mediawiki_fileusage_property():
+    site = Site(page())
+
+    inspect(site)
+
+    request = next(call for call in site.calls if call.get("titles"))
+    assert "fileusage" in request["prop"].split("|")
+    assert "imageusage" not in request["prop"].split("|")
+    assert request["fulimit"] == "max"
+    assert "iulimit" not in request
 
 
 def test_uploader_must_currently_have_autopatrol_right():

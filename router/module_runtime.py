@@ -228,12 +228,26 @@ def load_module(record: ModuleRecord) -> LoadedModule:
 
 
 def load_enabled_modules() -> list[LoadedModule]:
-    """Activate every registry-enabled module, preserving registry order."""
+    """Activate allowlisted, registry-enabled modules in registry order.
+
+    The SQL registry can retain rows from older deployments.  The checked-in
+    enabled-module allowlist remains the deployment boundary, so a stale row
+    cannot keep importing removed packages merely because its historic SQL
+    ``enabled`` flag is still true.
+    """
     # Resolve the listing function at call time so registry bootstrap and test
     # compatibility patches are complete before module imports begin.
-    from router.module_registry import list_module_definitions
+    from router.module_registry import (
+        list_module_definitions,
+        load_enabled_module_names,
+    )
 
-    return [load_module(record) for record in list_module_definitions(enabled_only=True)]
+    enabled_names = load_enabled_module_names()
+    return [
+        load_module(record)
+        for record in list_module_definitions(enabled_only=True)
+        if record.definition.name in enabled_names
+    ]
 
 
 def register_enabled_modules(app: Flask) -> list[str]:
