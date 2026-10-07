@@ -111,6 +111,27 @@ def quarry_url_api():
     return jsonify({"url": url})
 
 
+@blueprint.get("/api/source-suggestions")
+def source_suggestions_api():
+    _, denied = _require_access()
+    if denied:
+        return denied
+
+    from .source import suggest_source_targets
+
+    try:
+        limit = int(request.args.get("limit", 10))
+    except (TypeError, ValueError):
+        limit = 10
+    return jsonify(
+        {
+            "suggestions": suggest_source_targets(
+                request.args.get("mode", ""), request.args.get("query", ""), limit=limit
+            )
+        }
+    )
+
+
 @blueprint.post("/api/preview")
 def preview_api():
     username, denied = _require_access()

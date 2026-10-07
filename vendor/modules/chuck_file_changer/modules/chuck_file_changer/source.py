@@ -14,6 +14,7 @@ DEFAULT_SOURCE_LIMIT = 5000
 MAX_SOURCE_LIMIT = 50000
 
 SOURCE_MODES = {"user", "category", "page", "search"}
+SUGGESTION_MODES = {"user", "category", "page"}
 
 
 def source_mode_from_payload(payload: dict[str, Any]) -> str:
@@ -51,6 +52,30 @@ def source_limit(payload: dict[str, Any]) -> int:
     except (TypeError, ValueError):
         value = DEFAULT_SOURCE_LIMIT
     return max(1, min(value, MAX_SOURCE_LIMIT))
+
+
+def suggest_source_targets(mode: str, query: str, *, limit: int = 10) -> list[str]:
+    """Return Commons-backed completions for source fields that name a target."""
+    mode = str(mode or "").strip().lower()
+    query = str(query or "").strip()
+    if mode not in SUGGESTION_MODES or len(query) < 2:
+        return []
+    limit = max(1, min(int(limit), 20))
+
+    if mode == "user":
+        data = _get({"action": "query", "list": "allusers", "auprefix": query, "aulimit": limit})
+        return [str(row["name"]) for row in data.get("query", {}).get("allusers", []) if row.get("name")]
+    if mode == "category":
+        prefix = query[9:] if query.lower().startswith("category:") else query
+        data = _get({"action": "query", "list": "allcategories", "acprefix": prefix, "aclimit": limit})
+        return [
+            f"Category:{row['*']}"
+            for row in data.get("query", {}).get("allcategories", [])
+            if row.get("*")
+        ]
+
+    data = _get({"action": "query", "list": "prefixsearch", "pssearch": query, "pslimit": limit})
+    return [str(row["title"]) for row in data.get("query", {}).get("prefixsearch", []) if row.get("title")]
 
 
 def resolve_vfc_source(payload: dict[str, Any]) -> tuple[list[FileChangeTarget], str]:
