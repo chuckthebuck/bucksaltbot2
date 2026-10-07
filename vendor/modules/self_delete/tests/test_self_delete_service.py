@@ -86,7 +86,7 @@ class Gateway:
             "Alice",
             "Alice",
             datetime.now(timezone.utc),
-            {"eligible": eligible},
+            {"eligible": eligible, "g7_marker_present": True},
         )
 
     def delete(self, title, _reason):
@@ -120,7 +120,11 @@ def test_dry_run_parallel_inspection_never_deletes():
     assert result["skipped"] == 1
     assert result["deleted"] == 0
     assert queued["settings"].dry_run is True
-    assert queued["candidates"][0].title == "File:A.jpg"
+    assert [candidate.title for candidate in queued["candidates"]] == [
+        "File:A.jpg",
+        "File:B.jpg",
+    ]
+    assert audit.statuses[2][1] == "queued_for_review_route"
     assert all(not gateway.deleted for gateway in gateways)
     assert any(
         name.startswith("self-delete-check")

@@ -35,6 +35,7 @@ class Gateway:
         self.become_used = become_used
         self.inspections = 0
         self.deleted = []
+        self.rerouted = []
 
     def inspect(self, candidate, **_kwargs):
         self.inspections += 1
@@ -48,12 +49,16 @@ class Gateway:
             "Alice",
             "Alice",
             datetime.now(timezone.utc),
-            {"eligible": eligible},
+            {"eligible": eligible, "g7_marker_present": True},
         )
 
     def delete(self, title, _reason):
         self.deleted.append(title)
         return {"delete": {"title": title}}
+
+    def route_failed_g7(self, title, reason_code):
+        self.rerouted.append((title, reason_code))
+        return {"edit": {"title": title, "result": "Success"}}
 
 
 def payload():
@@ -66,6 +71,13 @@ def payload():
             "deletion_reason": "G7 test",
         }
     )
+
+
+def route_payload():
+    values = json.loads(payload())
+    values["action"] = "route_failed"
+    values["initial_reason_code"] = "not_autopatrolled"
+    return json.dumps(values)
 
 
 def test_queue_worker_revalidates_and_skips_file_that_becomes_used():
@@ -103,6 +115,49 @@ def test_queue_worker_dry_run_revalidates_without_deleting():
     assert audit.statuses[1][0] == "dry_run"
 
 
+def test_queue_worker_routes_failed_g7_for_human_review():
+    audit = WorkerAudit()
+    gateway = Gateway(become_used=True)
+    gateway.inspections = 1
+
+    with (
+        patch("self_delete.queue.SQLAuditStore", return_value=audit),
+        patch("self_delete.queue.CommonsGateway", return_value=gateway),
+    ):
+        detail = process_queued_self_delete(
+            site=object(),
+            title="File:A.jpg",
+            payload_json=route_payload(),
+            dry_run=False,
+        )
+
+    assert "Other speedy deletions" in detail
+    assert gateway.deleted == []
+    assert gateway.rerouted == [("File:A.jpg", "in_use")]
+    assert audit.statuses[1][0] == "rerouted"
+
+
+def test_queue_worker_dry_run_reports_reroute_without_editing():
+    audit = WorkerAudit()
+    gateway = Gateway(become_used=True)
+    gateway.inspections = 1
+
+    with (
+        patch("self_delete.queue.SQLAuditStore", return_value=audit),
+        patch("self_delete.queue.CommonsGateway", return_value=gateway),
+    ):
+        detail = process_queued_self_delete(
+            site=object(),
+            title="File:A.jpg",
+            payload_json=route_payload(),
+            dry_run=True,
+        )
+
+    assert "G7(failed bot)" in detail
+    assert gateway.rerouted == []
+    assert audit.statuses[1][1] == "dry_run_reroute"
+
+
 def test_enqueue_uses_dedicated_tables_and_dispatches_worker_chunks():
     cursor = MagicMock()
     connection = MagicMock()
@@ -136,14 +191,24 @@ def test_enqueue_uses_dedicated_tables_and_dispatches_worker_chunks():
             candidates=candidates,
             candidate_ids={"File:A.jpg": 1, "File:B.jpg": 2},
             inspections={
-                "File:A.jpg": SimpleNamespace(uploader="Alice"),
-                "File:B.jpg": SimpleNamespace(uploader="Bob"),
+                "File:A.jpg": SimpleNamespace(
+                    uploader="Alice", eligible=True, reason_code="eligible"
+                ),
+                "File:B.jpg": SimpleNamespace(
+                    uploader="Bob", eligible=False, reason_code="not_autopatrolled"
+                ),
             },
         )
 
     assert result["job_ids"] == [101, 102]
     assert result["chunks"] == 2
     assert task.delay.call_args_list == [call(101), call(102)]
+    payloads = [
+        json.loads(call.args[1][5])
+        for call in cursor.execute.call_args_list
+        if "INSERT INTO self_delete_job_items" in call.args[0]
+    ]
+    assert [item["action"] for item in payloads] == ["delete", "route_failed"]
     statements = [call.args[0] for call in cursor.execute.call_args_list]
     assert (
         sum("INSERT INTO self_delete_jobs" in statement for statement in statements)

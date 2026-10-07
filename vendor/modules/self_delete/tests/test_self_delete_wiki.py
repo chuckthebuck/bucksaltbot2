@@ -27,6 +27,8 @@ class Site:
             return Request({"query": {"users": [{"rights": self.rights}]}})
         if params.get("action") == "delete":
             return Request({"delete": {"title": params["title"]}})
+        if params.get("action") == "edit":
+            return Request({"edit": {"title": params["title"], "result": "Success"}})
         return Request({"query": {"pages": [self.page]}})
 
 
@@ -91,6 +93,7 @@ def test_g7_must_be_an_active_speedy_template_parameter():
         "{{G7}}",
         "{{SD|G70}}",
         "<!-- {{SD|G7}} -->",
+        "{{SD|G7(failed bot)}}",
     ):
         snapshot = page()
         snapshot["revisions"][-1]["slots"]["main"]["content"] = text
@@ -146,3 +149,21 @@ def test_delete_uses_csrf_token_and_reason():
     assert response["delete"]["title"] == "File:Example.jpg"
     assert site.calls[-1]["token"] == "TOKEN"
     assert site.calls[-1]["reason"] == "G7 test"
+
+
+def test_failed_g7_is_rewritten_for_other_speedy_deletions():
+    snapshot = page()
+    snapshot["revisions"][-1]["revid"] = 123
+    site = Site(snapshot)
+
+    response = CommonsGateway(site).route_failed_g7(
+        "File:Example.jpg", "not_autopatrolled"
+    )
+
+    assert response["edit"]["result"] == "Success"
+    request = site.calls[-1]
+    assert request["action"] == "edit"
+    assert "{{SD|G7(failed bot)}}" in request["text"]
+    assert request["baserevid"] == 123
+    assert "not_autopatrolled" in request["summary"]
+    assert request["token"] == "TOKEN"

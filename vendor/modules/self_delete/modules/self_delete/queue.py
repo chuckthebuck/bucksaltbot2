@@ -65,6 +65,10 @@ def enqueue_self_delete_batch(
                         "page_id": candidate.page_id,
                         "max_age_seconds": settings.max_age_seconds,
                         "deletion_reason": settings.deletion_reason,
+                        "action": (
+                            "delete" if inspection.eligible else "route_failed"
+                        ),
+                        "initial_reason_code": inspection.reason_code,
                     }
                     cursor.execute(
                         """INSERT INTO self_delete_job_items
@@ -183,7 +187,7 @@ def _reconcile_job(job_id: int) -> tuple[str, dict[str, int]]:
 def process_queued_self_delete(
     *, site, title: str, payload_json: str | None, dry_run: bool
 ) -> str:
-    """Freshly validate and possibly delete one dedicated queue item."""
+    """Freshly validate and process one delete or human-review route item."""
     try:
         payload = json.loads(payload_json or "{}")
     except json.JSONDecodeError as exc:
@@ -194,6 +198,9 @@ def process_queued_self_delete(
     run_id = int(payload["audit_run_id"])
     candidate_id = int(payload["audit_candidate_id"])
     candidate = Candidate(title=title, page_id=payload.get("page_id"))
+    action = str(payload.get("action") or "delete")
+    if action not in {"delete", "route_failed"}:
+        raise RuntimeError(f"Unknown self-delete queue action: {action}")
     audit = SQLAuditStore(connection_factory=_open_conn)
     audit.event(
         run_id,
@@ -201,7 +208,7 @@ def process_queued_self_delete(
         "info",
         "queue_worker_started",
         "Dedicated queue worker claimed self-delete item",
-        {"dry_run": bool(dry_run)},
+        {"dry_run": bool(dry_run), "action": action},
     )
     try:
         gateway = CommonsGateway(site)
@@ -210,7 +217,51 @@ def process_queued_self_delete(
             now=datetime.now(timezone.utc),
             max_age_seconds=int(payload["max_age_seconds"]),
         )
-        audit.inspection(run_id, candidate_id, inspection, phase="queue_predelete")
+        phase = "queue_predelete" if action == "delete" else "queue_preroute"
+        audit.inspection(run_id, candidate_id, inspection, phase=phase)
+        if action == "route_failed":
+            if inspection.eligible:
+                detail = "Reroute canceled: file now passes every G7 criterion"
+                audit.set_candidate_status(
+                    run_id, candidate_id, "skipped", "reroute_now_eligible", detail
+                )
+                audit.refresh_run(run_id)
+                return detail
+            if not inspection.checks.get("g7_marker_present"):
+                detail = "Reroute canceled: active G7 speedy marker is no longer present"
+                audit.set_candidate_status(
+                    run_id, candidate_id, "skipped", "reroute_marker_gone", detail
+                )
+                audit.refresh_run(run_id)
+                return detail
+            if dry_run:
+                detail = (
+                    "Would replace G7 with G7(failed bot); edit suppressed by "
+                    "self-delete queue dry-run mode"
+                )
+                audit.set_candidate_status(
+                    run_id, candidate_id, "dry_run", "dry_run_reroute", detail
+                )
+                audit.refresh_run(run_id)
+                return detail
+            audit.event(
+                run_id,
+                candidate_id,
+                "info",
+                "reroute_started",
+                "Replacing G7 with G7(failed bot) for human review",
+                {"reason_code": inspection.reason_code},
+            )
+            response = gateway.route_failed_g7(title, inspection.reason_code)
+            edit = response.get("edit") or {}
+            if str(edit.get("result") or "").casefold() != "success":
+                raise RuntimeError("MediaWiki edit response did not confirm reroute")
+            detail = "Marked G7(failed bot) and routed to Other speedy deletions"
+            audit.set_candidate_status(
+                run_id, candidate_id, "rerouted", inspection.reason_code, detail
+            )
+            audit.refresh_run(run_id)
+            return detail
         if not inspection.eligible:
             detail = f"Skipped after queue recheck: {inspection.reason_detail}"
             audit.set_candidate_status(

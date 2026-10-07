@@ -152,13 +152,30 @@ def run_self_delete(
             if inspection_results.get(candidate.title)
             and inspection_results[candidate.title].eligible
         ]
+        reroutable = [
+            candidate
+            for candidate in candidates
+            if inspection_results.get(candidate.title)
+            and not inspection_results[candidate.title].eligible
+            and inspection_results[candidate.title].checks.get("g7_marker_present")
+        ]
+        for candidate in reroutable:
+            result = inspection_results[candidate.title]
+            audit.set_candidate_status(
+                run_id,
+                candidate_ids[candidate.title],
+                "queued",
+                "queued_for_review_route",
+                f"Queued to mark G7(failed bot): {result.reason_detail}",
+            )
+        queue_candidates = eligible + reroutable
 
-        if eligible:
+        if queue_candidates:
             ctx.check_cancelled()
             queue_result = queue_submitter(
                 settings=settings,
                 run_id=run_id,
-                candidates=eligible,
+                candidates=queue_candidates,
                 candidate_ids=candidate_ids,
                 inspections=inspection_results,
             )

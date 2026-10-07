@@ -265,7 +265,7 @@ class SQLAuditStore:
             None,
             "info",
             "self_delete_queue_handoff",
-            "Eligible files handed to the dedicated self-delete queue",
+            "Delete and failed-verification route actions handed to the dedicated queue",
             queue_result,
         )
 
@@ -309,7 +309,7 @@ class SQLAuditStore:
                     (
                         status,
                         counts.get("deleted", 0),
-                        counts.get("skipped", 0),
+                        counts.get("skipped", 0) + counts.get("rerouted", 0),
                         counts.get("failed", 0),
                         pending,
                         run_id,

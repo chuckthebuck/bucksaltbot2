@@ -9,6 +9,8 @@ from typing import Any
 from .models import Candidate, Inspection
 
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_FAILED_G7_RE = re.compile(r"(?<![A-Z0-9])G7\s*\(\s*failed\s+bot\s*\)", re.IGNORECASE)
+_G7_TOKEN_RE = re.compile(r"(?<![A-Z0-9])G7(?![A-Z0-9])", re.IGNORECASE)
 _G7_SPEEDY_RE = re.compile(
     r"\{\{\s*(?:template\s*:\s*)?"
     r"(?:sd|speedy(?:[\s_]*delete)?)\s*\|"
@@ -27,7 +29,24 @@ def _has_g7_speedy_template(text: str) -> bool:
     do not constitute an active deletion request and are removed first.
     """
     active_text = _COMMENT_RE.sub("", text)
-    return bool(_G7_SPEEDY_RE.search(active_text))
+    return any(
+        not _FAILED_G7_RE.search(match.group(0))
+        for match in _G7_SPEEDY_RE.finditer(active_text)
+    )
+
+
+def _mark_g7_failed(text: str) -> str | None:
+    """Replace the first active G7 speedy marker with the human-review marker."""
+    comment_spans = [match.span() for match in _COMMENT_RE.finditer(text)]
+    for match in _G7_SPEEDY_RE.finditer(text):
+        if any(start <= match.start() < end for start, end in comment_spans):
+            continue
+        template = match.group(0)
+        if _FAILED_G7_RE.search(template):
+            continue
+        replacement = _G7_TOKEN_RE.sub("G7(failed bot)", template, count=1)
+        return f"{text[:match.start()]}{replacement}{text[match.end():]}"
+    return None
 
 
 def _timestamp(value: str) -> datetime:
@@ -297,3 +316,30 @@ class CommonsGateway:
             reason=reason,
             watchlist="nochange",
         )
+
+    def route_failed_g7(self, title: str, reason_code: str) -> dict[str, Any]:
+        """Mark an unverified G7 for human review in Other speedy deletions."""
+        page = self._page_snapshot(title)
+        revisions = sorted(
+            page.get("revisions") or [], key=lambda row: str(row.get("timestamp") or "")
+        )
+        if page.get("missing") or not revisions:
+            raise RuntimeError("Cannot reroute a missing file or unavailable revision")
+        current = revisions[-1]
+        updated_text = _mark_g7_failed(_revision_text(current))
+        if updated_text is None:
+            raise RuntimeError("Current page has no active G7 speedy marker to reroute")
+        params: dict[str, Any] = {
+            "action": "edit",
+            "title": title,
+            "text": updated_text,
+            "token": self.site.tokens["csrf"],
+            "summary": (
+                "Bot could not verify every G7 criterion; routing to "
+                f"[[Category:Other speedy deletions]] ({reason_code})"
+            ),
+            "watchlist": "nochange",
+        }
+        if current.get("revid") is not None:
+            params["baserevid"] = current["revid"]
+        return self._submit(**params)

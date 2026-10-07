@@ -27,9 +27,12 @@ or newly used file is safely completed as a no-edit skip. The module defaults to
 
 Discovery is intentionally broad: it lists file members of the configured
 speedy-deletion category. Each discovered file is then verified independently.
-If any required fact is absent, ambiguous, or fails its check, that file is
-recorded with a reason and skipped while processing continues with the next
-candidate.
+If any required fact is absent, ambiguous, or fails its check while an active G7
+marker remains, a queue worker replaces that token with `G7(failed bot)`. The
+`SD` template then falls through to `Speedydelete`, placing the file in
+`Category:Other speedy deletions` for human review. The verification reason is
+kept in SQL and in the edit summary. If the marker disappears before the worker
+runs, no edit is made. Dry-run mode reports the proposed reroute without editing.
 
 ## Runtime configuration
 
