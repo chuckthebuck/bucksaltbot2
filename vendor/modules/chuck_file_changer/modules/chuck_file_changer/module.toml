@@ -1,5 +1,5 @@
 name = "chuck_file_changer"
-repo = "https://github.com/chuckthebuck/chuck-file-changer"
+repo = "https://github.com/chuckthebuck/Chuckthefilechange"
 entry_point = "chuck_file_changer.service:run_file_change"
 ui = true
 redis_namespace = "chuck_file_changer"

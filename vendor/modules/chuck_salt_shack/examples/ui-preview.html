@@ -9,6 +9,9 @@
   <body>
     <div id="chuck-salt-shack-app"></div>
     <script>
+      // This fixture supplies synthetic network responses to the packaged UI.
+      // IDs, timestamps, source digests, and plan tokens are illustrative; the
+      // real blueprint derives them from installed source and persisted runs.
       const contracts = [
         {
           contract: 1,
@@ -16,7 +19,7 @@
           display_name: "Page purger",
           description: "Preview and perform cache purges through the framework action catalog.",
           generated: false,
-          source_digest: "682d28d5e6639ff1c845ac36b02621566c0d841bcf5c56ace1bef256a9bb4818",
+          source_digest: "0000000000000000000000000000000000000000000000000000000000000000",
           inputs: {
             wiki: {
               type: "wiki",
@@ -60,7 +63,7 @@
           display_name: "Transclusion report",
           description: "Find pages transcluding a template and return a structured report.",
           generated: false,
-          source_digest: "618334298c3467d7beb6e87d9deb249bf11a8fdcfa2cf424425d8b1492a1a457",
+          source_digest: "1111111111111111111111111111111111111111111111111111111111111111",
           inputs: {
             wiki: {
               type: "wiki",
@@ -71,8 +74,9 @@
             template: {
               type: "page",
               label: "Template",
+              description: "The template whose transclusions should be listed.",
               required: true,
-              namespace: { selectable: false, allowed: [10], default: 10 },
+              namespace: { selectable: true, allowed: [], default: 10 },
               wiki_input: "wiki"
             },
             namespace: {
@@ -116,6 +120,25 @@
           display_name: "Page purger",
           source_digest: contracts[0].source_digest
         },
+        contract: {
+          contract: contracts[0].contract,
+          id: contracts[0].id,
+          display_name: contracts[0].display_name,
+          description: contracts[0].description,
+          inputs: contracts[0].inputs,
+          outputs: contracts[0].outputs,
+          actions: contracts[0].actions
+        },
+        inputs: {
+          wiki: { code: "commons", family: "commons" },
+          targets: [
+            { namespace: 0, title: "Main Page" },
+            { namespace: 10, title: "Did you know" }
+          ],
+          force_link_update: true,
+          recursive_link_update: false
+        },
+        arguments: ["-verbose"],
         outputs: {
           planned_count: 2,
           targets: [
@@ -146,12 +169,14 @@
               index: 0,
               type: "mediawiki.page.purge",
               target: { wiki: { code: "commons", family: "commons" }, namespace: 0, title: "Main Page" },
+              params: { forcelinkupdate: true, forcerecursivelinkupdate: false },
               status: "planned"
             },
             {
               index: 1,
               type: "mediawiki.page.purge",
               target: { wiki: { code: "commons", family: "commons" }, namespace: 10, title: "Did you know" },
+              params: { forcelinkupdate: true, forcerecursivelinkupdate: false },
               status: "planned"
             }
           ]
@@ -209,10 +234,26 @@
             username: "ExampleMaintainer",
             can_preview: true,
             can_apply: true,
-            can_manage: true
+            can_manage: true,
+            can_estop: true,
+            saltlicks: {
+              page_purger: {
+                can_preview: true,
+                can_apply: true,
+                can_estop: true,
+                enabled: true
+              },
+              transclusion_report: {
+                can_preview: true,
+                can_apply: true,
+                can_estop: true,
+                enabled: true
+              }
+            }
           };
         } else if (url.endsWith("/saltlicks")) {
           body = {
+            registry: 1,
             module: { id: "chuck_salt_shack", display_name: "Salt Shack" },
             saltlicks: contracts,
             fingerprint: "preview"

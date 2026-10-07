@@ -3,6 +3,8 @@ import App from "./SaltShackApp.vue";
 import "./style.css";
 
 // The framework owns the page shell; this bundle owns only its declared mount.
+// A missing mount is valid on routes that load package metadata without the
+// module UI, so entry setup is deliberately a no-op rather than an exception.
 const mount = document.getElementById("chuck-salt-shack-app");
 
 if (mount) {

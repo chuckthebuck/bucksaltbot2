@@ -1,1 +1,1 @@
-# Four Award module package
+"""Four Award review, evidence verification, and publication module."""

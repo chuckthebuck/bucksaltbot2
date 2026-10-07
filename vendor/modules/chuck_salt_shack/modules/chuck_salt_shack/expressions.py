@@ -1,8 +1,10 @@
-"""A deliberately small expression language for advanced text transforms.
+"""A deliberately small interpreted language for advanced text transforms.
 
 Expressions look like Python, but are interpreted node-by-node. They cannot
 import modules, access attributes, create comprehensions, or call arbitrary
-objects. This keeps Saltlick useful without turning its shared UI into `exec`.
+objects. Source is parsed with Python's AST only for syntax; neither ``eval``
+nor ``exec`` is used.  This keeps the legacy recipe surface useful without
+turning user-authored expression text into general Python execution.
 """
 
 from __future__ import annotations
@@ -12,6 +14,8 @@ import re
 from typing import Any, Callable
 
 
+# Source length, AST node count, multiplier checks, and result bounds cover
+# different expansion paths; none is a substitute for the others.
 MAX_EXPRESSION_LENGTH = 4000
 MAX_RESULT_LENGTH = 2_000_000
 _FLAG_VALUES = {
@@ -35,7 +39,7 @@ def _regex_flags(value: Any) -> int:
 
 
 def _replace(text: Any, old: Any, new: Any, count: Any = -1) -> str:
-    """Perform a literal replacement after predicting the result size."""
+    """Perform a literal replacement after predicting the worst result size."""
     source = str(text)
     needle = str(old)
     replacement = str(new)
@@ -58,7 +62,11 @@ def _regex(
     count: Any = 0,
     flags: Any = "",
 ) -> str:
-    """Perform a regex replacement while enforcing the result-size limit."""
+    """Perform a regex replacement while enforcing the result-size limit.
+
+    ``Match.expand`` accounts for backreferences in replacement text; simply
+    multiplying the literal replacement length would underestimate them.
+    """
     source = str(text)
     replacement_text = str(replacement)
     requested_count = max(0, int(count))
@@ -82,6 +90,9 @@ def _slice(value: Any, start: Any = None, stop: Any = None) -> Any:
     return value[start_value:stop_value]
 
 
+# Call syntax resolves exclusively through this table.  Attribute access is
+# rejected by the AST validator, so expressions cannot reach methods on input
+# strings or attributes on returned values.
 _FUNCTIONS: dict[str, Callable[..., Any]] = {
     "replace": _replace,
     "regex": _regex,
@@ -98,6 +109,8 @@ _FUNCTIONS: dict[str, Callable[..., Any]] = {
     "slice": _slice,
 }
 
+# Operator classes, rather than textual names, keep evaluation aligned with the
+# exact nodes approved during structural validation.
 _COMPARE_OPERATORS: dict[type[ast.cmpop], Callable[[Any, Any], bool]] = {
     ast.Eq: lambda left, right: left == right,
     ast.NotEq: lambda left, right: left != right,
@@ -111,7 +124,11 @@ _COMPARE_OPERATORS: dict[type[ast.cmpop], Callable[[Any, Any], bool]] = {
 
 
 def parse_expression(expression: str) -> ast.Expression:
-    """Parse and structurally validate a Saltlick expression."""
+    """Parse and structurally validate a legacy Saltlick expression.
+
+    Returning the checked tree keeps parsing separate from interpretation and
+    makes it possible for ``TransformSpec`` to reject unsafe syntax early.
+    """
     text = str(expression or "").strip()
     if not text:
         raise ValueError("expression transform requires an expression")
@@ -121,6 +138,7 @@ def parse_expression(expression: str) -> ast.Expression:
         tree = ast.parse(text, mode="eval")
     except SyntaxError as exc:
         raise ValueError(f"invalid expression: {exc.msg}") from exc
+    # Text length alone does not bound nested syntax, so cap the complete AST.
     if sum(1 for _node in ast.walk(tree)) > 200:
         raise ValueError("expression is too complex")
     _validate_node(tree.body)
@@ -128,7 +146,11 @@ def parse_expression(expression: str) -> ast.Expression:
 
 
 def _validate_node(node: ast.AST) -> None:
-    """Reject syntax outside the expression language allowlist."""
+    """Recursively reject every AST node outside the explicit allowlist.
+
+    This is deliberately positive validation: a newly introduced Python AST
+    node remains unavailable until it is consciously handled here and below.
+    """
     if isinstance(node, ast.Constant):
         if not isinstance(node.value, (str, int, float, bool, type(None))):
             raise ValueError("expression contains an unsupported constant")
@@ -180,7 +202,7 @@ def evaluate_expression(
     title: str,
     namespace: int,
 ) -> str:
-    """Evaluate a validated expression and require a bounded string result."""
+    """Interpret a validated expression and require a bounded string result."""
     tree = parse_expression(expression)
     result = _evaluate(
         tree.body,
@@ -194,12 +216,14 @@ def evaluate_expression(
 
 
 def _evaluate(node: ast.AST, names: dict[str, Any]) -> Any:
-    """Interpret one previously validated expression node."""
+    """Interpret one previously validated node without Python evaluation APIs."""
     if isinstance(node, ast.Constant):
         return node.value
     if isinstance(node, ast.Name):
         return names[node.id]
     if isinstance(node, ast.Call):
+        # ``_validate_node`` proved this is a simple allowlisted name.  The type
+        # ignore communicates that cross-function invariant to the type checker.
         function = _FUNCTIONS[node.func.id]  # type: ignore[union-attr]
         args = [_evaluate(argument, names) for argument in node.args]
         kwargs = {
@@ -235,6 +259,8 @@ def _evaluate(node: ast.AST, names: dict[str, Any]) -> Any:
                 raise ValueError("expression multiplication result is too large")
             return result
     if isinstance(node, ast.BoolOp):
+        # Preserve Python-style short-circuit/value-return semantics so recipe
+        # expressions can use ``and``/``or`` without evaluating both branches.
         if isinstance(node.op, ast.And):
             result: Any = True
             for value in node.values:

@@ -2,6 +2,7 @@
 
 
 def module_manifest():
+    """Return the framework manifest for the packaged Four Award module."""
     return {
         "name": "four_award",
         "repo": "https://github.com/chuckthebuck/module4awardhelper",
