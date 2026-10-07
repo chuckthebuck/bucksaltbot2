@@ -9,7 +9,8 @@ links to recent framework output.
 Before a live deletion the module requires all of the following, twice:
 
 - the category member is a live file page;
-- the current page contains an explicit G7 speedy-deletion marker;
+- the current page contains `G7` inside an active `SD`, `Speedydelete`, or
+  `Speedy` template (prose, other templates, and HTML comments do not count);
 - the editor who introduced the current marker is the original uploader;
 - every binary revision was uploaded by that same user;
 - the file is strictly younger than seven days;
@@ -23,6 +24,12 @@ without mixing self-delete records into rollback history. The second validation
 happens in the claiming worker immediately before the delete request. A changed
 or newly used file is safely completed as a no-edit skip. The module defaults to
 `dry_run=true`.
+
+Discovery is intentionally broad: it lists file members of the configured
+speedy-deletion category. Each discovered file is then verified independently.
+If any required fact is absent, ambiguous, or fails its check, that file is
+recorded with a reason and skipped while processing continues with the next
+candidate.
 
 ## Runtime configuration
 

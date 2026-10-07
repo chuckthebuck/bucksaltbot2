@@ -8,10 +8,26 @@ from typing import Any
 
 from .models import Candidate, Inspection
 
-_G7_RE = re.compile(
-    r"\{\{\s*(?:sd|speedy\s*delete)\s*\|(?:(?!\}\}).)*\bG7\b",
+_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_G7_SPEEDY_RE = re.compile(
+    r"\{\{\s*(?:template\s*:\s*)?"
+    r"(?:sd|speedy(?:[\s_]*delete)?)\s*\|"
+    r"(?:(?!\}\}).)*?(?<![A-Z0-9])G7(?![A-Z0-9])"
+    r"(?:(?!\}\}).)*?\}\}",
     re.IGNORECASE | re.DOTALL,
 )
+
+
+def _has_g7_speedy_template(text: str) -> bool:
+    """Recognize G7 only inside a Commons speedy-deletion template.
+
+    Commons documents ``SD`` for criterion codes and ``Speedydelete`` (with
+    ``Speedy`` as its shortcut) for prose reasons. Template namespace prefixes,
+    whitespace, and underscores are insignificant in wikitext. HTML comments
+    do not constitute an active deletion request and are removed first.
+    """
+    active_text = _COMMENT_RE.sub("", text)
+    return bool(_G7_SPEEDY_RE.search(active_text))
 
 
 def _timestamp(value: str) -> datetime:
@@ -159,11 +175,11 @@ class CommonsGateway:
             page.get("revisions") or [], key=lambda row: str(row.get("timestamp") or "")
         )
         current_text = _revision_text(revisions[-1]) if revisions else ""
-        checks["g7_marker_present"] = bool(_G7_RE.search(current_text))
+        checks["g7_marker_present"] = _has_g7_speedy_template(current_text)
         requester = None
         marker_was_present = False
         for revision in revisions:
-            marker_present = bool(_G7_RE.search(_revision_text(revision)))
+            marker_present = _has_g7_speedy_template(_revision_text(revision))
             if marker_present and not marker_was_present:
                 requester = str(revision.get("user") or "").strip() or None
             marker_was_present = marker_present

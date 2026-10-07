@@ -69,6 +69,48 @@ def test_eligible_g7_request_passes_all_checks():
     assert result.checks["uploader_has_autopatrol"] is True
 
 
+def test_speedydelete_and_speedy_shortcut_with_g7_are_recognized():
+    for marker in (
+        "{{Speedydelete|G7: uploader request}}",
+        "{{speedy|reason=G7}}",
+        "{{Template:SD | 1 = g7 }}",
+        "{{speedy_delete|G7}}",
+    ):
+        snapshot = page()
+        snapshot["revisions"][-1]["slots"]["main"]["content"] = marker
+
+        result = inspect(Site(snapshot))
+
+        assert result.eligible is True, marker
+
+
+def test_g7_must_be_an_active_speedy_template_parameter():
+    for text in (
+        "G7 mentioned in prose only",
+        "{{Delete|G7}}",
+        "{{G7}}",
+        "{{SD|G70}}",
+        "<!-- {{SD|G7}} -->",
+    ):
+        snapshot = page()
+        snapshot["revisions"][-1]["slots"]["main"]["content"] = text
+
+        result = inspect(Site(snapshot))
+
+        assert result.eligible is False, text
+        assert result.reason_code == "missing_g7", text
+
+
+def test_missing_revision_history_is_unverifiable_and_skipped():
+    snapshot = page()
+    snapshot["revisions"] = []
+
+    result = inspect(Site(snapshot))
+
+    assert result.eligible is False
+    assert result.reason_code == "missing_g7"
+
+
 def test_request_must_be_made_by_original_uploader():
     result = inspect(Site(page(request_user="Mallory")))
 
