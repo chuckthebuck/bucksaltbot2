@@ -1,0 +1,133 @@
+.self-delete {
+  color: var(--color-base, #202122);
+  margin: 0 auto;
+  max-width: 1080px;
+  padding: 24px 16px 48px;
+}
+
+.self-delete__header,
+.self-delete__panel,
+.self-delete__runs-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+}
+
+.self-delete__header {
+  border-bottom: 1px solid var(--border-color-subtle, #eaecf0);
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+}
+
+.self-delete h1,
+.self-delete h2,
+.self-delete p {
+  margin-top: 0;
+}
+
+.self-delete__header p:not(.self-delete__eyebrow),
+.self-delete__panel p,
+.self-delete__runs-heading p {
+  color: var(--color-subtle, #54595d);
+  margin-bottom: 0;
+}
+
+.self-delete__eyebrow {
+  color: var(--color-progressive, #36c);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.self-delete__identity,
+.self-delete__status {
+  background: var(--background-color-neutral-subtle, #f8f9fa);
+  border: 1px solid var(--border-color-base, #a2a9b1);
+  border-radius: 999px;
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+
+.self-delete__message {
+  margin: 14px 0;
+}
+
+.self-delete__grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  margin: 18px 0;
+}
+
+.self-delete__grid article,
+.self-delete__panel,
+.self-delete__runs {
+  background: var(--background-color-base, #fff);
+  border: 1px solid var(--border-color-base, #a2a9b1);
+  border-radius: 2px;
+  padding: 16px;
+}
+
+.self-delete__grid strong,
+.self-delete__grid span {
+  display: block;
+}
+
+.self-delete__grid span {
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
+.self-delete__panel {
+  align-items: center;
+}
+
+.self-delete__panel h2,
+.self-delete__runs h2 {
+  font-size: 20px;
+  margin-bottom: 6px;
+}
+
+.self-delete__runs {
+  margin-top: 18px;
+}
+
+.self-delete__table-wrap {
+  margin-top: 14px;
+  overflow-x: auto;
+}
+
+.self-delete table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.self-delete th,
+.self-delete td {
+  border-bottom: 1px solid var(--border-color-subtle, #eaecf0);
+  padding: 10px 8px;
+  text-align: left;
+}
+
+.self-delete__empty {
+  color: var(--color-subtle, #54595d);
+  text-align: center !important;
+}
+
+@media (max-width: 700px) {
+  .self-delete__header,
+  .self-delete__panel,
+  .self-delete__runs-heading {
+    flex-direction: column;
+  }
+
+  .self-delete__identity {
+    white-space: normal;
+  }
+}

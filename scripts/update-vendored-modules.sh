@@ -66,6 +66,12 @@ update_module \
 	"${CHUCK_SALT_SHACK_REMOTE:-https://github.com/chuckthebuck/chuck-the-salt-shack.git}" \
 	"${CHUCK_SALT_SHACK_BRANCH:-main}"
 
+update_module \
+	"Self Delete" \
+	"vendor/modules/self_delete" \
+	"${SELF_DELETE_REMOTE:-https://github.com/chuckthebuck/chuck-self-delete.git}" \
+	"${SELF_DELETE_BRANCH:-main}"
+
 python3 scripts/update-module-requirements.py
 npm install
 npm run modules:frontend

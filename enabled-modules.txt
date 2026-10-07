@@ -9,3 +9,4 @@ four_award
 chuck_file_changer
 chuck_salt_shack
 temporary_account_finder
+self_delete

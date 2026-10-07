@@ -1,0 +1,61 @@
+{
+  "category_title": "Category:Other speedy deletions",
+  "now": "2026-10-07T12:00:00Z",
+  "rights_by_user": {
+    "Alice": ["autopatrol"]
+  },
+  "candidates": [
+    {
+      "title": "File:Eligible example.jpg",
+      "page_id": 101,
+      "page": {
+        "pageid": 101,
+        "ns": 6,
+        "title": "File:Eligible example.jpg",
+        "revisions": [
+          {
+            "timestamp": "2026-10-05T12:00:00Z",
+            "user": "Alice",
+            "slots": {"main": {"content": "Description"}}
+          },
+          {
+            "timestamp": "2026-10-06T12:00:00Z",
+            "user": "Alice",
+            "slots": {"main": {"content": "{{SD|G7}}\nDescription"}}
+          }
+        ],
+        "imageinfo": [
+          {"timestamp": "2026-10-05T12:00:00Z", "user": "Alice"}
+        ],
+        "imageusage": [],
+        "globalusage": []
+      }
+    },
+    {
+      "title": "File:Used example.jpg",
+      "page_id": 102,
+      "page": {
+        "pageid": 102,
+        "ns": 6,
+        "title": "File:Used example.jpg",
+        "revisions": [
+          {
+            "timestamp": "2026-10-05T12:00:00Z",
+            "user": "Alice",
+            "slots": {"main": {"content": "Description"}}
+          },
+          {
+            "timestamp": "2026-10-06T12:00:00Z",
+            "user": "Alice",
+            "slots": {"main": {"content": "{{SD|G7}}\nDescription"}}
+          }
+        ],
+        "imageinfo": [
+          {"timestamp": "2026-10-05T12:00:00Z", "user": "Alice"}
+        ],
+        "imageusage": [{"title": "Commons:Used file"}],
+        "globalusage": []
+      }
+    }
+  ]
+}

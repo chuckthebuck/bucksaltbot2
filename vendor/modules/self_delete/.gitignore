@@ -1,0 +1,5 @@
+node_modules/
+modules/self_delete/static/
+*.egg-info/
+__pycache__/
+.pytest_cache/

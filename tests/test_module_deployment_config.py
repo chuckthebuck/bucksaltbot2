@@ -1,9 +1,9 @@
 """Deployment wiring checks for vendored modules."""
 
-from pathlib import Path
 import json
-import tomllib
+from pathlib import Path
 
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,12 +45,49 @@ def test_frontend_modules_are_enabled_and_installed_for_runtime_discovery():
     } <= requirement_paths
 
 
+def test_self_delete_frontend_is_in_generated_bundle_registry():
+    """Self Delete's source entry is selected and imported by the root UI build."""
+    raw_config = json.loads(
+        (ROOT / "module-frontend-packages.json").read_text(encoding="utf-8")
+    )
+    self_delete = next(
+        item for item in raw_config["modules"] if item["name"] == "self_delete"
+    )
+    generated = (ROOT / "client-src" / "moduleRegistry.generated.ts").read_text(
+        encoding="utf-8"
+    )
+
+    assert self_delete["enabled"] is True
+    assert self_delete["import"] in generated
+
+
+def test_self_delete_manifest_loads_as_ui_enabled_module():
+    """The framework loader accepts the pinned standalone module manifest."""
+    from router.module_registry import load_module_definition
+
+    definition = load_module_definition(
+        ROOT
+        / "vendor"
+        / "modules"
+        / "self_delete"
+        / "modules"
+        / "self_delete"
+        / "module.toml"
+    )
+
+    assert definition.name == "self_delete"
+    assert definition.ui_enabled is True
+    assert definition.frontend is not None
+    assert definition.frontend.bundled is True
+
+
 def test_vendored_entry_point_packages_ship_toml_manifest():
     for module_name in (
         "four_award",
         "chuck_file_changer",
         "chuck_salt_shack",
         "temporary_account_finder",
+        "self_delete",
     ):
         pyproject = tomllib.loads(
             (ROOT / "vendor" / "modules" / module_name / "pyproject.toml").read_text(
@@ -84,6 +121,26 @@ def test_toolforge_celery_worker_uses_its_isolated_queue():
     assert 'CELERY_QUEUE="${BUCKBOT_CELERY_QUEUE:-${REDIS_NAMESPACE}.celery}"' in start_script
     assert '--queues "$CELERY_QUEUE"' in start_script
     assert '--hostname "${CELERY_WORKER_NAME}@%h"' in start_script
+
+
+def test_celery_worker_registers_optional_self_delete_tasks():
+    """The shared worker imports the module task without requiring its tables."""
+    worker_source = (ROOT / "celery_worker.py").read_text(encoding="utf-8")
+
+    assert "import self_delete.queue" in worker_source
+    assert "except ModuleNotFoundError" in worker_source
+
+
+def test_vendored_updater_tracks_self_delete_repository():
+    """Snapshot refreshes include the standalone Self Delete source repository."""
+    updater = (ROOT / "scripts" / "update-vendored-modules.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"vendor/modules/self_delete"' in updater
+    assert "SELF_DELETE_REMOTE" in updater
+    assert "SELF_DELETE_BRANCH" in updater
+    assert "chuckthebuck/chuck-self-delete.git" in updater
 
 
 def test_toolforge_celery_ping_loads_the_configured_application():

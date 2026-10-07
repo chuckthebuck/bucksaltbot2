@@ -10,3 +10,12 @@ app = celery
 import router  # noqa: E402,F401
 import rollback_queue  # noqa: E402,F401
 import module_tasks  # noqa: E402,F401
+
+# Optional vendored modules may own tasks while still sharing the framework's
+# Celery broker and worker pool. Missing disabled packages must not stop the
+# core rollback worker from starting.
+try:
+    import self_delete.queue  # noqa: E402,F401
+except ModuleNotFoundError as exc:
+    if exc.name not in {"self_delete", "self_delete.queue"}:
+        raise

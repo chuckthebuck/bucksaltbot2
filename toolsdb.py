@@ -379,6 +379,15 @@ def get_conn():
     return _connect(database=_db_name())
 
 
+def open_initialized_conn():
+    """Open a connection when the caller has already run ``init_db``.
+
+    High-volume audit writers use this after one explicit initialization so
+    every event transaction does not repeat the full idempotent DDL pass.
+    """
+    return _connect(database=_db_name())
+
+
 def get_runtime_config(keys=None):
     """Return runtime config values as {config_key: config_value}.
 

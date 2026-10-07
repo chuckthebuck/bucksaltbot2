@@ -1,0 +1,25 @@
+name = "self_delete"
+title = "Commons Self Delete"
+repo = "https://github.com/chuckthebuck/chuck-self-delete"
+entry_point = "self_delete.service:run_self_delete"
+ui = true
+redis_namespace = "self_delete"
+oauth_consumer_mode = "default"
+rights = ["manage", "run_jobs", "edit_config"]
+
+[frontend]
+script = "self_delete:static/self-delete-app.js"
+styles = []
+props_id = "self-delete-props"
+mount_id = "self-delete-app"
+docs = "self_delete:docs/self_delete.md"
+bundled = true
+
+[[jobs]]
+name = "self-delete-sync"
+run = "every 15 minutes"
+handler = "self_delete.service:run_self_delete"
+execution_mode = "k8s_job"
+concurrency_policy = "forbid"
+timeout_seconds = 600
+enabled = true

@@ -88,6 +88,7 @@ the vendored-module refresh command runs it automatically:
 ./vendor/modules/chuck_file_changer
 ./vendor/modules/chuck_salt_shack
 ./vendor/modules/temporary_account_finder
+./vendor/modules/self_delete
 
 # enabled-modules.txt
 rollback
@@ -95,6 +96,7 @@ four_award
 chuck_file_changer
 chuck_salt_shack
 temporary_account_finder
+self_delete
 ```
 
 The framework discovers and loads modules through:
